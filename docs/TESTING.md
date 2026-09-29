@@ -21,7 +21,24 @@ relative to the shared SML project; the local verification receipt is
 `Saved/InstallationVerification.json` relative to this repository.
 
 The final editor build and all four tests were rerun successfully after the selection
-lifecycle fixes. The game was not launched. In-game behavior, actual game save/load,
+lifecycle fixes. The initial packaged build crashed during game startup: the
+`Server_DismantleActors_Implementation` RPC hook used `SUBSCRIBE_METHOD`, which
+cannot resolve a virtual implementation without a sample object. It now uses
+`SUBSCRIBE_UOBJECT_METHOD`, supplying the class default object to SML.
+Editor tests did not catch this because native hooks are disabled against editor stubs.
+
+Crash-fix verification on 2026-09-29:
+
+- FactoryEditor rebuilt successfully (41.53 seconds).
+- Steam Shipping rebuilt, packaged and installed successfully (1 minute 34 seconds).
+- All seven installed files matched the rebuilt archive by SHA-256.
+- The installed Shipping executable ran with `-nullrhi -nosound -unattended
+  -nosplash -NO_EOS_OVERLAY -ExecCmds=quit`. All ten Building Skills native hooks
+  registered, engine initialization completed, and the process exited with code 0.
+  The log is `Saved/CrashFix-Startup.log` relative to this repository. This checks
+  packaged startup only; it does not load a save or exercise selection/grouping.
+
+In-game behavior, actual game save/load,
 multiplayer and uninstall compatibility remain unverified. This grouping build has
 not been packaged for Epic, Windows Server or Linux Server.
 

@@ -138,7 +138,9 @@ void UBSEditModeComponent::InstallHooks()
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildable, Dismantle_Implementation,
         [](auto&, AFGBuildable* Building)
         { if (auto* Groups = ABSGroupSubsystem::Get(Building->GetWorld())) Groups->RemoveBuilding(Building); });
-    SUBSCRIBE_METHOD(UFGBuildGunStateDismantle::Server_DismantleActors_Implementation,
+    // RPC implementations are virtual too: SML needs the class default object
+    // to resolve their vtable entry in the packaged game.
+    SUBSCRIBE_UOBJECT_METHOD(UFGBuildGunStateDismantle, Server_DismantleActors_Implementation,
         [](auto& Scope, UFGBuildGunStateDismantle* State, const TArray<AActor*>&, const TArray<FDismantleLightweightBundle>&)
         {
             auto* Edit = ForGun(State->GetBuildGun());
