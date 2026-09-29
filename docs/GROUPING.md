@@ -42,6 +42,9 @@ metadata cleanup.
 ## Input and dismantle integration
 
 The original Alt+E mapping is a child of the normal player-actions context.
+Its mapping enables the native button hint bar, so the configured shortcut appears
+in the bottom-right reminder. Group and Merge enable hints only in the Edit context;
+Ungroup remains conditional on a single selected group in the Edit HUD.
 A separate explicitly bound Edit parent activates a discoverable child context for
 Group, Merge and Ungroup. The child carries player-mappable action settings.
 The vanilla dismantle state continues binding its own multi-select action and the
@@ -53,6 +56,14 @@ expansion with the shared persistent list. Pending actors are fed back into the 
 and lightweight temporary actors are pinned only while selected. Edit blocks both
 primary dismantle execution and the server dismantle request. Ordinary dismantle
 continues through the native pipeline.
+
+Edit entry waits until the gun is equipped in the dismantle state before applying
+its Edit descriptor and binding its commands. The native target setter is allowed
+to complete, and selection reads its validated target afterward. Normal single-object
+dismantling retains the native target. Expanded/persistent selections use the pending
+list; native hover changes cannot reset its hold timer unless the selection changes.
+Blueprint mode traces buildings and expands their membership, rather than targeting
+the vanilla whole-blueprint proxy volume.
 
 Hooks are installed in game builds only: FactoryGame implementations in the editor
 checkout are stubs. SML Friend access transformers expose the exact integration

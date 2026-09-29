@@ -63,6 +63,7 @@ if not chord.rename(outer=context):
 key = unreal.Key()
 key.set_editor_property("key_name", "E")
 mapping = unreal.EnhancedActionKeyMapping(action=action, key=key, triggers=[chord])
+mapping.set_editor_property("display_button_hint", True)
 context.set_editor_property("mappings", [mapping])
 
 for asset in (action, context):
@@ -102,7 +103,10 @@ for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U")):
     operation.set_editor_property("player_mappable_key_settings", key_settings)
     operation_key = unreal.Key()
     operation_key.set_editor_property("key_name", default_key)
-    operation_mappings.append(unreal.EnhancedActionKeyMapping(action=operation, key=operation_key))
+    operation_mapping = unreal.EnhancedActionKeyMapping(action=operation, key=operation_key)
+    # Ungroup is shown conditionally by the Edit HUD only for one selected group.
+    operation_mapping.set_editor_property("display_button_hint", name != "Ungroup")
+    operation_mappings.append(operation_mapping)
     unreal.EditorAssetLibrary.save_loaded_asset(operation, only_if_is_dirty=False)
 operations.set_editor_property("mappings", operation_mappings)
 for asset in (edit_root, operations):

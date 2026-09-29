@@ -80,13 +80,14 @@ private:
     TWeakObjectPtr<UEnhancedInputComponent> BoundInput;
     TWeakObjectPtr<AFGBuildGun> EditGun;
     TWeakObjectPtr<UFGBuildGunStateDismantle> ActiveState;
-    TWeakObjectPtr<AActor> TracedTarget;
     FBoundMappingContextHandle OperationsContext;
     FBSSelection LastHover;
     FString Feedback;
     int32 PendingRevision = INDEX_NONE;
     int32 ObservedRevision = INDEX_NONE;
     bool bToggleHeld = false;
+    bool bEnteringEdit = false;
+    float EditEntryTime = 0.0f;
     bool bMultiHeld = false;
     bool bRemoving = false;
     bool bChangingMode = false;

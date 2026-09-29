@@ -60,9 +60,28 @@ Automation covers:
 
 ## In-game test matrix
 
+The first gameplay report found a missing shortcut reminder, Edit falling back to
+dismantle, and broken targeting. The follow-up enables native hint metadata, defers
+Edit activation until the gun is equipped, and lets native targeting finish before
+reading its validated selection. Ordinary single-object dismantling stays native;
+expanded selections preserve their hold timer across hover updates. Blueprint mode
+traces members rather than the whole-proxy hit volume.
+
+The final follow-up editor build passed (51.31 seconds), asset generation reported
+zero errors, and all four automation tests passed with no test warnings or failures.
+Input coverage now also checks native hint visibility, including conditional Ungroup.
+Steam Shipping packaging and installation passed (1 minute 35 seconds), and all seven
+installed files matched the archive. The installed game registered all ten hooks,
+completed engine initialization, and exited with code 0 in the headless startup check
+(`Saved/EditFix-Startup.log`). No save was loaded during that check.
+The reported gameplay interactions still require an in-game retest.
+
 Use a separate test save containing machines, foundations and two placed blueprints.
 
-1. Open Edit with Alt+E. Hold the configured multi-dismantle key (default Ctrl) and
+1. Confirm the bottom-right reminder includes the configured Edit shortcut (Alt+E
+   by default), including after rebinding it. Open Edit from both holstered and
+   equipped states; the custom HUD must say EDIT and offer Group/Merge.
+   Hold the configured multi-dismantle key (default Ctrl) and
    aim across two machines and two foundations. Release it and press Group (G).
    Confirm four buildings are highlighted, one group is selected, and left click
    cannot dismantle anything in Edit.
@@ -87,6 +106,9 @@ Use a separate test save containing machines, foundations and two placed bluepri
    must not duplicate buildings or refunds.
 8. Close Edit, enter vanilla dismantle (F), and repeat the multi-blueprint and
    mixed-mode selection tests. Group must be offered alongside Normal and Blueprint.
+   First confirm that simply aiming at one machine/foundation highlights it and
+   holding dismantle completes. Then repeat with a persistent multi-selection while
+   moving the cursor: its hold timer must still complete.
    Dismantle a nested group and verify all selected descendants disappear, materials
    are refunded once, and unrelated buildings remain. Check cancelled dismantles,
    disqualified buildings, full inventory, and lightweight foundations/walls.

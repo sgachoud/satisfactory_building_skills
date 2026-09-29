@@ -58,14 +58,26 @@ void UBSEditModeComponent::InstallHooks()
     SUBSCRIBE_UOBJECT_METHOD_AFTER(UFGBuildGunStateDismantle, GetSupportedBuildModes_Implementation,
         [](const UFGBuildGunStateDismantle* State, TArray<TSubclassOf<UFGBuildGunModeDescriptor>>& Modes)
         {
-            if (IsEditDescriptor(State->GetBuildGun()->GetCurrentBuildGunMode()))
+            auto* Edit = ForGun(State->GetBuildGun());
+            if ((Edit && Edit->EditGun.IsValid()) || IsEditDescriptor(State->GetBuildGun()->GetCurrentBuildGunMode()))
             {
                 Modes.Reset();
                 Modes.Add(UBSEditModeDescriptor::StaticClass());
                 Modes.Add(UBSEditBlueprintModeDescriptor::StaticClass());
                 Modes.Add(UBSEditGroupModeDescriptor::StaticClass());
             }
-            else Modes.AddUnique(UBSGroupModeDescriptor::StaticClass());
+            else
+            {
+                Modes.AddUnique(UBSGroupModeDescriptor::StaticClass());
+                // A remote server copy must accept the client's first Edit mode
+                // before that mode has become the replicated current value.
+                if (!Edit && State->GetBuildGun()->HasAuthority())
+                {
+                    Modes.AddUnique(UBSEditModeDescriptor::StaticClass());
+                    Modes.AddUnique(UBSEditBlueprintModeDescriptor::StaticClass());
+                    Modes.AddUnique(UBSEditGroupModeDescriptor::StaticClass());
+                }
+            }
         });
     SUBSCRIBE_UOBJECT_METHOD(UFGBuildGunStateDismantle, OnBuildGunModeChanged_Implementation,
         [](auto& Scope, UFGBuildGunStateDismantle* State, TSubclassOf<UFGBuildGunModeDescriptor> Mode)
@@ -73,6 +85,9 @@ void UBSEditModeComponent::InstallHooks()
             auto* Edit = ForGun(State->GetBuildGun());
             if (Edit) Edit->bChangingMode = true;
             Scope(State, Mode);
+            // Blueprint selection expands the building's proxy membership. Trace
+            // its actual buildings rather than the vanilla whole-proxy hit volume.
+            State->GetBuildGun()->SetAllowRayBlueprintProxyHit(false);
             State->mCurrentMultiDismantleLimit = 2048;
             if (IsEditDescriptor(Mode)) State->mLastUsedDismantleMode = State->mDefaultDismantleMode;
             if (Edit) { Edit->bChangingMode = false; Edit->bSelectionDirty = true; Edit->LastHover = {}; }
@@ -90,7 +105,6 @@ void UBSEditModeComponent::InstallHooks()
             const bool Multi = State->mIsMultiSelectActive;
             Gun->mCurrentBuildGunMode = State->mDefaultDismantleMode;
             State->mIsMultiSelectActive = false;
-            Edit->TracedTarget.Reset();
             Edit->bNativeTick = true;
             Scope(State, Delta);
             Edit->bNativeTick = false;
@@ -109,15 +123,13 @@ void UBSEditModeComponent::InstallHooks()
                 if (!Edit->bNativeTick && !Edit->bSyncing) Edit->ClearSelection();
             }
         });
-    SUBSCRIBE_METHOD(UFGBuildGunStateDismantle::SetAimedAtActor,
-        [](auto& Scope, UFGBuildGunStateDismantle* State, AActor* Target)
+    SUBSCRIBE_UOBJECT_METHOD(UFGBuildGunStateDismantle, ResetBuildGunDelay,
+        [](auto& Scope, UFGBuildGunStateDismantle* State)
         {
-            if (auto* Edit = ForGun(State->GetBuildGun()); Edit && Edit->bNativeTick && !Edit->bSyncing)
-            {
-                Edit->TracedTarget = Target;
-                // Avoid single-target transitions resetting the dismantle timer every frame.
-                if (Edit->EditGun.IsValid() || !Edit->Selection.IsEmpty() || !Target || Target->IsA<AFGBuildable>()) Scope.Cancel();
-            }
+            // Native hover changes must not restart the hold timer for an unchanged
+            // persistent selection. Explicit selection changes still reset it below.
+            if (auto* Edit = ForGun(State->GetBuildGun()); Edit && !Edit->Highlighted.IsEmpty() &&
+                (Edit->bNativeTick || Edit->bSyncing)) Scope.Cancel();
         });
     SUBSCRIBE_UOBJECT_METHOD(UFGBuildGunStateDismantle, PrimaryFire_Implementation,
         [](auto& Scope, UFGBuildGunStateDismantle* State)
@@ -195,22 +207,19 @@ void UBSEditModeComponent::OnToggleTriggered()
     if (bToggleHeld) return;
     bToggleHeld = true;
     if (!InputAllowed()) return;
-    if (IsEditing()) { LeaveEditMode(true); return; }
+    if (EditGun.IsValid()) { LeaveEditMode(true); return; }
     auto* Player = CastChecked<AFGCharacterPlayer>(GetOwner());
     if (!Player->CanEquipBuildGunForDismantle()) return;
     auto* Gun = Player->GetBuildGun();
     if (!IsValid(Gun)) return;
     ClearSelection();
-    if (!Player->IsBuildGunEquipped()) Player->EquipBuildGunAndGoToMenuState();
-    Gun->GotoDismantleState();
-    Gun->SetCurrentBuildGunMode(UBSEditModeDescriptor::StaticClass());
     EditGun = Gun;
-    if (auto* PC = Cast<AFGPlayerController>(Player->GetController()))
-    {
-        auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_EditRoot.MC_EditRoot"));
-        if (Context) OperationsContext = PC->BindMappingContext(Context, 1000, this);
-    }
-    UE_LOG(LogBuildingSkills, Display, TEXT("Edit mode opened."));
+    bEnteringEdit = true;
+    EditEntryTime = 0.0f;
+    // HotKeyDismantle handles the deferred equipment transition. Apply the Edit
+    // descriptor once the equipped gun has actually entered that state.
+    if (!Player->IsBuildGunEquipped() || !Gun->IsInState(EBuildGunState::BGS_DISMANTLE)) Player->HotKeyDismantle();
+    UE_LOG(LogBuildingSkills, Display, TEXT("Edit mode requested; waiting for equipped dismantle state."));
 }
 
 void UBSEditModeComponent::OnToggleReleased() { bToggleHeld = false; }
@@ -266,10 +275,14 @@ TArray<FBSBuildingRef> UBSEditModeComponent::ResolveSelection(const FBSSelection
 FBSSelection UBSEditModeComponent::HoverSelection(UFGBuildGunStateDismantle* State)
 {
     FBSSelection Result;
-    auto* Building = Cast<AFGBuildable>(TracedTarget.Get());
-    if (!Building) Building = Cast<AFGBuildable>(State->mCurrentlyAimedAtActor);
-    if (!Building) Building = Cast<AFGBuildable>(State->GetSelectedActor());
-    if (!IsValid(Building) || !State->CanDismantleActor(Building)) return Result;
+    // Read the completed native trace. Cancelling SetAimedAtActor prevents the
+    // native tick from establishing a valid target in the first place.
+    auto* Building = Cast<AFGBuildable>(State->GetSelectedActor());
+    // Already-pending buildings may have no separate native selected actor.
+    // They are still valid targets for removing a unit from our selection.
+    if (!Building && State->mPendingDismantleActors.Contains(State->mCurrentlyAimedAtActor))
+        Building = Cast<AFGBuildable>(State->mCurrentlyAimedAtActor);
+    if (!IsValid(Building)) return Result;
     FBSBuildingRef Ref = FBSBuildingRef::FromActor(Building);
     if (!Ref.IsAlive(GetWorld())) return Result;
     const auto Mode = State->GetBuildGun()->GetCurrentBuildGunMode();
@@ -354,11 +367,27 @@ void UBSEditModeComponent::UpdateSelection(UFGBuildGunStateDismantle* State)
 
 void UBSEditModeComponent::SyncDismantle(UFGBuildGunStateDismantle* State)
 {
+    // Ordinary single-building targeting belongs to vanilla. Only replace its
+    // pending list when there is an explicit multi-selection or expanded mode.
+    const auto Mode = State->GetBuildGun()->GetCurrentBuildGunMode();
+    if (!IsEditing() && Selection.IsEmpty() && Mode == State->mDefaultDismantleMode)
+    {
+        if (!Highlighted.IsEmpty())
+        {
+            bSyncing = true;
+            State->ClearPendingSelectedActors();
+            ReleaseHighlights();
+            bSyncing = false;
+        }
+        return;
+    }
     // Vehicles and other non-building dismantlables keep the native single-target path.
     if (!IsEditing() && Selection.IsEmpty() && Hover.IsEmpty() &&
         IsValid(State->mCurrentlySelectedActor) && !State->mCurrentlySelectedActor->IsA<AFGBuildable>()) return;
     // A pinned selection never silently gains the unrelated building under the cursor.
+    bSyncing = true;
     State->SetAimedAtActor(nullptr);
+    bSyncing = false;
     TArray<FBSBuildingRef> Buildings = ResolveSelection(EffectiveSelection());
     if (Buildings.Num() > 2048)
     {
@@ -370,8 +399,8 @@ void UBSEditModeComponent::SyncDismantle(UFGBuildGunStateDismantle* State)
     if (!Changed)
         for (AFGBuildable* B : Highlighted) if (!IsValid(B) || B->GetIsDismantled()) { Changed = true; break; }
     if (!Changed) return;
-    bSyncing = true;
     State->ResetBuildGunDelay();
+    bSyncing = true;
     State->ClearPendingSelectedActors();
     ReleaseHighlights();
     State->mShouldRemoveFromMultiSelect = false;
@@ -403,7 +432,6 @@ void UBSEditModeComponent::ReleaseHighlights()
 void UBSEditModeComponent::ClearSelection()
 {
     Selection = {}; Hover = {}; LastHover = {}; PendingResult = {};
-    TracedTarget.Reset();
     PendingRevision = INDEX_NONE;
     bRequestPending = false; bMultiHeld = false; bSelectionDirty = true;
     ReleaseHighlights();
@@ -415,7 +443,32 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* Gun = Player ? Player->GetBuildGun() : nullptr;
     auto* State = Gun && Player->IsBuildGunEquipped() ? Cast<UFGBuildGunStateDismantle>(Gun->GetCurrentState()) : nullptr;
-    if (EditGun.IsValid() && (!State || !IsEditDescriptor(Gun->GetCurrentBuildGunMode()) ||
+    if (bEnteringEdit && EditGun.IsValid())
+    {
+        EditEntryTime += Delta;
+        if (State && Gun == EditGun.Get())
+        {
+            Gun->SetCurrentBuildGunMode(UBSEditModeDescriptor::StaticClass());
+            if (IsEditing())
+            {
+                bEnteringEdit = false;
+                if (auto* PC = Cast<AFGPlayerController>(Player->GetController()))
+                {
+                    auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_EditRoot.MC_EditRoot"));
+                    if (Context) OperationsContext = PC->BindMappingContext(Context, 1000, this);
+                }
+                UE_LOG(LogBuildingSkills, Display, TEXT("Edit mode active: %s"), *GetNameSafe(Gun->GetCurrentBuildGunMode().Get()));
+            }
+        }
+        if (bEnteringEdit && EditEntryTime > 5.0f)
+        {
+            UE_LOG(LogBuildingSkills, Warning, TEXT("Edit entry timed out in state %s, mode %s."),
+                *GetNameSafe(Gun ? Gun->GetCurrentState() : nullptr), *GetNameSafe(Gun ? Gun->GetCurrentBuildGunMode().Get() : nullptr));
+            LeaveEditMode(true);
+            return;
+        }
+    }
+    if (!bEnteringEdit && EditGun.IsValid() && (!State || !IsEditDescriptor(Gun->GetCurrentBuildGunMode()) ||
         !Player->GetHealthComponent() || Player->GetHealthComponent()->IsDead())) LeaveEditMode(false);
     if (!State)
     {
@@ -437,6 +490,7 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
 
 void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 {
+    bEnteringEdit = false;
     if (auto* Player = Cast<AFGCharacterPlayer>(GetOwner()))
     {
         if (auto* PC = Cast<AFGPlayerController>(Player->GetController())) PC->UnbindAllMappingContextsByObject(this);
@@ -481,7 +535,7 @@ FText UBSEditModeComponent::GetControlsText() const
         Text += FString::Printf(TEXT("\n%s: Group    %s: Merge"), *Key(TEXT("BuildingSkills.Group")), *Key(TEXT("BuildingSkills.Merge")));
         const FBSSelection Current = EffectiveSelection();
         if (Current.Groups.Num() == 1 && Current.Buildings.IsEmpty()) Text += FString::Printf(TEXT("    %s: Ungroup"), *Key(TEXT("BuildingSkills.Ungroup")));
-        Text += FString::Printf(TEXT("\n%s: Close"), *Key(TEXT("BuildingSkills.ToggleEditMode")));
+        Text += FString::Printf(TEXT("\n%s: Close Edit    Editing does not dismantle buildings"), *Key(TEXT("BuildingSkills.ToggleEditMode")));
     }
     return FText::FromString(Text);
 }

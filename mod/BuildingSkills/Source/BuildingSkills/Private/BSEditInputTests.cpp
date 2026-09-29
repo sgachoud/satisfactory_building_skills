@@ -43,6 +43,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
     const UInputAction* Edit = Mapping.Action;
     if (!TestNotNull(TEXT("Edit action exists"), Edit)) return false;
     TestTrue(TEXT("Shortcut is player remappable"), Mapping.IsPlayerMappable());
+    TestTrue(TEXT("Edit shortcut appears in the native button hint bar"), !!Mapping.bDisplayButtonHint);
     TestEqual(TEXT("Default primary key"), Mapping.Key, EKeys::E);
     if (!TestEqual(TEXT("One modifier trigger"), Mapping.Triggers.Num(), 1)) return false;
     UInputTriggerChordAction* Chord = Cast<UInputTriggerChordAction>(Mapping.Triggers[0]);
@@ -132,6 +133,8 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         for (const auto& Op : Operations->GetMappings())
         {
             TestTrue(TEXT("Operation is rebindable"), Op.IsPlayerMappable());
+            TestEqual(TEXT("Group/Merge have native hints; Ungroup uses the conditional HUD hint"),
+                !!Op.bDisplayButtonHint, Op.GetMappingName() != FName(TEXT("BuildingSkills.Ungroup")));
             Key(Op.Key, true); Tick();
             TestTrue(TEXT("Configured operation activates"), Fired(Op.Action));
             if (Op.Key == EKeys::M) TestFalse(TEXT("Merge suppresses Map inside Edit"), Fired(Map));
