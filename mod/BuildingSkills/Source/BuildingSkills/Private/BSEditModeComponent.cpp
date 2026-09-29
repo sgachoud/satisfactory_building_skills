@@ -319,7 +319,7 @@ void UBSEditModeComponent::OnUngroup() { Request(EBSGroupOperation::Ungroup); }
 
 void UBSEditModeComponent::Request(EBSGroupOperation Operation)
 {
-    if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending) return;
+    if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending || bOpeningBlueprint || BlueprintWindow) return;
     auto* System = ABSGroupSubsystem::Get(GetWorld());
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* PC = Player ? Cast<AFGPlayerController>(Player->GetController()) : nullptr;
@@ -570,7 +570,7 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
     if (BlueprintSession || bOpeningBlueprint)
     {
         UpdateControlHints(false);
-        if (Indicator) Indicator->SetVisibility(ESlateVisibility::Collapsed);
+        if (Indicator) Indicator->SetVisibility(bOpeningBlueprint && InputAllowed() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
         return;
     }
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());

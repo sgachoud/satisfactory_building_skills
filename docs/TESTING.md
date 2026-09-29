@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.3.1.
+Windows game, CL 502094. Current package: Building Skills 0.3.2.
 
 ## Completed checks
 
@@ -81,6 +81,17 @@ Windows game, CL 502094. Current package: Building Skills 0.3.1.
   The fixed run opens the window with S, verifies 1-by-3-by-1 blueprint dimensions,
   saves and reloads all three members, leaves originals unchanged, and returns to Edit.
   Lightweight geometry bounds now also contribute to mixed-group blueprint dimensions.
+
+The reported multiplayer failure reached the Save handler with one selected group,
+but every server reply carried a null save-session reference. The session inherited
+`DORM_Initial` from buildables and the UI relied on an actor pointer arriving on a
+different channel from its spawn. Version 0.3.2 keeps the session awake, waits for
+its replicated request identifier, retains Save input while waiting, and cancels
+timed-out requests by identifier. Remote Linux gameplay remains a manual check.
+The 0.3.2 editor suite passed all five tests. Its packaged regression additionally
+checks delayed session discovery, holding Save during the delay, stale replies,
+awake replication settings and timeout cleanup. That new runtime scenario still
+needs execution; installation is waiting for the running client to close.
 
 The runtime test blocks world saves and never loads an existing world save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.

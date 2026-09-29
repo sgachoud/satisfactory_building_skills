@@ -61,6 +61,7 @@ public:
     EBSTransformMode GetTransformMode() const { return TransformMode; }
     void OnTransformResult(bool Success, const FBSSelection& Result, const FString& Message, int32 Revision);
     void OpenBlueprintSave(class ABSBlueprintSaveSession* Session, const FString& Error);
+    void OnBlueprintSaveReply(FGuid RequestId, const FString& Error);
     void BlueprintMessage(const FString& Message) { Feedback = Message; }
 private:
     friend class FBSRuntimeSmoke;
@@ -78,6 +79,9 @@ private:
     UPROPERTY(Transient) TObjectPtr<UFGInteractWidget> BlueprintWindow;
     UPROPERTY(Transient) TObjectPtr<class ABSBlueprintSaveSession> BlueprintSession;
     bool bOpeningBlueprint = false;
+    FGuid BlueprintRequestId;
+    double BlueprintRequestDeadline = 0;
+    double BlueprintNextSessionCheck = 0;
     void OnTransform();
     void EndTransform();
     void CycleTransform(int32 Delta);

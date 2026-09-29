@@ -7,6 +7,7 @@
 #include "FGLightweightBuildableSubsystem.h"
 #include "Equipment/FGBuildGun.h"
 #include "EngineUtils.h"
+#include "Net/UnrealNetwork.h"
 #include "Patching/NativeHookManager.h"
 
 ABSBlueprintSaveSession::ABSBlueprintSaveSession()
@@ -14,6 +15,9 @@ ABSBlueprintSaveSession::ABSBlueprintSaveSession()
     mDisplayName = FText::FromString(TEXT("Save Group as Blueprint"));
     bReplicates = true;
     bOnlyRelevantToOwner = true;
+    // AFGBuildable defaults to DORM_Initial for map buildings. This dynamically
+    // spawned interaction session must reach its owning client immediately.
+    NetDormancy = DORM_Awake;
     SetReplicateMovement(false);
     SetActorEnableCollision(false);
     SetActorHiddenInGame(true);
@@ -27,6 +31,11 @@ void ABSBlueprintSaveSession::BeginPlay()
 }
 void ABSBlueprintSaveSession::EndPlay(EEndPlayReason::Type Reason) { AActor::EndPlay(Reason); }
 void ABSBlueprintSaveSession::Destroyed() { AActor::Destroyed(); }
+void ABSBlueprintSaveSession::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(ABSBlueprintSaveSession, RequestId);
+}
 
 bool ABSBlueprintSaveSession::Prepare(FString& Error)
 {
@@ -123,11 +132,11 @@ void ABSBlueprintSaveSession::InstallHooks()
         { if (Cast<ABSBlueprintSaveSession>(Designer)) Scope.Override(EBlueprintDesignerLoadResult::BDLR_Undefined); });
 }
 
-void UBSGroupRemoteCallObject::Server_OpenBlueprintSave_Implementation(FGuid Group, int32 ExpectedRevision)
+void UBSGroupRemoteCallObject::Server_OpenBlueprintSave_Implementation(FGuid Group, int32 ExpectedRevision, FGuid RequestId)
 {
     auto* Player = GetOwnerPlayerCharacter();
     auto* PC = Player ? Cast<AFGPlayerController>(Player->GetController()) : nullptr;
-    if (!PC) return;
+    if (!PC || !RequestId.IsValid()) return;
     for (TActorIterator<ABSBlueprintSaveSession> It(GetWorld()); It; ++It)
         if (It->GetOwner() == PC) It->Destroy();
     FActorSpawnParameters Params;
@@ -137,20 +146,32 @@ void UBSGroupRemoteCallObject::Server_OpenBlueprintSave_Implementation(FGuid Gro
     if (Session)
     {
         Session->Group = Group; Session->GroupRevision = ExpectedRevision;
-        if (Session->Prepare(Error)) { Session->bOpened = true; Session->ShowSummaryOnly(); Session->ForceNetUpdate(); Client_OpenBlueprintSave(Session, TEXT("")); return; }
+        if (Session->Prepare(Error))
+        {
+            Session->bOpened = true;
+            Session->ShowSummaryOnly();
+            Session->RequestId = RequestId;
+            Session->ForceNetUpdate();
+            // Actor creation and this RCO use different network channels. Send
+            // identity, then let the client wait for the replicated actor.
+            Client_OpenBlueprintSave(RequestId, TEXT(""));
+            return;
+        }
         Session->Destroy();
     }
-    Client_OpenBlueprintSave(nullptr, Error.IsEmpty() ? TEXT("Could not open blueprint saving.") : Error);
+    Client_OpenBlueprintSave(RequestId, Error.IsEmpty() ? TEXT("Could not open blueprint saving.") : Error);
 }
-void UBSGroupRemoteCallObject::Client_OpenBlueprintSave_Implementation(ABSBlueprintSaveSession* Session, const FString& Error)
+void UBSGroupRemoteCallObject::Client_OpenBlueprintSave_Implementation(FGuid RequestId, const FString& Error)
 {
     if (auto* Player = GetOwnerPlayerCharacter())
-        if (auto* Edit = Player->FindComponentByClass<UBSEditModeComponent>()) Edit->OpenBlueprintSave(Session, Error);
+        if (auto* Edit = Player->FindComponentByClass<UBSEditModeComponent>()) Edit->OnBlueprintSaveReply(RequestId, Error);
 }
-void UBSGroupRemoteCallObject::Server_CloseBlueprintSave_Implementation(ABSBlueprintSaveSession* Session)
+void UBSGroupRemoteCallObject::Server_CloseBlueprintSave_Implementation(FGuid RequestId)
 {
     auto* Player = GetOwnerPlayerCharacter();
-    if (IsValid(Session) && Player && Session->GetOwner() == Player->GetController()) Session->Destroy();
+    if (!Player || !RequestId.IsValid()) return;
+    for (TActorIterator<ABSBlueprintSaveSession> It(GetWorld()); It; ++It)
+        if (It->RequestId == RequestId && It->GetOwner() == Player->GetController()) It->Destroy();
 }
 void UBSGroupRemoteCallObject::Client_BlueprintMessage_Implementation(const FString& Message)
 {

@@ -14,6 +14,7 @@ public:
     virtual void BeginPlay() override;
     virtual void EndPlay(EEndPlayReason::Type Reason) override;
     virtual void Destroyed() override;
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
     virtual bool ShouldSave_Implementation() const override { return false; }
     virtual bool CanDismantle_Implementation() const override { return false; }
     virtual void GetChildDismantleActors_Implementation(TArray<AActor*>& Out) const override {}
@@ -21,6 +22,7 @@ public:
     bool Prepare(FString& Error);
     void ShowSummaryOnly() { mBuildables.Reset(); mBuildables.Add(this); }
     FGuid Group;
+    UPROPERTY(Replicated) FGuid RequestId;
     int32 GroupRevision = INDEX_NONE;
     bool bOpened = false;
     FTransform BlueprintOrigin;

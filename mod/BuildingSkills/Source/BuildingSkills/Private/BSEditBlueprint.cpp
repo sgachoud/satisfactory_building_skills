@@ -9,6 +9,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "UI/FGGameUI.h"
 #include "UI/FGInteractWidget.h"
+#include "EngineUtils.h"
 
 void UBSEditModeComponent::OnSave()
 {
@@ -25,7 +26,17 @@ void UBSEditModeComponent::OnSave()
     if (!RCO || !Groups) return;
     bOpeningBlueprint = true;
     BlueprintSelection = Current;
-    RCO->Server_OpenBlueprintSave(Current.Groups[0], Groups->Revision);
+    BlueprintRequestId = FGuid::NewGuid();
+    BlueprintRequestDeadline = FPlatformTime::Seconds() + 15;
+    BlueprintNextSessionCheck = 0;
+    Feedback = TEXT("Opening blueprint window...");
+    RCO->Server_OpenBlueprintSave(Current.Groups[0], Groups->Revision, BlueprintRequestId);
+}
+
+void UBSEditModeComponent::OnBlueprintSaveReply(FGuid RequestId, const FString& Error)
+{
+    if (!bOpeningBlueprint || RequestId != BlueprintRequestId) return;
+    if (!Error.IsEmpty()) { Feedback = Error; CloseBlueprintSave(); }
 }
 
 void UBSEditModeComponent::OpenBlueprintSave(ABSBlueprintSaveSession* Session, const FString& Error)
@@ -38,6 +49,7 @@ void UBSEditModeComponent::OpenBlueprintSave(ABSBlueprintSaveSession* Session, c
     auto* UI = Player ? Player->GetGameUI() : nullptr;
     auto* Class = LoadClass<UFGInteractWidget>(nullptr, TEXT("/Game/FactoryGame/Buildable/-Shared/Widgets/Widget_BlueprintDesigner.Widget_BlueprintDesigner_C"));
     if (!UI || !Class) { Feedback = TEXT("The blueprint interface is unavailable."); CloseBlueprintSave(); return; }
+    Feedback.Reset();
     UI->OnToggleInteractWidget(Class, Session);
     Selection = BlueprintSelection;
     bSelectionDirty = true;
@@ -50,8 +62,29 @@ void UBSEditModeComponent::OpenBlueprintSave(ABSBlueprintSaveSession* Session, c
 
 void UBSEditModeComponent::TickBlueprintSave()
 {
+    auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
+    if (bOpeningBlueprint)
+    {
+        const double Now = FPlatformTime::Seconds();
+        if (!Player || !IsEditing() || Now >= BlueprintRequestDeadline)
+        {
+            Feedback = TEXT("The server did not provide the blueprint window. Try Save again.");
+            UE_LOG(LogBuildingSkills, Warning, TEXT("Blueprint Save session replication timed out or Edit closed."));
+            CloseBlueprintSave();
+        }
+        else if (Now >= BlueprintNextSessionCheck && InputAllowed())
+        {
+            BlueprintNextSessionCheck = Now + .1;
+            for (TActorIterator<ABSBlueprintSaveSession> It(GetWorld()); It; ++It)
+                if (It->RequestId == BlueprintRequestId && It->GetOwner() == Player->GetController())
+                { OpenBlueprintSave(*It, TEXT("")); break; }
+        }
+    }
     const auto Current = EffectiveSelection();
-    const bool Enabled = IsEditing() && !bTransforming && !bOpeningBlueprint && !BlueprintWindow && InputAllowed() && Current.Groups.Num() == 1 && Current.Buildings.IsEmpty();
+    // Keep consuming the configured Save key while the server/actor is in flight.
+    // Otherwise a held S becomes backward movement after sending the request.
+    const bool Enabled = IsEditing() && !bTransforming && !BlueprintWindow && InputAllowed() &&
+        (bOpeningBlueprint || (Current.Groups.Num() == 1 && Current.Buildings.IsEmpty()));
     if (InputSubsystem.IsValid())
     {
         if (Enabled && !SaveContext)
@@ -60,7 +93,6 @@ void UBSEditModeComponent::TickBlueprintSave()
         if (!Enabled && SaveContext) { InputSubsystem->RemoveMappingContext(SaveContext); SaveContext = nullptr; }
     }
     if (!BlueprintWindow) return;
-    auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* UI = Player ? Player->GetGameUI() : nullptr;
     if (!IsValid(BlueprintSession) || !UI || !UI->GetInteractWidgetStack().Contains(BlueprintWindow)) { CloseBlueprintSave(); return; }
     // Keep the original details/save/overwrite flow. The proxy additionally blocks
@@ -79,11 +111,15 @@ void UBSEditModeComponent::CloseBlueprintSave(bool ResumeEdit)
     auto* PC = Player ? Cast<AFGPlayerController>(Player->GetController()) : nullptr;
     if (BlueprintWindow && Player && Player->GetGameUI()) Player->GetGameUI()->PopWidget(BlueprintWindow);
     BlueprintWindow = nullptr;
-    if (BlueprintSession && PC)
-        if (auto* RCO = PC->GetRemoteCallObjectOfClass<UBSGroupRemoteCallObject>()) RCO->Server_CloseBlueprintSave(BlueprintSession);
+    if (BlueprintRequestId.IsValid() && PC)
+        if (auto* RCO = PC->GetRemoteCallObjectOfClass<UBSGroupRemoteCallObject>()) RCO->Server_CloseBlueprintSave(BlueprintRequestId);
     BlueprintSession = nullptr;
-    if (SaveContext && InputSubsystem.IsValid()) InputSubsystem->RemoveMappingContext(SaveContext);
-    SaveContext = nullptr;
+    BlueprintRequestId.Invalidate();
+    if (!ResumeEdit)
+    {
+        if (SaveContext && InputSubsystem.IsValid()) InputSubsystem->RemoveMappingContext(SaveContext);
+        SaveContext = nullptr;
+    }
     if (ResumeEdit && HadSession && Player && Player->CanEquipBuildGunForDismantle())
     {
         EditGun = Player->GetBuildGun();

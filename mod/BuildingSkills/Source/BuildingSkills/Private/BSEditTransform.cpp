@@ -38,7 +38,7 @@ FVector UBSEditModeComponent::TransformSteps() const
 }
 void UBSEditModeComponent::OnTransform()
 {
-    if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending) return;
+    if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending || bOpeningBlueprint || BlueprintWindow) return;
     const FBSSelection Chosen = EffectiveSelection();
     const auto Members = ResolveSelection(Chosen);
     if (Members.IsEmpty() || Members.Num() > 2048) { Feedback = TEXT("Select between 1 and 2048 buildings first."); return; }

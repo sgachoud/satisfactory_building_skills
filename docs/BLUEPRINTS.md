@@ -25,6 +25,13 @@ Blueprint bounds include the lightweight subsystem's local mesh bounds transform
 into world space. Temporary foundation actors have no mesh components, so measuring
 only actor components would reject foundation-only groups and undersize mixed groups.
 
+In multiplayer, the temporary designer stays awake for replication. The client
+matches it to the current request by a replicated identifier, rather than expecting
+a newly spawned actor reference to be usable as soon as an RPC arrives. Save keeps
+its key binding while waiting, so holding S cannot turn into backward movement.
+Requests time out after 15 seconds with feedback and clean up their server session;
+late replies cannot reopen a closed window or cancel a newer request.
+
 Load and Clear are also blocked in the native save-session methods so controller
 shortcuts cannot place or dismantle buildings through this window. Ordinary
 blueprint designers retain their normal functionality.

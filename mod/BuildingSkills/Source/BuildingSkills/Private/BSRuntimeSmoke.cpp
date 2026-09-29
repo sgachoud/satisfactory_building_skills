@@ -13,6 +13,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Equipment/FGBuildGun.h"
 #include "Equipment/FGBuildGunDismantle.h"
 #include "FGBuildableSubsystem.h"
@@ -561,6 +562,50 @@ public:
         case 87:
             Check(TEXT("Closing blueprint save returns to Edit with the selected group"),Edit->IsEditing() && Player->IsBuildGunEquipped() && Edit->Selection.Groups.Num()==1 && !Edit->BlueprintWindow);
             break;
+        case 88:
+            // Delay discovery as if the actor channel arrived after the RPC.
+            // This is a deterministic handoff regression, not a remote-client test.
+            Edit->OnSave();
+            Edit->BlueprintNextSessionCheck=Now+2.5;
+            Check(TEXT("Save waits for session discovery instead of consuming an RPC actor pointer"),Edit->bOpeningBlueprint && !Edit->BlueprintWindow);
+            Key(EKeys::S,true);
+            break;
+        case 89:
+        {
+            bool SaveActive=false, MovementActive=false;
+            if(Input) for(const auto& Mapping:Input->GetEnhancedActionMappings())
+                if(Mapping.Key==EKeys::S && Input->GetActionValue(Mapping.Action).GetMagnitude()>0)
+                {
+                    if(Mapping.GetMappingName()==TEXT("BuildingSkills.Save")) SaveActive=true;
+                    else MovementActive=true;
+                }
+            Check(TEXT("Held Save remains consumed while the replicated session is pending"),Edit->bOpeningBlueprint && SaveActive && !MovementActive);
+            Edit->OnBlueprintSaveReply(FGuid::NewGuid(),TEXT("stale response"));
+            Check(TEXT("Unrelated save replies cannot cancel the pending request"),Edit->bOpeningBlueprint);
+            break;
+        }
+        case 92:
+        {
+            Key(EKeys::S,false);
+            Check(TEXT("Delayed session discovery opens the native window"),Edit->BlueprintWindow && Edit->BlueprintSession && !Edit->bOpeningBlueprint);
+            Check(TEXT("Dynamic save session is awake and identified for replication"),Edit->BlueprintSession && Edit->BlueprintSession->NetDormancy==DORM_Awake && Edit->BlueprintSession->RequestId==Edit->BlueprintRequestId);
+            const FGuid ClosedRequest=Edit->BlueprintRequestId;
+            Edit->CloseBlueprintSave();
+            Edit->OnBlueprintSaveReply(ClosedRequest,TEXT("stale response"));
+            Check(TEXT("Late replies cannot reopen a closed blueprint request"),!Edit->bOpeningBlueprint && !Edit->BlueprintWindow && !Edit->BlueprintRequestId.IsValid());
+            break;
+        }
+        case 93:
+        {
+            Edit->OnSave();
+            const FGuid TimedOut=Edit->BlueprintRequestId;
+            Edit->BlueprintRequestDeadline=Now-1;
+            Edit->TickBlueprintSave();
+            bool SessionLeft=false;
+            for(TActorIterator<ABSBlueprintSaveSession> It(World);It;++It) SessionLeft|=It->RequestId==TimedOut;
+            Check(TEXT("Timed-out save requests release their server session and preserve selection"),TimedOut.IsValid() && !SessionLeft && !Edit->bOpeningBlueprint && Edit->Selection.Groups.Num()==1);
+            break;
+        }
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
@@ -576,7 +621,7 @@ public:
                         *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
         }
-        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 80 : 88)) return true;
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 80 : 94)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;
