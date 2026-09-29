@@ -33,6 +33,10 @@ if ($Render) {
     if ((Test-Path -LiteralPath $screenshot) -and (Get-Item -LiteralPath $screenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $screenshot -Destination (Join-Path $saved 'RuntimeTest.png') -Force
     } else { throw 'The runtime test did not produce a fresh screenshot.' }
+    $transformScreenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsTransformTest.png'
+    if ((Test-Path -LiteralPath $transformScreenshot) -and (Get-Item -LiteralPath $transformScreenshot).LastWriteTime -ge $started) {
+        Copy-Item -LiteralPath $transformScreenshot -Destination (Join-Path $saved 'TransformTest.png') -Force
+    } else { throw 'The runtime test did not produce a fresh transform screenshot.' }
 }
 if ((Get-Item -LiteralPath $log).LastWriteTime -lt $started) { throw 'Runtime test log is stale.' }
 Select-String -LiteralPath $log -Pattern 'RUNTIME (TEST|EDIT|ASSERT|TARGET|UI|MAPPING)' | ForEach-Object { $_.Line }

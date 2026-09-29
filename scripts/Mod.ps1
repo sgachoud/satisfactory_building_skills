@@ -6,6 +6,7 @@ param(
     [string]$SmlRoot = 'F:\dev\satisfactory_mods\SatisfactoryModLoader',
     [string]$EngineRoot = 'C:\Program Files\Unreal Engine - CSS',
     [string]$GameRoot = 'F:\Programme et jeux\Steam\steamapps\common\Satisfactory',
+    [switch]$SkipNativeBuild,
     [ValidateRange(1, 64)]
     [int]$MaxParallelActions = 2
 )
@@ -99,10 +100,7 @@ switch ($Action) {
         )
     }
     'BuildEditor' {
-        Invoke-Checked (Join-Path $batchRoot 'Build.bat') @(
-            'FactoryEditor', 'Win64', 'Development', "-Project=$project",
-            '-WaitMutex', '-NoHotReloadFromIDE', '-NoUBA', "-MaxParallelActions=$MaxParallelActions"
-        )
+        & (Join-Path $PSScriptRoot 'BuildNative.ps1') -Target FactoryEditor -SmlRoot $SmlRoot -EngineRoot $EngineRoot
     }
     'InitContent' {
         $bootstrap = Join-Path $PSScriptRoot 'init_content.py'
@@ -138,16 +136,19 @@ switch ($Action) {
         }
         Require-Path (Join-Path $pluginRoot 'Content\Inputs\IA_ToggleEditMode.uasset')
         Require-Path (Join-Path $pluginRoot 'Content\Inputs\MC_BuildingSkills.uasset')
-        foreach ($asset in @('IA_Group', 'IA_Merge', 'IA_Ungroup', 'MC_EditRoot', 'MC_EditOperations')) {
+        foreach ($asset in @('IA_Group', 'IA_Merge', 'IA_Ungroup', 'IA_Transform', 'MC_EditRoot', 'MC_EditOperations', 'MC_Transform', 'IA_MoveForward', 'IA_MoveBackward', 'IA_MoveLeft', 'IA_MoveRight', 'IA_MoveUp', 'IA_MoveDown', 'IA_Tiny', 'IA_Small', 'IA_Large', 'IA_ScrollUp', 'IA_ScrollDown')) {
             Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset")
+        }
+        if ($Action -ne 'Release' -and -not $SkipNativeBuild) {
+            & (Join-Path $PSScriptRoot 'BuildNative.ps1') -Target FactoryGameSteam -SmlRoot $SmlRoot -EngineRoot $EngineRoot
         }
         $uatArgs = @(
             "-ScriptsForProject=$project", 'PackagePlugin', "-project=$project",
             '-clientconfig=Shipping', '-serverconfig=Shipping', '-utf8output',
-            '-DLCName=BuildingSkills', '-build', '-platform=Win64',
+            '-DLCName=BuildingSkills', '-platform=Win64',
             '-nocompileeditor', '-installed', "-UbtArgs=-NoUBA -MaxParallelActions=$MaxParallelActions"
         )
-        if ($Action -eq 'Release') { $uatArgs += @('-server', '-serverplatform=Win64+Linux', '-merge') }
+        if ($Action -eq 'Release') { $uatArgs += @('-build', '-server', '-serverplatform=Win64+Linux', '-merge') }
         if ($Action -eq 'Install') {
             Require-Path (Join-Path $GameRoot 'FactoryGame')
             if (Get-Process -Name FactoryGame, FactoryGameSteam, FactoryGameEGS, FactoryGameSteam-Win64-Shipping, FactoryGameEGS-Win64-Shipping -ErrorAction SilentlyContinue) {

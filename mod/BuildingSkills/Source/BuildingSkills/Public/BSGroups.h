@@ -4,6 +4,7 @@
 #include "FGSaveInterface.h"
 #include "FGRemoteCallObject.h"
 #include "Subsystem/ModSubsystem.h"
+#include "BSTransform.h"
 #include "BSGroups.generated.h"
 
 class AFGBuildable;
@@ -57,6 +58,22 @@ struct BUILDINGSKILLS_API FBSSelection
 UENUM()
 enum class EBSGroupOperation : uint8 { Group, Merge, Ungroup };
 
+USTRUCT()
+struct FBSNativeTransform
+{
+    GENERATED_BODY()
+    UPROPERTY() FBSBuildingRef Building;
+    UPROPERTY() FTransform Target;
+    UPROPERTY() int32 InstanceIndex = INDEX_NONE;
+};
+
+class BUILDINGSKILLS_API FBSTransformNative
+{
+public:
+    static bool Apply(UWorld* World, const FBSNativeTransform& Change);
+    static bool Supports(AFGBuildable* Actor, FString& Error);
+};
+
 /** World-independent hierarchy operations, also used by automation tests. */
 struct BUILDINGSKILLS_API FBSGroupTree
 {
@@ -91,6 +108,15 @@ public:
     void InvalidateLightweightLookup(TSubclassOf<AFGBuildable> Class) { LightweightLookup.Remove(Class); LightweightCounts.Remove(Class); }
     bool Execute(AFGCharacterPlayer* Player, EBSGroupOperation Operation, const FBSSelection& Selection,
         int32 ExpectedRevision, FBSSelection& Result, FString& Error);
+    bool TransformSelection(AFGCharacterPlayer* Player, const FBSSelection& Selection, int32 ExpectedRevision,
+        EBSTransformMode Mode, double Amount, FVector Translation, FBSSelection& Result, FString& Error);
+    UFUNCTION(NetMulticast, Reliable) void Multicast_Transforms(const TArray<FBSNativeTransform>& Changes);
+    UFUNCTION() void OnRep_TransformSnapshot();
+    virtual void Tick(float DeltaSeconds) override;
+    // Native actors/instance records save their own transforms. This transient
+    // snapshot only brings late-joining clients up to date in this session.
+    UPROPERTY(Transient, ReplicatedUsing=OnRep_TransformSnapshot) TArray<FBSNativeTransform> TransformSnapshot;
+    UPROPERTY(Transient) TArray<FBSNativeTransform> PendingTransforms;
     UPROPERTY(SaveGame, Replicated) TArray<FBSGroup> Groups;
     UPROPERTY(SaveGame) int32 SchemaVersion = 1;
     UPROPERTY(Replicated) int32 Revision = 0;
@@ -112,4 +138,8 @@ public:
     void Server_Apply(EBSGroupOperation Operation, const FBSSelection& Selection, int32 ExpectedRevision);
     UFUNCTION(Client, Reliable)
     void Client_Result(bool Success, const FBSSelection& Selection, const FString& Message, int32 Revision);
+    UFUNCTION(Server, Reliable)
+    void Server_Transform(const FBSSelection& Selection, int32 ExpectedRevision, EBSTransformMode Mode, double Amount, FVector Translation);
+    UFUNCTION(Client, Reliable)
+    void Client_TransformResult(bool Success, const FBSSelection& Selection, const FString& Message, int32 Revision);
 };

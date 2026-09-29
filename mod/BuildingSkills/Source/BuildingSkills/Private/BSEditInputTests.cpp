@@ -121,7 +121,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
     if (TestNotNull(TEXT("Edit operations context exists"), Operations))
     {
-        TestEqual(TEXT("Three configurable commands"), Operations->GetMappings().Num(), 3);
+        TestEqual(TEXT("Four configurable commands"), Operations->GetMappings().Num(), 4);
         UInputAction* Map = NewObject<UInputAction>();
         Vanilla->MapKey(Map, EKeys::M);
         Subsystem.RequestRebuildControlMappings(Options);
@@ -145,6 +145,20 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         Key(EKeys::M, true); Tick();
         TestTrue(TEXT("Map restored after closing Edit"), Fired(Map));
         Key(EKeys::M, false); Tick();
+    }
+    auto* Transform = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Transform.MC_Transform"));
+    if (TestNotNull(TEXT("Transform context exists"), Transform))
+    {
+        TestEqual(TEXT("Six movements, wheel directions and three modifiers"), Transform->GetMappings().Num(), 11);
+        Subsystem.AddMappingContext(Transform, 1001);
+        Subsystem.RequestRebuildControlMappings(Options);
+        for (const auto& TransformMapping : Transform->GetMappings())
+        {
+            TestTrue(TEXT("Transform control is rebindable"), TransformMapping.IsPlayerMappable());
+            Key(TransformMapping.Key, true); Tick();
+            TestTrue(TEXT("Transform binding activates"), Fired(TransformMapping.Action));
+            Key(TransformMapping.Key, false); Tick();
+        }
     }
     World->DestroyWorld(false);
     return true;

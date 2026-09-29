@@ -61,6 +61,23 @@ UBSEditModeComponent* UBSEditModeComponent::ForGun(AFGBuildGun* Gun)
 void UBSEditModeComponent::InstallHooks()
 {
     if (!WITH_EDITOR) {
+    SUBSCRIBE_METHOD(AFGBuildGun::OnModeSelectPressed, [](auto& Scope, AFGBuildGun* Gun)
+    {
+        if (auto* Edit = ForGun(Gun); Edit && Edit->bTransforming)
+        { if (Edit->InputAllowed()) Edit->CycleTransform(1); Scope.Cancel(); }
+    });
+    SUBSCRIBE_METHOD(AFGBuildGun::OnModeSelectReleased, [](auto& Scope, AFGBuildGun* Gun)
+    { if (auto* Edit = ForGun(Gun); Edit && Edit->bTransforming) Scope.Cancel(); });
+    SUBSCRIBE_METHOD(AFGBuildGun::CycleBuildMode, [](auto& Scope, AFGBuildGun* Gun, int32 Delta)
+    { if (auto* Edit = ForGun(Gun); Edit && Edit->bTransforming) { Edit->CycleTransform(Delta); Scope.Cancel(); } });
+    SUBSCRIBE_METHOD(AFGBuildGun::Scroll, [](auto& Scope, AFGBuildGun* Gun, int32 Delta)
+    { if (auto* Edit = ForGun(Gun); Edit && Edit->bTransforming) { Edit->ScrollTransform(Delta); Scope.Cancel(); } });
+    SUBSCRIBE_METHOD(UFGGameUI::Native_HandlePauseGamePressed, [](auto& Scope, UFGGameUI* UI)
+    {
+        auto* Pawn = UI->GetOwningPlayerPawn();
+        auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+        if (Edit && Edit->bTransforming && Edit->InputAllowed()) { Edit->EndTransform(); Scope.Cancel(); }
+    });
     // Editor FactoryGame methods are stubs. Hook real game binaries only.
     SUBSCRIBE_METHOD(UFGBuildGunStateDismantle::UpdatePeekDismantleRefunds,
         [](auto& Scope, UFGBuildGunStateDismantle* State, bool NoBuildCost)
@@ -232,6 +249,25 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     }
     const auto Bind = [&](const TCHAR* Path, auto Handler)
     { if (auto* Action = LoadObject<UInputAction>(nullptr, Path)) Input->BindAction(Action, ETriggerEvent::Started, this, Handler); };
+    Bind(TEXT("/BuildingSkills/Inputs/IA_Transform.IA_Transform"), &ThisClass::OnTransform);
+    for (int32 Direction : {1, -1})
+    {
+        const TCHAR* Name = Direction > 0 ? TEXT("ScrollUp") : TEXT("ScrollDown");
+        const FString Path = FString::Printf(TEXT("/BuildingSkills/Inputs/IA_%s.IA_%s"), Name, Name);
+        if (auto* Action = LoadObject<UInputAction>(nullptr, *Path))
+            Input->BindAction(Action, ETriggerEvent::Started, this, &ThisClass::ScrollTransform, Direction);
+    }
+    const TCHAR* MoveNames[] = {TEXT("Forward"), TEXT("Backward"), TEXT("Left"), TEXT("Right"), TEXT("Up"), TEXT("Down")};
+    for (int32 I = 0; I < 6; ++I)
+    {
+        const FString Path = FString::Printf(TEXT("/BuildingSkills/Inputs/IA_Move%s.IA_Move%s"), MoveNames[I], MoveNames[I]);
+        if (auto* Action = LoadObject<UInputAction>(nullptr, *Path))
+        {
+            Input->BindAction(Action, ETriggerEvent::Triggered, this, &ThisClass::OnMove, I);
+            Input->BindAction(Action, ETriggerEvent::Completed, this, &ThisClass::OnMoveReleased, I);
+            Input->BindAction(Action, ETriggerEvent::Canceled, this, &ThisClass::OnMoveReleased, I);
+        }
+    }
     Bind(TEXT("/BuildingSkills/Inputs/IA_Group.IA_Group"), &ThisClass::OnGroup);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Merge.IA_Merge"), &ThisClass::OnMerge);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Ungroup.IA_Ungroup"), &ThisClass::OnUngroup);
@@ -282,7 +318,7 @@ void UBSEditModeComponent::OnUngroup() { Request(EBSGroupOperation::Ungroup); }
 
 void UBSEditModeComponent::Request(EBSGroupOperation Operation)
 {
-    if (!IsEditing() || !InputAllowed() || bRequestPending) return;
+    if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending) return;
     auto* System = ABSGroupSubsystem::Get(GetWorld());
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* PC = Player ? Cast<AFGPlayerController>(Player->GetController()) : nullptr;
@@ -384,13 +420,34 @@ void UBSEditModeComponent::UpdateSelection(UFGBuildGunStateDismantle* State)
     }
     if (PendingRevision != INDEX_NONE && System && System->Revision >= PendingRevision)
     {
+        if (bWaitingForTransformReplication)
+        {
+            TArray<FBSBuildingRef> Members = PendingResult.Buildings;
+            for (const auto& Id : PendingResult.Groups) FBSGroupTree::Collect(System->Groups, Id, Members);
+            for (const auto& Ref : Members) if (!Ref.IsAlive(GetWorld())) return;
+            bWaitingForTransformReplication = false;
+        }
         Selection = PendingResult;
+        if (bTransforming)
+        {
+            const auto Members = ResolveSelection(Selection);
+            TransformPivot = FVector::ZeroVector;
+            for (const auto& Ref : Members) TransformPivot += Ref.Location();
+            if (!Members.IsEmpty()) TransformPivot /= Members.Num();
+        }
         PendingResult = {};
         PendingRevision = INDEX_NONE;
         bRequestPending = false;
         bSelectionDirty = true;
     }
+    if (bWaitingForTransformReplication) return;
     if (Selection.Buildings.RemoveAll([&](const FBSBuildingRef& B) { return !B.IsAlive(GetWorld()); }) > 0) bSelectionDirty = true;
+    if (bTransforming)
+    {
+        Hover = {};
+        SyncDismantle(State);
+        return;
+    }
     Hover = HoverSelection(State);
     // This is driven by the game's existing multi-select input binding, including remaps.
     const bool Multi = State->mIsMultiSelectActive;
@@ -500,6 +557,7 @@ void UBSEditModeComponent::ClearSelection()
     ResolvedCount = 0;
     ExpectedPendingCount = 0;
     PendingRevision = INDEX_NONE;
+    bWaitingForTransformReplication = false;
     bRequestPending = false; bMultiHeld = false; bSelectionDirty = true;
     ReleaseHighlights();
 }
@@ -553,9 +611,10 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
         if (auto* PC = Cast<APlayerController>(Player->GetController()))
         {
             Indicator = CreateWidget<UBSEditModeWidget>(PC, UBSEditModeWidget::StaticClass());
-            if (Indicator) Indicator->AddToPlayerScreen();
+            if (Indicator) { Indicator->ForceVolatile(true); Indicator->AddToPlayerScreen(); }
         }
     }
+    TickTransform();
     UpdateNativeGunHUD(IsEditing());
     UpdateControlHints(IsEditing() && InputAllowed());
     if (Indicator) Indicator->SetVisibility(InputAllowed() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
@@ -585,6 +644,7 @@ void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
 
 void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 {
+    EndTransform();
     UpdateNativeGunHUD(false);
     UpdateControlHints(false);
     if (InputSubsystem.IsValid() && OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
@@ -610,9 +670,11 @@ void UBSEditModeComponent::ReleaseInput()
 {
     if (InputSubsystem.IsValid())
     {
+        if (TransformContext) InputSubsystem->RemoveMappingContext(TransformContext);
         if (ToggleContext) InputSubsystem->RemoveMappingContext(ToggleContext);
         if (OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
     }
+    TransformContext = nullptr;
     ToggleContext = nullptr;
     OperationsContext = nullptr;
     if (!BoundInput) return;
@@ -625,6 +687,13 @@ void UBSEditModeComponent::ReleaseInput()
 
 FText UBSEditModeComponent::GetStatusText() const
 {
+    if (bTransforming)
+    {
+        const FVector Steps = TransformSteps();
+        return FText::FromString(FString::Printf(TEXT("EDIT  |  TRANSFORM\n%s  |  %d buildings\nMove: %g m  |  Rotate: %g°  |  Scale: ×%g%s%s"),
+            *FBSTransformMath::Name(TransformMode), ResolvedCount, Steps.X / 100, Steps.Y, Steps.Z,
+            Feedback.IsEmpty() ? TEXT("") : TEXT("\n"), *Feedback));
+    }
     auto* State = ActiveState.Get();
     auto Mode = State ? State->GetBuildGun()->GetCurrentBuildGunMode() : nullptr;
     const FBSSelection Current = EffectiveSelection();
@@ -652,12 +721,25 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
         return NAME_None;
     };
     TArray<TPair<FText, FText>> Hints;
+    if (bTransforming)
+    {
+        Hints.Emplace(FText::FromString(TEXT("Transform mode")), Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
+        Hints.Emplace(FText::FromString(FBSTransformMath::Name(TransformMode)), FText::FromString(Key(TEXT("BuildingSkills.ScrollUp")).ToString() + TEXT(" / ") + Key(TEXT("BuildingSkills.ScrollDown")).ToString()));
+        const FString Movement = Key(TEXT("BuildingSkills.MoveForward")).ToString() + TEXT(" / ") + Key(TEXT("BuildingSkills.MoveBackward")).ToString() + TEXT(" / ") + Key(TEXT("BuildingSkills.MoveLeft")).ToString() + TEXT(" / ") + Key(TEXT("BuildingSkills.MoveRight")).ToString();
+        Hints.Emplace(FText::FromString(TEXT("Move")), FText::FromString(Movement));
+        Hints.Emplace(FText::FromString(TEXT("Up / Down")), FText::FromString(Key(TEXT("BuildingSkills.MoveUp")).ToString() + TEXT(" / ") + Key(TEXT("BuildingSkills.MoveDown")).ToString()));
+        for (const auto* Name : {TEXT("Tiny"), TEXT("Small"), TEXT("Large")})
+            Hints.Emplace(FText::FromString(Name), Key(FName(FString(TEXT("BuildingSkills.")) + Name)));
+        Hints.Emplace(FText::FromString(TEXT("Return to Edit")), FText::FromString(TEXT("Esc")));
+        return Hints;
+    }
     Hints.Emplace(LOCTEXT("MultiSelectHint", "Multi-select"),
         Key(MappingName(MultiSelectAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle.MC_BuildGunDismantle"))));
     Hints.Emplace(LOCTEXT("SelectionModeHint", "Selection mode"),
         Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
     if (IsEditing())
     {
+        Hints.Emplace(LOCTEXT("TransformHint", "Transform"), Key(TEXT("BuildingSkills.Transform")));
         Hints.Emplace(LOCTEXT("GroupHint", "Group"), Key(TEXT("BuildingSkills.Group")));
         Hints.Emplace(LOCTEXT("MergeHint", "Merge"), Key(TEXT("BuildingSkills.Merge")));
         const FBSSelection Current = EffectiveSelection();

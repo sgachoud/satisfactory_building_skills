@@ -13,6 +13,9 @@
 - Edit opens on rebindable Alt+E. Group, Merge and Ungroup default to G/M/U.
   Normal/Blueprint/Group selection is shared with vanilla dismantle, using its existing
   configured multi-select and mode-switch controls. See docs/GROUPING.md.
-  Move/rotate/scale and skill progression are not in the current feature scope.
+  Transform (T) moves, rotates and scales supported buildings; Esc returns to Edit.
+  Movement follows the nearest horizontal axis to the camera facing.
+  See docs/TRANSFORM.md for controls and supported building types. Skill progression
+  remains outside the current scope.
 - Keep machine-specific absolute paths out of TESTING.md and references to other mods
   out of the README.

@@ -56,6 +56,10 @@ public:
     FText GetControlsText() const;
     TArray<TPair<FText, FText>> GetControlHints() const;
     bool IsEditing() const;
+    bool IsTransforming() const { return bTransforming; }
+    FVector GetTransformPivot() const { return TransformPivot; }
+    EBSTransformMode GetTransformMode() const { return TransformMode; }
+    void OnTransformResult(bool Success, const FBSSelection& Result, const FString& Message, int32 Revision);
 private:
     friend class FBSRuntimeSmoke;
     static UBSEditModeComponent* ForGun(AFGBuildGun* Gun);
@@ -64,6 +68,23 @@ private:
     void OnGroup();
     void OnMerge();
     void OnUngroup();
+    void OnTransform();
+    void EndTransform();
+    void CycleTransform(int32 Delta);
+    void ScrollTransform(int32 Delta);
+    void OnMove(int32 Direction);
+    void OnMoveReleased(int32 Direction);
+    void TickTransform();
+    int32 TransformStepTier() const;
+    FVector TransformSteps() const;
+    bool bTransforming = false;
+    bool bWaitingForTransformReplication = false;
+    EBSTransformMode TransformMode = EBSTransformMode::RotateX;
+    FVector TransformPivot = FVector::ZeroVector;
+    double NextMove[6] = {};
+    struct FTransformCommand { EBSTransformMode Mode; double Amount; FVector Translation; };
+    TArray<FTransformCommand> TransformCommands;
+    UPROPERTY(Transient) TObjectPtr<UInputMappingContext> TransformContext;
     void Request(EBSGroupOperation Operation);
     void LeaveEditMode(bool Unequip);
     void UpdateNativeGunHUD(bool Editing);

@@ -276,6 +276,8 @@ ABSGroupSubsystem::ABSGroupSubsystem()
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnServer_Replicate;
     bAlwaysRelevant = true;
     SetReplicates(true);
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = false;
 }
 
 ABSGroupSubsystem* ABSGroupSubsystem::Get(UWorld* World)
@@ -321,6 +323,7 @@ void ABSGroupSubsystem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
     DOREPLIFETIME(ABSGroupSubsystem, Groups);
     DOREPLIFETIME(ABSGroupSubsystem, Revision);
+    DOREPLIFETIME_CONDITION(ABSGroupSubsystem, TransformSnapshot, COND_InitialOnly);
 }
 
 void ABSGroupSubsystem::GatherDependencies_Implementation(TArray<UObject*>& Out)
@@ -348,6 +351,8 @@ void ABSGroupSubsystem::PostLoadGame_Implementation(int32, int32)
 
 void ABSGroupSubsystem::RemoveLightweight(TSubclassOf<AFGBuildable> Class, int32 Index)
 {
+    TransformSnapshot.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.LightweightClass == Class && C.InstanceIndex == Index; });
+    PendingTransforms.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.LightweightClass == Class && C.InstanceIndex == Index; });
     if (!HasAuthority()) return;
     const FBSBuildingRef Removed = FBSBuildingRef::FromLightweight(GetWorld(), Class, Index);
     if (!Removed.LightweightClass) return;
@@ -358,6 +363,8 @@ void ABSGroupSubsystem::RemoveLightweight(TSubclassOf<AFGBuildable> Class, int32
 
 void ABSGroupSubsystem::RemoveBuilding(AFGBuildable* Building)
 {
+    TransformSnapshot.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });
+    PendingTransforms.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });
     if (!HasAuthority() || !IsValid(Building) || Building->GetIsLightweightTemporary()) return;
     bool Changed = false;
     for (auto& G : Groups)

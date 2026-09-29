@@ -1,19 +1,20 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.1.1.
+Windows game, CL 502094. Current package: Building Skills 0.2.0.
 
 ## Completed checks
 
 - FactoryEditor Win64 Development compiled and linked successfully.
 - Input assets and the shortcut widget-hook registration were generated with zero errors.
-- All four editor automation tests passed without test warnings or failures:
+- All five editor automation tests passed without test warnings or failures:
   `Groups.NestMergeUngroup`, `Groups.MergePreservesChildren`,
-  `Groups.MetadataSaveRoundTrip`, and `Input.EditChord` under `BuildingSkills`.
+  `Groups.MetadataSaveRoundTrip`, `Input.EditChord`, and `Transform.PivotAndInverse`
+  under `BuildingSkills`.
 - Steam Win64 Shipping packaging and installation succeeded. All seven installed
   files matched the archive by SHA-256. `Install` now performs this verification
   automatically and records `Saved/InstallationVerification.json`.
-- The installed Shipping game passed all 35 runtime assertions in a fresh temporary
+- The installed Shipping game passed all 47 runtime assertions in a fresh temporary
   world. The test injects key events into the game's player input and uses the native
   mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
   targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
@@ -35,9 +36,23 @@ Windows game, CL 502094. Current package: Building Skills 0.1.1.
   inside the bottom-right shortcut grid. The native dismantle-only overlay is hidden
   during Edit and restored for dismantling.
 
+- Transform checks enter with T, inject the native R and mouse-wheel bindings,
+  and rotate a group containing one storage container and two lightweight foundations.
+  All ten modes and their inverse steps restore the original native transforms.
+  Invalid scaling is rejected without changing the hierarchy revision.
+- Held Ctrl plus Up moves that group along the camera-relative axis with the Tiny
+  step. Page Up moves along Z. The native Escape route restores normal Edit, keeps
+  the transformed selection, and does not open the pause menu.
+- The transform screenshot was inspected for the left status panel, active-axis
+  ring at the selection pivot, and replacement bottom hints. Modifier defaults were
+  checked against the installed reference: Tiny = Left Ctrl, Small = Left Alt,
+  Large = Left Shift. Configuration registration and the generated settings file
+  were confirmed in the packaged game.
+
 The runtime test blocks every save request and never loads an existing save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
-Logs and the screenshot are `Saved/RuntimeTest.log` and `Saved/RuntimeTest.png`,
+Logs and screenshots are `Saved/RuntimeTest.log`, `Saved/RuntimeTest.png`, and
+`Saved/TransformTest.png`,
 relative to this repository. Reproduce with `scripts/RuntimeTest.ps1 -Render` while
 Satisfactory is closed. Use `scripts/VerifyInstall.ps1` to recheck installed files.
 
@@ -63,11 +78,12 @@ while the player remains stationary.
 
 ## Remaining manual coverage
 
-Multiple placed blueprint expansion, complex nested selections in the game, live
-rebinding, actual save/reload, multiplayer, and uninstall compatibility still need
-the matrix below. The runtime fixture uses storage containers, lightweight foundations
+Transformed-building save/reload, collision and snapping across all supported building
+types, multiplayer/late join, every scale-axis visual, and transformed blueprint
+membership need manual coverage. Multiple placed blueprint expansion, complex nested
+selections, live rebinding, and uninstall compatibility also need the matrix below. The runtime fixture uses storage containers, lightweight foundations
 and default keys; it does not claim those broader cases or benchmark an existing
-large factory. This grouping build has not been packaged for Epic, Windows Server
+large factory. This build has not been packaged for Epic, Windows Server
 or Linux Server.
 
 Run `scripts/Mod.ps1 BuildEditor`, `scripts/Mod.ps1 EditAssets`, and
@@ -134,3 +150,22 @@ Use a separate test save containing machines, foundations and two placed bluepri
 
 Move/rotate/scale are not implemented in this iteration. Their compatibility checks
 from the design document apply when those operations are added.
+
+
+## Transform manual checks
+
+1. Select separate buildings, a blueprint, and nested groups in turn. Press T;
+   the selection must stay fixed while looking around and holding the selection key.
+2. Cycle all ten modes with the configured mode key. The colored rings/arrows and
+   bottom hint must follow the active axes. Scroll both directions and verify the
+   intended shared pivot and size changes. Check collision and subsequent snapping.
+3. Turn to face each cardinal direction and try all arrow keys, then Page Up/Down.
+   Rebind T, movement, modifiers and the normal Build Gun mode key; check the hints.
+   Change each tier's movement, rotation, multiplier and repeat delay in mod settings.
+4. Press Esc once: stay in Edit, retain the selection and changes, and restore Group,
+   Merge, Ungroup and selection-mode controls. Re-enter Transform and repeat.
+5. Try a selection containing a connected machine or spline building. The entire
+   transform should be rejected with an explanation, leaving all buildings unchanged.
+6. Save and reload a separate test world after mixed transformations; verify native
+   transforms, inventories, group membership and blueprint selection. Then repeat
+   with a host and client, late joining, and concurrent edits.

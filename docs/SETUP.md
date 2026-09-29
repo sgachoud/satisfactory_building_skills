@@ -116,3 +116,21 @@ environment is restored when the command completes; no system policy is changed.
 The build wrapper defaults to two compiler workers to keep shared precompiled-header
 memory use bounded. Override with `-MaxParallelActions` if appropriate for another
 machine. An initial shared-header rebuild can be much larger than a mod-only rebuild.
+
+
+### Isolated native compilation
+
+`BuildEditor`, Windows `Package`, and `Install` use `scripts/BuildNative.ps1` against
+this workflow's existing SDK binaries. UBT prepares reflection/response files with
+`-SkipBuild`; the script compiles only Building Skills and links in dependency order.
+This avoids rebuilding the SDK's large shared-PCH stubs after an access-friend change.
+It requires the documented, already-built SDK and pinned MSVC toolchain; it is not a
+replacement for building/upgrading the SDK itself. No SDK source is edited.
+
+If an interrupted full build removed SDK import-library caches, the script derives
+temporary imports from its existing cached objects under this repository's
+`Saved/NativeBuild`. It does not write those libraries into the shared checkout.
+Alpakit then cooks, packages and installs the new DLL. `-SkipNativeBuild` on `Install`
+is only for immediately reusing an already successful native build during iteration.
+The broader `Release` path still uses the standard full target build and is untested
+for the Transform feature.

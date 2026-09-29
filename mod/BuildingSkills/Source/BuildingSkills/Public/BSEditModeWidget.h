@@ -9,6 +9,8 @@ class BUILDINGSKILLS_API UBSEditModeWidget : public UUserWidget
     GENERATED_BODY()
 public:
     void SetHints(UUserWidget* Hints);
+    virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& Geometry, const FSlateRect& CullingRect,
+        FSlateWindowElementList& Out, int32 Layer, const FWidgetStyle& Style, bool Enabled) const override;
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
     virtual void ReleaseSlateResources(bool ReleaseChildren) override;

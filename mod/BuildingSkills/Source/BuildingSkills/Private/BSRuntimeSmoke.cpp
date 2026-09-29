@@ -16,6 +16,7 @@
 #include "Components/UniformGridSlot.h"
 #include "Components/BackgroundBlur.h"
 #include "FGRecipe.h"
+#include "FGInputLibrary.h"
 #include "FGCharacterPlayer.h"
 #include "FGGameMode.h"
 #include "FGSaveSession.h"
@@ -53,6 +54,8 @@ public:
         static uint64 RebuildBaseline = 0, RefundBaseline = 0;
         static int32 ObjectBaseline = 0, WidgetBaseline = 0;
         static TArray<FBSBuildingRef> StressBuildings;
+        static TArray<FBSBuildingRef> TransformBuildings;
+        static FVector MoveStart;
         const double Now = FPlatformTime::Seconds();
         if (Now - Started > 240)
         {
@@ -322,6 +325,107 @@ public:
             Check(TEXT("Cached lightweight lookup never adopts a reused slot elsewhere"), !Original.IsAlive(World));
             break;
         }
+        case 58:
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 59:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Edit->ClearSelection();
+            TransformBuildings = {FBSBuildingRef::FromActor(Buildings[1].Get()), StressBuildings[1], StressBuildings[2]};
+            Edit->Selection.Buildings = TransformBuildings;
+            Edit->OnGroup();
+            break;
+        case 60: Key(EKeys::T, true); break;
+        case 61:
+            Key(EKeys::T, false);
+            Check(TEXT("T enters Transform with all three group members"), Edit->bTransforming && Edit->ResolvedCount == 3 && Edit->TransformMode == EBSTransformMode::RotateX);
+            Check(TEXT("Transform replaces normal edit hints"), Edit->GetControlsText().ToString().Contains(TEXT("Return to Edit")) && !Edit->GetControlsText().ToString().Contains(TEXT("Multi-select")) && !Edit->GetControlsText().ToString().Contains(TEXT("Merge")));
+            for (const TCHAR* Name : {TEXT("InfiniteNudge.TinyNudge"), TEXT("InfiniteNudge.SmallNudge"), TEXT("InfiniteNudge.LargeNudge")})
+                UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME NUDGE REFERENCE: %s=%s"), Name, *UFGInputLibrary::GetInputActionNameAsText_Keyboard(PC,FName(Name)).ToString());
+            Key(EKeys::R, true); break;
+        case 62:
+            Key(EKeys::R, false);
+            Check(TEXT("Native R changes transform mode without changing selection mode"), Edit->TransformMode == EBSTransformMode::RotateY && Edit->Selection.Groups.Num() == 1);
+            Key(EKeys::MouseScrollUp, true);
+            break;
+        case 63:
+        {
+            Key(EKeys::MouseScrollUp, false);
+            const auto Members = Edit->ResolveSelection(Edit->Selection);
+            bool Moved = Members.Num() == 3;
+            FVector Pivot = FVector::ZeroVector;
+            for (const auto& Ref : TransformBuildings) Pivot += Ref.Transform.GetLocation();
+            Pivot /= 3;
+            for (int32 I=0; I<Members.Num() && I<3; ++I)
+            {
+                const auto Expected = FBSTransformMath::Apply(TransformBuildings[I].Transform, Pivot, EBSTransformMode::RotateY, 15, FVector::ZeroVector);
+                const auto Actual = Members[I].LightweightClass ? Members[I].Transform : Members[I].Actor->GetActorTransform();
+                Moved &= Actual.Equals(Expected, .01);
+            }
+            Check(TEXT("Mouse wheel rotates actor and native lightweight records around shared pivot"), Moved);
+            Edit->ScrollTransform(-1);
+            break;
+        }
+        case 64:
+        {
+            bool AllModes = true;
+            FBSSelection Selected = Edit->Selection, Result;
+            FString Error;
+            for (int32 I=0; I<10; ++I)
+            {
+                const auto Mode = EBSTransformMode(I);
+                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<4 ? 15 : 1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
+                Selected = Result;
+                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<4 ? -15 : 1.0/1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
+                Selected = Result;
+            }
+            Edit->Selection = Selected;
+            for (const auto& Ref : TransformBuildings)
+                AllModes &= Ref.LightweightClass ? Ref.IsAlive(World) : Ref.Actor->GetActorTransform().Equals(Ref.Transform,.01);
+            Check(TEXT("All ten modes transform and inverse correctly in native game data"), AllModes);
+            auto* LW = AFGLightweightBuildableSubsystem::Get(World);
+            const auto& Ref = TransformBuildings[1];
+            auto* Data = LW->GetRuntimeDataForBuildableClassAndIndex(Ref.LightweightClass, Ref.ResolveIndex(World));
+            Check(TEXT("Transformed lightweight still has collision and visual handles"), Data && Data->IsValid() && Data->Handles[0]->IsInstanced());
+            const int32 OldRevision = Groups->Revision;
+            const bool Invalid = Groups->TransformSelection(Player, Selected, OldRevision, EBSTransformMode::ScaleX, -2, FVector::ZeroVector, Result, Error);
+            Check(TEXT("Invalid transform is rejected without partial mutation"), !Invalid && Groups->Revision == OldRevision);
+            Edit->TransformMode = EBSTransformMode::RotateX;
+            bool Cycle = true;
+            for (int32 I=1; I<=10; ++I) { Gun->CycleBuildMode(1); Cycle &= int32(Edit->TransformMode) == I%10; }
+            Check(TEXT("Mode cycles in requested ten-mode order and wraps"), Cycle);
+            break;
+        }
+        case 65:
+            MoveStart = TransformBuildings[0].Actor->GetActorLocation();
+            TestBuilding.Reset();
+            PC->SetControlRotation(FRotator(0,90,0));
+            Key(EKeys::LeftControl,true); Key(EKeys::Up,true);
+            break;
+        case 66:
+        {
+            Key(EKeys::Up,false); Key(EKeys::LeftControl,false);
+            const FVector MovementDelta = TransformBuildings[0].Actor->GetActorLocation() - MoveStart;
+            Check(TEXT("Arrow movement follows facing, uses held Tiny step and keeps group selection"), MovementDelta.Y >= 20 && FMath::Abs(MovementDelta.X)<.01 && FMath::Abs(MovementDelta.Z)<.01 && Edit->Selection.Groups.Num()==1);
+            MoveStart = TransformBuildings[0].Actor->GetActorLocation();
+            Key(EKeys::PageUp,true); break;
+        }
+        case 67:
+            Key(EKeys::PageUp,false);
+            Check(TEXT("Page Up moves selected buildings along Z"), TransformBuildings[0].Actor->GetActorLocation().Z > MoveStart.Z);
+            TestBuilding.Reset();
+            PC->SetControlRotation((Edit->TransformPivot - Player->GetPawnViewLocation()).Rotation());
+            break;
+        case 68:
+            if (!FParse::Param(FCommandLine::Get(),TEXT("nullrhi"))) FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsTransformTest.png"),true,false);
+            break;
+        case 69:
+            // Exercise the native Escape route used by the pause input.
+            Player->GetGameUI()->Native_HandlePauseGamePressed();
+            break;
+        case 70:
+            Check(TEXT("Escape returns to normal Edit and keeps transformed selection"), Edit->IsEditing() && !Edit->bTransforming && Edit->Selection.Groups.Num()==1 && !UGameplayStatics::IsGamePaused(World));
+            Check(TEXT("Normal edit controls return after Escape"), Edit->GetControlsText().ToString().Contains(TEXT("Multi-select")) && Edit->GetControlsText().ToString().Contains(TEXT("Transform")));
+            break;
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
@@ -337,7 +441,7 @@ public:
                         *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
         }
-        if (++Samples < 58) return true;
+        if (++Samples < 71) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;

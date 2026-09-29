@@ -87,7 +87,7 @@ operations.set_editor_property("m_parent_context", edit_root)
 operations.set_editor_property("m_display_name", "Building Skills - Edit")
 operations.set_editor_property("m_menu_priority", 201.0)
 operation_mappings = []
-for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U")):
+for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U"), ("Transform", "T")):
     operation = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
     operation.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
     operation.set_editor_property("consume_input", True)
@@ -126,6 +126,10 @@ for (path, property_name, native_class), blueprint in zip(registrations, bluepri
         classes.append(native_class.static_class())
     cdo.set_editor_property(property_name, classes)
     if property_name == "remote_call_objects":
+        configurations = list(cdo.get_editor_property("mod_configurations"))
+        if unreal.BSTransformConfiguration.static_class() not in configurations:
+            configurations.append(unreal.BSTransformConfiguration.static_class())
+        cdo.set_editor_property("mod_configurations", configurations)
         # Widget_KeyShortcuts is a fixed keyboard shortcut list, not an enhanced
         # input hint bar. Extend its actual panel using SML's supported widget hook.
         hooks = list(cdo.get_editor_property("widget_blueprint_hooks"))
@@ -144,3 +148,40 @@ for (path, property_name, native_class), blueprint in zip(registrations, bluepri
     if not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, only_if_is_dirty=False):
         raise RuntimeError(f"Failed to register grouping content in {path}")
 unreal.log("BuildingSkills grouping assets and registrations saved.")
+
+# A separate scoped context replaces normal Edit operations while transforming.
+transform = get_or_create(f"{ROOT}/MC_Transform", unreal.FGChildInputMappingContext)
+transform.set_editor_property("m_parent_context", edit_root)
+transform.set_editor_property("m_display_name", "Building Skills - Transform")
+transform.set_editor_property("m_menu_priority", 202.0)
+transform_mappings = []
+for name, label, default_key in (
+    ("ScrollUp", "Increase Rotation / Scale", "MouseScrollUp"), ("ScrollDown", "Decrease Rotation / Scale", "MouseScrollDown"),
+    ("MoveForward", "Move Forward", "Up"), ("MoveBackward", "Move Backward", "Down"),
+    ("MoveLeft", "Move Left", "Left"), ("MoveRight", "Move Right", "Right"),
+    ("MoveUp", "Move Up", "PageUp"), ("MoveDown", "Move Down", "PageDown"),
+    ("Tiny", "Tiny Transform Step", "LeftControl"), ("Small", "Small Transform Step", "LeftAlt"),
+    ("Large", "Large Transform Step", "LeftShift"),
+):
+    action = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
+    action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+    action.set_editor_property("consume_input", True)
+    action.set_editor_property("trigger_when_paused", False)
+    action.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=action)])
+    settings = action.get_editor_property("player_mappable_key_settings")
+    if settings is None:
+        settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=action)
+    settings.set_editor_property("name", f"BuildingSkills.{name}")
+    settings.set_editor_property("display_name", label)
+    settings.set_editor_property("display_category", "Building Skills")
+    settings.set_editor_property("is_player_mappable", True)
+    action.set_editor_property("player_mappable_key_settings", settings)
+    key = unreal.Key()
+    key.set_editor_property("key_name", default_key)
+    mapping = unreal.EnhancedActionKeyMapping(action=action, key=key)
+    mapping.set_editor_property("display_button_hint", False)
+    transform_mappings.append(mapping)
+    unreal.EditorAssetLibrary.save_loaded_asset(action, only_if_is_dirty=False)
+transform.set_editor_property("mappings", transform_mappings)
+unreal.EditorAssetLibrary.save_loaded_asset(transform, only_if_is_dirty=False)
+unreal.log("BuildingSkills Transform input and configuration registered.")

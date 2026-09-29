@@ -1,8 +1,8 @@
 # Building Skills
 
-A Satisfactory/SML mod for persistent, nested building groups. Its **Edit** mode
+A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.1.1`.
+The mod reference is `BuildingSkills`; the development version is `0.2.0`.
 
 ## Controls
 
@@ -14,8 +14,9 @@ The mod reference is `BuildingSkills`; the development version is `0.1.1`.
 | G | Group |
 | M | Merge |
 | U | Ungroup, available for exactly one selected group |
+| T | Enter Transform with the current selection |
 
-The four Building Skills commands can be changed in the game's keybinding settings.
+The Building Skills commands can be changed in the game's keybinding settings.
 Multi-select and selection-mode switching use the existing game bindings. Group,
 Merge, and Ungroup are active only in Edit; M retains its usual Map action elsewhere.
 The left panel displays selection mode and counts. Edit commands use the native
@@ -47,9 +48,9 @@ selections above that limit are rejected rather than partially processed.
 ## Save data and compatibility
 
 Groups are optional metadata owned by a saved, replicated mod subsystem. Buildings
-keep their original classes, transforms, inventories, connections, and blueprint
-membership. Group mutations are validated on the server; all peers need the mod.
-Moving, rotating, scaling, group renaming, and skill progression are not implemented.
+keep their native classes, inventories and blueprint membership. Transform updates
+the native saved transforms directly. Mutations are validated on the server; all
+peers need the mod. Group renaming and skill progression are not implemented.
 
 Actor-backed buildings use game object references. Lightweight buildings are resolved
 by class, recipe, and transform, with uniqueness checks; runtime array indices are
@@ -60,6 +61,19 @@ Preserving vanilla buildings after removing the mod is a design target, not yet 
 verified compatibility guarantee. See [verification](docs/TESTING.md) for save/load,
 multiplayer, and uninstall checks. Saving without the mod should not be expected to
 preserve the group hierarchy for later reinstalls.
+
+## Transform
+
+Press **T** in Edit to hold the selection fixed and transform it. **R** cycles
+Rotate X / Y / Z / XYZ, then Scale XY / XZ / YZ / X / Y / Z. Scroll to apply the
+active operation; the colored axis display marks the active axes at the shared pivot.
+Arrow keys move relative to your facing; Page Up / Down move vertically. **Esc**
+returns to normal Edit, keeping the changes and selection.
+
+Movement bindings, T, and the three held step modifiers are rebindable. Step amounts
+and repeat delay are in **Mods > Building Skills**. See [Transform](docs/TRANSFORM.md)
+for defaults, scale semantics, and current building-type limits. Connected networks
+and spline buildings are rejected before any member of the selection changes.
 
 ## Development
 
@@ -79,7 +93,8 @@ OpenAI Codex assisted with plugin setup, Edit input and HUD, nested grouping,
 selection integration, build and asset scripts, installation verification, and
 automated validation in both the editor and the packaged game. Follow-up work
 covered native hint layout, the shortcut helper, refund-update batching, cached
-lightweight lookup, and packaged group-hover regression checks.
+lightweight lookup, packaged group-hover regression checks, transform controls,
+native transform updates, the axis display, and transform validation.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 
