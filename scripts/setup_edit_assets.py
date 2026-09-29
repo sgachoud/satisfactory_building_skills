@@ -125,6 +125,21 @@ for (path, property_name, native_class), blueprint in zip(registrations, bluepri
     if native_class.static_class() not in classes:
         classes.append(native_class.static_class())
     cdo.set_editor_property(property_name, classes)
+    if property_name == "remote_call_objects":
+        # Widget_KeyShortcuts is a fixed keyboard shortcut list, not an enhanced
+        # input hint bar. Extend its actual panel using SML's supported widget hook.
+        hooks = list(cdo.get_editor_property("widget_blueprint_hooks"))
+        hooks = [h for h in hooks if str(h.get_editor_property("new_widget_name")) != "BuildingSkillsEditShortcut"]
+        hook = unreal.new_object(unreal.WidgetBlueprintHookData, outer=cdo)
+        hook.set_editor_property("widget_class", unreal.load_class(None,
+            "/Game/FactoryGame/Interface/UI/Widget_KeyShortcuts.Widget_KeyShortcuts_C"))
+        hook.set_editor_property("new_widget_class", unreal.BSEditShortcutWidget.static_class())
+        hook.set_editor_property("new_widget_name", "BuildingSkillsEditShortcut")
+        hook.set_editor_property("parent_widget_name", "mGridBoxShortcuts")
+        slot = unreal.new_object(unreal.load_class(None, "/Script/SML.WidgetBlueprintHookSlot_Generic"), outer=hook)
+        hook.set_editor_property("slot_configuration", slot)
+        hooks.append(hook)
+        cdo.set_editor_property("widget_blueprint_hooks", hooks)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     if not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, only_if_is_dirty=False):
         raise RuntimeError(f"Failed to register grouping content in {path}")

@@ -162,5 +162,8 @@ switch ($Action) {
             $uatArgs += "-CopyToGameDirectory_Windows=$resolvedGameRoot"
         }
         Invoke-Checked (Join-Path $batchRoot 'RunUAT.bat') $uatArgs
+        if ($Action -eq 'Install') {
+            & (Join-Path $PSScriptRoot 'VerifyInstall.ps1') -SmlRoot $SmlRoot -GameRoot $GameRoot
+        }
     }
 }

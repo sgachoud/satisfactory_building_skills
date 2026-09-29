@@ -42,13 +42,21 @@ metadata cleanup.
 ## Input and dismantle integration
 
 The original Alt+E mapping is a child of the normal player-actions context.
-Its mapping enables the native button hint bar, so the configured shortcut appears
-in the bottom-right reminder. Group and Merge enable hints only in the Edit context;
+An SML widget hook adds the configured shortcut to the actual bottom-right keyboard
+shortcut grid. That grid does not consume enhanced-input button hints automatically.
+Runtime copies of the input contexts are bound through the local player's enhanced
+input subsystem. The Edit operation context is present only while Edit is open;
+the discoverable child-context assets retain the player-mappable settings and names.
+Owning the runtime copies prevents native context changes from removing the shortcut.
 Ungroup remains conditional on a single selected group in the Edit HUD.
-A separate explicitly bound Edit parent activates a discoverable child context for
-Group, Merge and Ungroup. The child carries player-mappable action settings.
 The vanilla dismantle state continues binding its own multi-select action and the
 Build Gun continues handling mode switching, including rebinding and its mode UI.
+
+Edit has a dedicated input component above equipment input. Its visible HUD replaces
+the native dismantle overlay while editing and restores it on exit. The input guard
+uses interaction widgets' native input-blocking flags: the gun HUD is itself an
+interaction widget, so rejecting every open interaction widget would disable the gun.
+Vanilla key labels resolve the keyboard context's mapping name, including remaps.
 
 Edit uses the native dismantle trace and highlighting machinery. Native hooks keep
 its trace, timing, disqualification and refunds, while replacing per-mode selection

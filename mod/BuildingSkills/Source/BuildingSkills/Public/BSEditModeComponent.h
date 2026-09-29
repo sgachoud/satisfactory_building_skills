@@ -1,7 +1,7 @@
 #pragma once
 #include "Components/ActorComponent.h"
+#include "Components/Widget.h"
 #include "FGDismantleModeDescriptor.h"
-#include "Input/FGBoundMappingContextHandle.h"
 #include "BSGroups.h"
 #include "BSEditModeComponent.generated.h"
 
@@ -10,6 +10,9 @@ class UEnhancedInputComponent;
 class UInputAction;
 class UBSEditModeWidget;
 class UFGBuildGunStateDismantle;
+class UFGInteractWidget;
+class UInputMappingContext;
+class UEnhancedInputLocalPlayerSubsystem;
 
 UCLASS()
 class BUILDINGSKILLS_API UBSGroupModeDescriptor : public UFGDismantleModeDescriptor
@@ -53,6 +56,7 @@ public:
     FText GetControlsText() const;
     bool IsEditing() const;
 private:
+    friend class FBSRuntimeSmoke;
     static UBSEditModeComponent* ForGun(AFGBuildGun* Gun);
     void OnToggleTriggered();
     void OnToggleReleased();
@@ -61,6 +65,8 @@ private:
     void OnUngroup();
     void Request(EBSGroupOperation Operation);
     void LeaveEditMode(bool Unequip);
+    void UpdateNativeGunHUD(bool Editing);
+    void ReleaseInput();
     void UpdateSelection(UFGBuildGunStateDismantle* State);
     FBSSelection HoverSelection(UFGBuildGunStateDismantle* State);
     FBSSelection EffectiveSelection() const;
@@ -77,10 +83,14 @@ private:
     UPROPERTY(Transient) FBSSelection Hover;
     UPROPERTY(Transient) FBSSelection PendingResult;
     UPROPERTY(Transient) TArray<TObjectPtr<AFGBuildable>> Highlighted;
-    TWeakObjectPtr<UEnhancedInputComponent> BoundInput;
+    UPROPERTY(Transient) TObjectPtr<UEnhancedInputComponent> BoundInput;
     TWeakObjectPtr<AFGBuildGun> EditGun;
+    TWeakObjectPtr<UFGInteractWidget> NativeGunHUD;
+    ESlateVisibility NativeGunHUDVisibility = ESlateVisibility::Visible;
     TWeakObjectPtr<UFGBuildGunStateDismantle> ActiveState;
-    FBoundMappingContextHandle OperationsContext;
+    UPROPERTY(Transient) TObjectPtr<UInputMappingContext> ToggleContext;
+    UPROPERTY(Transient) TObjectPtr<UInputMappingContext> OperationsContext;
+    TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> InputSubsystem;
     FBSSelection LastHover;
     FString Feedback;
     int32 PendingRevision = INDEX_NONE;

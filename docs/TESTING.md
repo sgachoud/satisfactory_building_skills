@@ -1,80 +1,61 @@
 # Verification
 
-## Grouping validation
+Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
+Windows game, CL 502094.
 
-Completed on 2026-09-29 with CSS Unreal 5.6.1 / SML 3.12.0:
+## Completed checks
 
-- FactoryEditor Win64 Development compiled and linked successfully, including
-  native-hook signature checks. Final build: 49.04 seconds.
-- Input assets and root module registrations were generated successfully: zero errors.
-- All four automation tests passed with no test warnings or failures:
+- FactoryEditor Win64 Development compiled and linked successfully.
+- Input assets and the shortcut widget-hook registration were generated with zero errors.
+- All four editor automation tests passed without test warnings or failures:
   `Groups.NestMergeUngroup`, `Groups.MergePreservesChildren`,
   `Groups.MetadataSaveRoundTrip`, and `Input.EditChord` under `BuildingSkills`.
-- PowerShell parsing, diff whitespace, and documentation privacy checks passed.
+- Steam Win64 Shipping packaging and installation succeeded. All seven installed
+  files matched the archive by SHA-256. `Install` now performs this verification
+  automatically and records `Saved/InstallationVerification.json`.
+- The installed Shipping game passed all 20 runtime assertions in a fresh temporary
+  world. The test injects key events into the game's player input and uses the native
+  mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
+  targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
+  Blueprint and Group modes, G grouping through the server request, M merging a
+  single into a group, U ungrouping, and Edit's dismantle protection.
+- The same run opens vanilla dismantle with F, selects multiple buildings, cycles
+  its available modes, holds the dismantle input, and verifies that both selected
+  buildings disappear while the unselected building survives.
+- The rendered screenshot was inspected: EDIT, the configured keyboard hints,
+  highlighted building, and bottom-right Edit shortcut are visible. The native
+  dismantle-only overlay is hidden during Edit and restored for dismantling.
 
-Steam Win64 Shipping packaging and installation passed (12 minutes 7 seconds,
-including a shared-header rebuild). All ten content packages were cooked. Alpakit
-installed the mod under the game's `FactoryGame/Mods/GameFeatures/BuildingSkills`
-folder. All seven installed package files matched the archive by SHA-256.
-The archive is `Saved/ArchivedPlugins/BuildingSkills/BuildingSkills-Windows.zip`
-relative to the shared SML project; the local verification receipt is
-`Saved/InstallationVerification.json` relative to this repository.
+The runtime test blocks every save request and never loads an existing save. Its
+hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
+Logs and the screenshot are `Saved/RuntimeTest.log` and `Saved/RuntimeTest.png`,
+relative to this repository. Reproduce with `scripts/RuntimeTest.ps1 -Render` while
+Satisfactory is closed. Use `scripts/VerifyInstall.ps1` to recheck installed files.
 
-The final editor build and all four tests were rerun successfully after the selection
-lifecycle fixes. The initial packaged build crashed during game startup: the
-`Server_DismantleActors_Implementation` RPC hook used `SUBSCRIBE_METHOD`, which
-cannot resolve a virtual implementation without a sample object. It now uses
-`SUBSCRIBE_UOBJECT_METHOD`, supplying the class default object to SML.
-Editor tests did not catch this because native hooks are disabled against editor stubs.
+The original startup-only checks missed two gameplay failures: the input guard
+rejected the Build Gun's own interaction widget, and the requested Edit mapping
+context was not activated. The guard now respects the widget's native blocking flags;
+runtime context copies are registered directly with the enhanced-input subsystem.
+The fixed keyboard shortcut list is extended with an SML widget hook rather than
+relying on enhanced-input hint metadata.
 
-Crash-fix verification on 2026-09-29:
+Editor automation additionally covers nested groups, group merges retaining children,
+one-level ungrouping and invalid selections, hierarchy normalization, save-property
+serialization, modifier remapping, rebindable commands, and the scoped M/Map conflict.
+Editor FactoryGame methods are stubs, so these tests cannot replace packaged-game checks.
 
-- FactoryEditor rebuilt successfully (41.53 seconds).
-- Steam Shipping rebuilt, packaged and installed successfully (1 minute 34 seconds).
-- All seven installed files matched the rebuilt archive by SHA-256.
-- The installed Shipping executable ran with `-nullrhi -nosound -unattended
-  -nosplash -NO_EOS_OVERLAY -ExecCmds=quit`. All ten Building Skills native hooks
-  registered, engine initialization completed, and the process exited with code 0.
-  The log is `Saved/CrashFix-Startup.log` relative to this repository. This checks
-  packaged startup only; it does not load a save or exercise selection/grouping.
+## Remaining manual coverage
 
-In-game behavior, actual game save/load,
-multiplayer and uninstall compatibility remain unverified. This grouping build has
-not been packaged for Epic, Windows Server or Linux Server.
+Multiple placed blueprint expansion, lightweight buildings, complex nested selections
+in the game, live rebinding, actual save/reload, multiplayer, and uninstall compatibility
+still need the matrix below. The runtime fixture uses actor-backed storage containers
+and default keys; it does not claim those broader cases. This grouping build has not
+been packaged for Epic, Windows Server or Linux Server.
 
 Run `scripts/Mod.ps1 BuildEditor`, `scripts/Mod.ps1 EditAssets`, and
-`scripts/Mod.ps1 Test`. Reports are in `Saved/Automation` relative to this repository;
-logs are in the ignored `Saved` folder. FactoryGame implementations in the editor
-checkout are stubs, so native hooks run only in packaged game builds.
-
-Automation covers:
-
-- Grouping individual buildings, nesting groups with singles, and deduplication.
-- Merge into an existing group, merging multiple groups, and retaining nested children.
-- Ungrouping exactly one level; rejecting multiple-group ungroup selections.
-- Individual extraction from an existing group, common parents, and cycle rejection.
-- Save-property serialization of IDs, parents, names and lightweight fingerprints;
-  runtime lightweight indices must not be serialized.
-- Alt+E chord behavior, input remapping of modifiers, rebindable G/M/U actions,
-  and the M/Map conflict being scoped to the Edit context.
+`scripts/Mod.ps1 Test` for editor checks. Reports are in `Saved/Automation`.
 
 ## In-game test matrix
-
-The first gameplay report found a missing shortcut reminder, Edit falling back to
-dismantle, and broken targeting. The follow-up enables native hint metadata, defers
-Edit activation until the gun is equipped, and lets native targeting finish before
-reading its validated selection. Ordinary single-object dismantling stays native;
-expanded selections preserve their hold timer across hover updates. Blueprint mode
-traces members rather than the whole-proxy hit volume.
-
-The final follow-up editor build passed (51.31 seconds), asset generation reported
-zero errors, and all four automation tests passed with no test warnings or failures.
-Input coverage now also checks native hint visibility, including conditional Ungroup.
-Steam Shipping packaging and installation passed (1 minute 35 seconds), and all seven
-installed files matched the archive. The installed game registered all ten hooks,
-completed engine initialization, and exited with code 0 in the headless startup check
-(`Saved/EditFix-Startup.log`). No save was loaded during that check.
-The reported gameplay interactions still require an in-game retest.
 
 Use a separate test save containing machines, foundations and two placed blueprints.
 
@@ -133,12 +114,3 @@ Use a separate test save containing machines, foundations and two placed bluepri
 
 Move/rotate/scale are not implemented in this iteration. Their compatibility checks
 from the design document apply when those operations are added.
-
-## Earlier entry-point checks
-
-Before grouping was added, FactoryEditor compilation, input asset generation,
-`BuildingSkills.Input.EditChord`, and Steam/Epic Windows packaging passed on
-2026-09-29. Those results covered the original Edit entry point, not the new selection
-and grouping implementation. Initial project/junction generation and root asset
-registration also passed. The editor warns about some shared-project Python metadata
-and junction capitalization; those are not gameplay validation.

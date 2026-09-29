@@ -63,8 +63,8 @@ For Edit-mode development, build the editor first. The input assets are committe
 to regenerate their definitions deliberately, run `scripts/Mod.ps1 EditAssets`.
 This updates the mod-owned input assets and the two root module registrations. The
 Edit toggle uses the vanilla Alt chord and player-actions parent context. A dedicated
-Edit parent context activates the child with Group/Merge/Ungroup mappings only while
-Edit is open. The game feature scans this directory for child input mapping contexts.
+Edit context with Group/Merge/Ungroup mappings is bound directly only while Edit is
+open. The game feature scans this directory for child input mapping contexts.
 Run `scripts/Mod.ps1 Test` for hierarchy, save-property and input regression
 coverage; reports are written under the repository's ignored `Saved/Automation` folder.
 
@@ -77,12 +77,24 @@ coverage; reports are written under the repository's ignored `Saved/Automation` 
 
 # Build, package and install with Alpakit; close Satisfactory first.
 .\scripts\Mod.ps1 Install
+
+# Recheck every installed package file against the archive by SHA-256.
+.\scripts\VerifyInstall.ps1
+
+# Exercise the installed game in a fresh temporary world; saving is blocked.
+.\scripts\RuntimeTest.ps1 -Render
 ```
 
 Build the editor and save content first. Linux packaging requires the matching
 Unreal cross-compilation toolchain. Alpakit writes archives under
 `<SML>/Saved/ArchivedPlugins/BuildingSkills`; the merged release upload is
 `BuildingSkills/BuildingSkills.zip` beneath `ArchivedPlugins`.
+
+Install also runs the SHA-256 check and writes `Saved/InstallationVerification.json`.
+The runtime check requires Satisfactory to be closed. It exits automatically and
+writes `Saved/RuntimeTest.log`; `-Render` also retains `Saved/RuntimeTest.png`.
+It does not load an existing save and only installs its save-blocking hook when the
+dedicated runtime-test command-line flag is present.
 
 Deployment can be configured in Alpakit for the existing local game installation:
 `F:/Programme et jeux/Steam/steamapps/common/Satisfactory`. Run the smoke test in

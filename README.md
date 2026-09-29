@@ -75,7 +75,8 @@ and SML 3.12.0, declaring game CL 502094 as its minimum.
 ## Codex participation
 
 OpenAI Codex assisted with plugin setup, Edit input and HUD, nested grouping,
-selection integration, build and asset scripts, and automated validation.
+selection integration, build and asset scripts, installation verification, and
+automated validation in both the editor and the packaged game.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

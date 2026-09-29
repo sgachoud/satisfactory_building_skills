@@ -3,6 +3,7 @@
 #include "BuildingSkills.h"
 #include "Buildables/FGBuildable.h"
 #include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
 #include "EnhancedPlayerInput.h"
 #include "Equipment/FGBuildGun.h"
 #include "Equipment/FGBuildGunDismantle.h"
@@ -18,6 +19,8 @@
 #include "Patching/NativeHookManager.h"
 #include "PlayerMappableKeySettings.h"
 #include "UObject/UnrealType.h"
+#include "UI/FGGameUI.h"
+#include "UI/FGInteractWidget.h"
 
 #define LOCTEXT_NAMESPACE "BuildingSkills"
 
@@ -169,9 +172,27 @@ void UBSEditModeComponent::InstallHooks()
 
 void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
 {
-    if (BoundInput.IsValid()) BoundInput->ClearBindingsForObject(this);
+    ReleaseInput();
     LeaveEditMode(false);
+    auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
+    auto* PC = Player ? Cast<APlayerController>(Player->GetController()) : nullptr;
+    if (!PC) return;
+    // Equipment input can block the pawn's component. Keep Edit commands above
+    // that component while allowing unrelated native controls to pass through.
+    Input = NewObject<UEnhancedInputComponent>(PC);
+    Input->Priority = 1000;
+    Input->bBlockInput = false;
+    Input->RegisterComponent();
+    PC->PushInputComponent(Input);
     BoundInput = Input;
+    InputSubsystem = PC->GetLocalPlayer() ? PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+    if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_BuildingSkills.MC_BuildingSkills")); Source && InputSubsystem.IsValid())
+    {
+        // Own a runtime copy so native player-context changes cannot remove it.
+        // Mappable names and actions remain identical to the settings assets.
+        ToggleContext = DuplicateObject<UInputMappingContext>(Source, this);
+        InputSubsystem->AddMappingContext(ToggleContext, 1000);
+    }
     bToggleHeld = false;
     ToggleAction = LoadObject<UInputAction>(nullptr, TEXT("/BuildingSkills/Inputs/IA_ToggleEditMode.IA_ToggleEditMode"));
     MultiSelectAction = LoadObject<UInputAction>(nullptr, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/IA_DismantleMultiSelect.IA_DismantleMultiSelect"));
@@ -192,9 +213,14 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
 bool UBSEditModeComponent::InputAllowed() const
 {
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
-    return Player && Player->IsLocallyControlled() && !Player->IsDrivingVehicle() && !Player->IsInPortal() &&
-        !Player->IsInteractWidgetOpen() && !UGameplayStatics::IsGamePaused(this) &&
-        Player->GetHealthComponent() && !Player->GetHealthComponent()->IsDead();
+    if (!Player || !Player->IsLocallyControlled() || Player->IsDrivingVehicle() || Player->IsInPortal() ||
+        UGameplayStatics::IsGamePaused(this) || !Player->GetHealthComponent() || Player->GetHealthComponent()->IsDead()) return false;
+    // The Build Gun itself opens an interact widget. Only other interaction
+    // windows (inventory, machine settings, etc.) should suspend gun input.
+    if (auto* UI = Player->GetGameUI())
+        for (auto* Widget : UI->GetInteractWidgetStack())
+            if (Widget && (Widget->mDisableBuildGunActions || Widget->mUseKeyboard || Widget->mUseMouse)) return false;
+    return true;
 }
 
 bool UBSEditModeComponent::IsEditing() const
@@ -452,10 +478,14 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
             if (IsEditing())
             {
                 bEnteringEdit = false;
-                if (auto* PC = Cast<AFGPlayerController>(Player->GetController()))
+                if (InputSubsystem.IsValid())
                 {
-                    auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_EditRoot.MC_EditRoot"));
-                    if (Context) OperationsContext = PC->BindMappingContext(Context, 1000, this);
+                    auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
+                    if (Context)
+                    {
+                        OperationsContext = DuplicateObject<UInputMappingContext>(Context, this);
+                        InputSubsystem->AddMappingContext(OperationsContext, 1000);
+                    }
                 }
                 UE_LOG(LogBuildingSkills, Display, TEXT("Edit mode active: %s"), *GetNameSafe(Gun->GetCurrentBuildGunMode().Get()));
             }
@@ -485,15 +515,40 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
             if (Indicator) Indicator->AddToPlayerScreen();
         }
     }
+    UpdateNativeGunHUD(IsEditing());
     if (Indicator) Indicator->SetVisibility(InputAllowed() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+}
+
+void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
+{
+    if (!Editing)
+    {
+        if (NativeGunHUD.IsValid()) NativeGunHUD->SetVisibility(NativeGunHUDVisibility);
+        NativeGunHUD.Reset();
+        return;
+    }
+    if (!NativeGunHUD.IsValid())
+        if (auto* Player = Cast<AFGCharacterPlayer>(GetOwner()))
+            if (auto* UI = Player->GetGameUI())
+                for (auto* Widget : UI->GetInteractWidgetStack())
+                    if (Widget && Widget->GetClass()->GetFName() == TEXT("Widget_DismantleMode_C"))
+                    {
+                        NativeGunHUD = Widget;
+                        NativeGunHUDVisibility = Widget->GetVisibility();
+                        break;
+                    }
+    // Keep the native state/input bindings, but replace its dismantle-only UI.
+    if (NativeGunHUD.IsValid()) NativeGunHUD->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 {
+    UpdateNativeGunHUD(false);
+    if (InputSubsystem.IsValid() && OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
+    OperationsContext = nullptr;
     bEnteringEdit = false;
     if (auto* Player = Cast<AFGCharacterPlayer>(GetOwner()))
     {
-        if (auto* PC = Cast<AFGPlayerController>(Player->GetController())) PC->UnbindAllMappingContextsByObject(this);
         if (EditGun.IsValid() && Unequip) Player->UnequipBuildGun();
     }
     EditGun.Reset();
@@ -502,10 +557,27 @@ void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 
 void UBSEditModeComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
-    if (BoundInput.IsValid()) BoundInput->ClearBindingsForObject(this);
+    ReleaseInput();
     LeaveEditMode(false);
     if (Indicator) { Indicator->RemoveFromParent(); Indicator = nullptr; }
     Super::EndPlay(Reason);
+}
+
+void UBSEditModeComponent::ReleaseInput()
+{
+    if (InputSubsystem.IsValid())
+    {
+        if (ToggleContext) InputSubsystem->RemoveMappingContext(ToggleContext);
+        if (OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
+    }
+    ToggleContext = nullptr;
+    OperationsContext = nullptr;
+    if (!BoundInput) return;
+    if (auto* Player = Cast<AFGCharacterPlayer>(GetOwner()))
+        if (auto* PC = Cast<APlayerController>(Player->GetController())) PC->PopInputComponent(BoundInput);
+    BoundInput->ClearBindingsForObject(this);
+    BoundInput->DestroyComponent();
+    BoundInput = nullptr;
 }
 
 FText UBSEditModeComponent::GetStatusText() const
@@ -525,11 +597,20 @@ FText UBSEditModeComponent::GetControlsText() const
 {
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* PC = Player ? Cast<APlayerController>(Player->GetController()) : nullptr;
-    auto Key = [&](FName Name) { return UFGInputLibrary::GetInputActionNameAsText(PC, Name).ToString(); };
-    auto MappingName = [](const UInputAction* Action)
-    { const UPlayerMappableKeySettings* Settings = Action ? Action->GetPlayerMappableKeySettings().Get() : nullptr; return Settings ? Settings->Name : NAME_None; };
+    auto Key = [&](FName Name) { return UFGInputLibrary::GetInputActionNameAsText_Keyboard(PC, Name).ToString(); };
+    auto MappingName = [](const UInputAction* Action, const TCHAR* ContextPath) -> FName
+    {
+        // Vanilla actions put their rebindable name on the context mapping,
+        // rather than on the input action asset itself.
+        auto* Context = LoadObject<UInputMappingContext>(nullptr, ContextPath);
+        if (Context && Action)
+            for (const auto& Mapping : Context->GetMappings())
+                if (Mapping.Action == Action && !Mapping.Key.IsGamepadKey()) return Mapping.GetMappingName();
+        return NAME_None;
+    };
     FString Text = FString::Printf(TEXT("%s: Multi-select    %s: Selection mode"),
-        *Key(MappingName(MultiSelectAction)), *Key(MappingName(ModeAction)));
+        *Key(MappingName(MultiSelectAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle.MC_BuildGunDismantle"))),
+        *Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
     if (IsEditing())
     {
         Text += FString::Printf(TEXT("\n%s: Group    %s: Merge"), *Key(TEXT("BuildingSkills.Group")), *Key(TEXT("BuildingSkills.Merge")));
