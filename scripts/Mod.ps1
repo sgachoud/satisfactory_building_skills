@@ -1,10 +1,13 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'EditAssets', 'Test', 'Package', 'Release')]
+    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'EditAssets', 'Test', 'Package', 'Release', 'Install')]
     [string]$Action,
     [string]$SmlRoot = 'F:\dev\satisfactory_mods\SatisfactoryModLoader',
-    [string]$EngineRoot = 'C:\Program Files\Unreal Engine - CSS'
+    [string]$EngineRoot = 'C:\Program Files\Unreal Engine - CSS',
+    [string]$GameRoot = 'F:\Programme et jeux\Steam\steamapps\common\Satisfactory',
+    [ValidateRange(1, 64)]
+    [int]$MaxParallelActions = 2
 )
 
 Set-StrictMode -Version Latest
@@ -98,7 +101,7 @@ switch ($Action) {
     'BuildEditor' {
         Invoke-Checked (Join-Path $batchRoot 'Build.bat') @(
             'FactoryEditor', 'Win64', 'Development', "-Project=$project",
-            '-WaitMutex', '-NoHotReloadFromIDE', '-NoUBA'
+            '-WaitMutex', '-NoHotReloadFromIDE', '-NoUBA', "-MaxParallelActions=$MaxParallelActions"
         )
     }
     'InitContent' {
@@ -129,19 +132,35 @@ switch ($Action) {
             throw "Content initialization did not report success. See $log"
         }
     }
-    { $_ -in 'Package', 'Release' } {
+    { $_ -in 'Package', 'Release', 'Install' } {
         foreach ($asset in @('BuildingSkills', 'RootGameInstance_BuildingSkills', 'RootGameWorld_BuildingSkills')) {
             Require-Path (Join-Path $pluginRoot "Content\$asset.uasset")
         }
         Require-Path (Join-Path $pluginRoot 'Content\Inputs\IA_ToggleEditMode.uasset')
         Require-Path (Join-Path $pluginRoot 'Content\Inputs\MC_BuildingSkills.uasset')
+        foreach ($asset in @('IA_Group', 'IA_Merge', 'IA_Ungroup', 'MC_EditRoot', 'MC_EditOperations')) {
+            Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset")
+        }
         $uatArgs = @(
             "-ScriptsForProject=$project", 'PackagePlugin', "-project=$project",
             '-clientconfig=Shipping', '-serverconfig=Shipping', '-utf8output',
             '-DLCName=BuildingSkills', '-build', '-platform=Win64',
-            '-nocompileeditor', '-installed', '-UbtArgs=-NoUBA'
+            '-nocompileeditor', '-installed', "-UbtArgs=-NoUBA -MaxParallelActions=$MaxParallelActions"
         )
         if ($Action -eq 'Release') { $uatArgs += @('-server', '-serverplatform=Win64+Linux', '-merge') }
+        if ($Action -eq 'Install') {
+            Require-Path (Join-Path $GameRoot 'FactoryGame')
+            if (Get-Process -Name FactoryGame, FactoryGameSteam, FactoryGameEGS, FactoryGameSteam-Win64-Shipping, FactoryGameEGS-Win64-Shipping -ErrorAction SilentlyContinue) {
+                throw 'Close Satisfactory before installing the mod.'
+            }
+            $resolvedGameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
+            $deployTarget = [IO.Path]::GetFullPath((Join-Path $resolvedGameRoot 'FactoryGame\Mods\GameFeatures\BuildingSkills'))
+            if (-not $deployTarget.StartsWith($resolvedGameRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Deployment target escaped the selected game installation.'
+            }
+            Write-Host "Alpakit deployment target: $deployTarget"
+            $uatArgs += "-CopyToGameDirectory_Windows=$resolvedGameRoot"
+        }
         Invoke-Checked (Join-Path $batchRoot 'RunUAT.bat') $uatArgs
     }
 }

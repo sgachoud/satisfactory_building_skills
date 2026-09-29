@@ -76,3 +76,52 @@ if not any(str(entry.get_editor_property("primary_asset_type")) == "FGChildInput
     raise RuntimeError("The game feature must scan FGChildInputMappingContext assets in /BuildingSkills/Inputs")
 
 unreal.log("BuildingSkills Edit input assets saved.")
+
+# This parent is bound ONLY while Edit is open. Its child is discovered by the
+# game's keybinding UI, so M can override Map in Edit without changing gameplay.
+edit_root = get_or_create(f"{ROOT}/MC_EditRoot", unreal.FGInputMappingContext)
+edit_root.set_editor_property("mappings", [])
+operations = get_or_create(f"{ROOT}/MC_EditOperations", unreal.FGChildInputMappingContext)
+operations.set_editor_property("m_parent_context", edit_root)
+operations.set_editor_property("m_display_name", "Building Skills - Edit")
+operations.set_editor_property("m_menu_priority", 201.0)
+operation_mappings = []
+for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U")):
+    operation = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
+    operation.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+    operation.set_editor_property("consume_input", True)
+    operation.set_editor_property("trigger_when_paused", False)
+    operation.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=operation)])
+    key_settings = operation.get_editor_property("player_mappable_key_settings")
+    if key_settings is None:
+        key_settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=operation)
+    key_settings.set_editor_property("name", f"BuildingSkills.{name}")
+    key_settings.set_editor_property("display_name", name)
+    key_settings.set_editor_property("display_category", "Building Skills")
+    key_settings.set_editor_property("is_player_mappable", True)
+    operation.set_editor_property("player_mappable_key_settings", key_settings)
+    operation_key = unreal.Key()
+    operation_key.set_editor_property("key_name", default_key)
+    operation_mappings.append(unreal.EnhancedActionKeyMapping(action=operation, key=operation_key))
+    unreal.EditorAssetLibrary.save_loaded_asset(operation, only_if_is_dirty=False)
+operations.set_editor_property("mappings", operation_mappings)
+for asset in (edit_root, operations):
+    if not unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False):
+        raise RuntimeError(f"Failed to save {asset.get_path_name()}")
+
+registrations = (
+    ("/BuildingSkills/RootGameWorld_BuildingSkills", "mod_subsystems", unreal.BSGroupSubsystem),
+    ("/BuildingSkills/RootGameInstance_BuildingSkills", "remote_call_objects", unreal.BSGroupRemoteCallObject),
+)
+# Preload both roots before compilation: SML validates them together.
+blueprints = [unreal.load_asset(entry[0]) for entry in registrations]
+for (path, property_name, native_class), blueprint in zip(registrations, blueprints):
+    cdo = unreal.get_default_object(blueprint.generated_class())
+    classes = list(cdo.get_editor_property(property_name))
+    if native_class.static_class() not in classes:
+        classes.append(native_class.static_class())
+    cdo.set_editor_property(property_name, classes)
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    if not unreal.EditorAssetLibrary.save_loaded_asset(blueprint, only_if_is_dirty=False):
+        raise RuntimeError(f"Failed to register grouping content in {path}")
+unreal.log("BuildingSkills grouping assets and registrations saved.")

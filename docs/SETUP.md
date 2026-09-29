@@ -47,10 +47,10 @@ should list the mod; select Building Skills when packaging from the editor.
 ## Content and code
 
 - `/BuildingSkills/BuildingSkills`: GameFeatureData with the standard Alpakit scan rules.
-- `/BuildingSkills/RootGameInstance_BuildingSkills`: empty SML GameInstanceModule
-  Blueprint, marked Root Module; future configuration registration belongs here.
-- `/BuildingSkills/RootGameWorld_BuildingSkills`: empty SML GameWorldModule Blueprint,
-  marked Root Module; future world content registration belongs here.
+- `/BuildingSkills/RootGameInstance_BuildingSkills`: root SML GameInstanceModule
+  Blueprint registering the grouping remote call object.
+- `/BuildingSkills/RootGameWorld_BuildingSkills`: root SML GameWorldModule Blueprint
+  registering the saved, replicated grouping subsystem.
 - `Source/BuildingSkills`: native runtime module and `LogBuildingSkills` log category.
 
 Compile and save modified Blueprints. Commit `.uasset` files. Close the editor before
@@ -61,9 +61,11 @@ shared precompiled headers, matching the reference project's build optimization.
 
 For Edit-mode development, build the editor first. The input assets are committed;
 to regenerate their definitions deliberately, run `scripts/Mod.ps1 EditAssets`.
-This updates only the two assets under `/BuildingSkills/Inputs`, using the vanilla
-Alt chord and player-actions parent context. The game feature scans this directory
-for child input mapping contexts. Run `scripts/Mod.ps1 Test` for input regression
+This updates the mod-owned input assets and the two root module registrations. The
+Edit toggle uses the vanilla Alt chord and player-actions parent context. A dedicated
+Edit parent context activates the child with Group/Merge/Ungroup mappings only while
+Edit is open. The game feature scans this directory for child input mapping contexts.
+Run `scripts/Mod.ps1 Test` for hierarchy, save-property and input regression
 coverage; reports are written under the repository's ignored `Saved/Automation` folder.
 
 ```powershell
@@ -72,6 +74,9 @@ coverage; reports are written under the repository's ignored `Saved/Automation` 
 
 # Combined Windows client, Windows Server and Linux Server release archive.
 .\scripts\Mod.ps1 Release
+
+# Build, package and install with Alpakit; close Satisfactory first.
+.\scripts\Mod.ps1 Install
 ```
 
 Build the editor and save content first. Linux packaging requires the matching
@@ -95,3 +100,7 @@ The wrapper also gives child build processes the Windows PowerShell module path.
 This avoids a Wwise pre-build hook failure when Unreal inherits PowerShell 7 module
 paths through `cmd.exe` (`Microsoft.PowerShell.Security` fails to load). The original
 environment is restored when the command completes; no system policy is changed.
+
+The build wrapper defaults to two compiler workers to keep shared precompiled-header
+memory use bounded. Override with `-MaxParallelActions` if appropriate for another
+machine. An initial shared-header rebuild can be much larger than a mod-only rebuild.

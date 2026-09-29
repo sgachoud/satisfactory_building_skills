@@ -10,7 +10,9 @@
 - Never mention AI authorship, assistance or participation in commit messages or
   add AI co-author trailers. Document Codex participation in the README instead.
 - Keep validation claims specific: compiling does not prove packaged gameplay.
-- The first feature is an Edit-mode entry point on Alt+E with a rebindable shortcut.
-  Editing operations and skill progression have not been defined. Do not invent them.
+- Edit opens on rebindable Alt+E. Group, Merge and Ungroup default to G/M/U.
+  Normal/Blueprint/Group selection is shared with vanilla dismantle, using its existing
+  configured multi-select and mode-switch controls. See docs/GROUPING.md.
+  Move/rotate/scale and skill progression are not in the current feature scope.
 - Keep machine-specific absolute paths out of TESTING.md and references to other mods
   out of the README.

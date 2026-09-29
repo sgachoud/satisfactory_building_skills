@@ -115,6 +115,34 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Removing the modifier makes plain E activate Edit"), Fired(Edit));
     Key(EKeys::E, false);
     Tick();
+
+    auto* Operations = LoadObject<UFGChildInputMappingContext>(nullptr,
+        TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
+    if (TestNotNull(TEXT("Edit operations context exists"), Operations))
+    {
+        TestEqual(TEXT("Three configurable commands"), Operations->GetMappings().Num(), 3);
+        UInputAction* Map = NewObject<UInputAction>();
+        Vanilla->MapKey(Map, EKeys::M);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::M, true); Tick();
+        TestTrue(TEXT("M opens Map outside Edit"), Fired(Map));
+        Key(EKeys::M, false); Tick();
+        Subsystem.AddMappingContext(Operations, 1000);
+        Subsystem.RequestRebuildControlMappings(Options);
+        for (const auto& Op : Operations->GetMappings())
+        {
+            TestTrue(TEXT("Operation is rebindable"), Op.IsPlayerMappable());
+            Key(Op.Key, true); Tick();
+            TestTrue(TEXT("Configured operation activates"), Fired(Op.Action));
+            if (Op.Key == EKeys::M) TestFalse(TEXT("Merge suppresses Map inside Edit"), Fired(Map));
+            Key(Op.Key, false); Tick();
+        }
+        Subsystem.RemoveMappingContext(Operations);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::M, true); Tick();
+        TestTrue(TEXT("Map restored after closing Edit"), Fired(Map));
+        Key(EKeys::M, false); Tick();
+    }
     World->DestroyWorld(false);
     return true;
 }

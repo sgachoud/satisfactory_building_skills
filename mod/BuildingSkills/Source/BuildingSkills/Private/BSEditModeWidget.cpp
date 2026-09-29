@@ -1,4 +1,6 @@
 #include "BSEditModeWidget.h"
+#include "BSEditModeComponent.h"
+#include "GameFramework/Pawn.h"
 #include "FGInputLibrary.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/SOverlay.h"
@@ -18,16 +20,21 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
                 [
-                    SNew(STextBlock).Text(LOCTEXT("EditIndicator", "EDIT"))
+                    SNew(STextBlock).Text_Lambda([this]()
+                    {
+                        auto* Pawn = GetOwningPlayerPawn();
+                        auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                        return Edit ? Edit->GetStatusText() : FText::GetEmpty();
+                    })
                     .ColorAndOpacity(FLinearColor(1.0f, 0.45f, 0.08f))
                 ]
                 + SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)
                 [
                     SNew(STextBlock).Text_Lambda([this]()
                     {
-                        const FText Keys = UFGInputLibrary::GetInputActionNameAsText(
-                            GetOwningPlayer(), TEXT("BuildingSkills.ToggleEditMode"));
-                        return FText::Format(LOCTEXT("CloseEditHint", "{0}: Close"), Keys);
+                        auto* Pawn = GetOwningPlayerPawn();
+                        auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                        return Edit ? Edit->GetControlsText() : FText::GetEmpty();
                     })
                 ]
             ]

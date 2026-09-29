@@ -8,6 +8,7 @@ DEFINE_LOG_CATEGORY(LogBuildingSkills);
 void FBuildingSkillsModule::StartupModule()
 {
     UE_LOG(LogBuildingSkills, Display, TEXT("Building Skills module loaded."));
+    UBSEditModeComponent::InstallHooks();
 #if !UE_SERVER
     InputInitializedHandle = AFGCharacterPlayer::OnPlayerInputInitialized.AddLambda(
         [](AFGCharacterPlayer* Player, UInputComponent* Input)

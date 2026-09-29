@@ -4,7 +4,7 @@
     "VersionName": "0.1.0",
     "SemVersion": "0.1.0",
     "FriendlyName": "Building Skills",
-    "Description": "Adds an Edit mode entry point to the Build Gun with a configurable Alt+E shortcut. Building-editing actions are under development.",
+    "Description": "Persistent nested building groups, configurable Edit commands, and shared Normal, Blueprint and Group selection in Edit and dismantle modes.",
     "Category": "Modding",
     "CreatedBy": "sgachoud",
     "CreatedByURL": "https://github.com/sgachoud",
@@ -25,6 +25,11 @@
     ],
     "BuiltInInitialFeatureState": "Active",
     "Plugins": [
+        {
+            "Name": "AbstractInstance",
+            "Enabled": true,
+            "BasePlugin": true
+        },
         {
             "Name": "EnhancedInput",
             "Enabled": true,
