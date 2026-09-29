@@ -1,0 +1,90 @@
+# Development setup
+
+Building Skills uses the same separate-repository/junction workflow as
+`F:/dev/satisfactory_mods/view_throught_collectibles`.
+
+| Component | Local configuration |
+| --- | --- |
+| Plugin | `F:/dev/satisfactory_mods/building_skills/mod/BuildingSkills` |
+| SML project | `F:/dev/satisfactory_mods/SatisfactoryModLoader/FactoryGame.uproject` |
+| Engine | `C:/Program Files/Unreal Engine - CSS` (5.6.1-CSS) |
+| SML | 3.12.0 |
+| Declared minimum game build | CL 502094, matching the reference mod |
+| Compiler | VS 2022 / MSVC v14.38 x64/x86, per the reference setup |
+| Audio SDK | Wwise 2023.1.14.8770, per the reference setup |
+
+Use the installed checkout as the source of truth for this workflow. The
+[official guide](https://docs.ficsit.app/satisfactory-modding/latest/Development/BeginnersGuide/SimpleMod/gameworldmodule.html)
+provides general plugin and root-module background, but may describe another SML version.
+
+## Initial setup
+
+Run in this repository with Unreal Editor closed:
+
+```powershell
+.\scripts\Mod.ps1 Link
+.\scripts\Mod.ps1 ProjectFiles
+.\scripts\Mod.ps1 BuildEditor
+.\scripts\Mod.ps1 InitContent
+```
+
+`Link` creates `<SML>/Mods/GameFeatures/BuildingSkills` pointing at the entire plugin
+folder. It accepts an existing correct junction and refuses to replace anything else.
+`ProjectFiles` refreshes the shared Visual Studio solution. `BuildEditor` builds
+FactoryEditor Win64 Development. These actions write into the shared SML checkout
+and engine/user caches as well as this repository, so a sandbox may request permission.
+
+`InitContent` uses the engine's Python commandlet to create missing game-feature data
+and empty SML root Blueprints. The feature's scan rules come from the installed
+Alpakit template. Existing assets are preserved. Run this only when bootstrapping a
+checkout with missing assets; normal development edits the committed assets in Unreal.
+
+All actions accept `-SmlRoot` and `-EngineRoot` to use another installation.
+Open `FactoryGame.uproject` in the CSS editor after the build. Enable **Show Plugin
+Content** in the Content Browser and select **Building Skills Content**. Alpakit Dev
+should list the mod; select Building Skills when packaging from the editor.
+
+## Content and code
+
+- `/BuildingSkills/BuildingSkills`: GameFeatureData with the standard Alpakit scan rules.
+- `/BuildingSkills/RootGameInstance_BuildingSkills`: empty SML GameInstanceModule
+  Blueprint, marked Root Module; future configuration registration belongs here.
+- `/BuildingSkills/RootGameWorld_BuildingSkills`: empty SML GameWorldModule Blueprint,
+  marked Root Module; future world content registration belongs here.
+- `Source/BuildingSkills`: native runtime module and `LogBuildingSkills` log category.
+
+Compile and save modified Blueprints. Commit `.uasset` files. Close the editor before
+structural C++ changes and run `BuildEditor` again. The small native module disables
+shared precompiled headers, matching the reference project's build optimization.
+
+## Package
+
+```powershell
+# Windows clients (Steam and Epic); no deployment or game launch.
+.\scripts\Mod.ps1 Package
+
+# Combined Windows client, Windows Server and Linux Server release archive.
+.\scripts\Mod.ps1 Release
+```
+
+Build the editor and save content first. Linux packaging requires the matching
+Unreal cross-compilation toolchain. Alpakit writes archives under
+`<SML>/Saved/ArchivedPlugins/BuildingSkills`; the merged release upload is
+`BuildingSkills/BuildingSkills.zip` beneath `ArchivedPlugins`.
+
+Deployment can be configured in Alpakit for the existing local game installation:
+`F:/Programme et jeux/Steam/steamapps/common/Satisfactory`. Run the smoke test in
+[TESTING.md](TESTING.md) before distributing a build.
+
+Before publishing, set real repository/support URLs, add a mod icon, confirm tested
+game/platform compatibility and review the multiplayer requirement. Keep `VersionName`
+equal to `SemVersion`, and integer `Version` equal to its major component (`0` for
+`0.1.0`), following the reference project's release convention.
+
+For `LNK1181` mentioning `delayimp.lib`, check that MSVC v14.38 **x64/x86** tools are
+installed; the ARM64 package alone is insufficient.
+
+The wrapper also gives child build processes the Windows PowerShell module path.
+This avoids a Wwise pre-build hook failure when Unreal inherits PowerShell 7 module
+paths through `cmd.exe` (`Microsoft.PowerShell.Security` fails to load). The original
+environment is restored when the command completes; no system policy is changed.

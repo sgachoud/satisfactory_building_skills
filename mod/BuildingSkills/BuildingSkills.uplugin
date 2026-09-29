@@ -1,0 +1,35 @@
+{
+    "FileVersion": 3,
+    "Version": 0,
+    "VersionName": "0.1.0",
+    "SemVersion": "0.1.0",
+    "FriendlyName": "Building Skills",
+    "Description": "Building Skills for Satisfactory. Initial development scaffold; gameplay features are not implemented yet.",
+    "Category": "Modding",
+    "CreatedBy": "sgachoud",
+    "CreatedByURL": "https://github.com/sgachoud",
+    "DocsURL": "",
+    "MarketplaceURL": "",
+    "SupportURL": "",
+    "CanContainContent": true,
+    "IsBetaVersion": true,
+    "IsExperimentalVersion": true,
+    "Installed": false,
+    "RequiredOnRemote": true,
+    "Modules": [
+        {
+            "Name": "BuildingSkills",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ],
+    "BuiltInInitialFeatureState": "Active",
+    "Plugins": [
+        {
+            "Name": "SML",
+            "Enabled": true,
+            "SemVersion": "^3.12.0"
+        }
+    ],
+    "GameVersion": ">=502094"
+}

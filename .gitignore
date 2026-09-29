@@ -1,0 +1,17 @@
+# Generated Unreal / SML files (including those written through the junction).
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+.vs/
+*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+*_BuiltData.uasset
+
+# Temporary editor imports and Python caches.
+/_import_assets/
+__pycache__/
+*.pyc
