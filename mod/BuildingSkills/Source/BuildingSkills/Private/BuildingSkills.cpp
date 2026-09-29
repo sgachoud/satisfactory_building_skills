@@ -5,11 +5,13 @@
 
 DEFINE_LOG_CATEGORY(LogBuildingSkills);
 void InstallBuildingSkillsRuntimeSmoke();
+void InstallBuildingSkillsNetworkHooks();
 
 void FBuildingSkillsModule::StartupModule()
 {
     UE_LOG(LogBuildingSkills, Display, TEXT("Building Skills module loaded."));
     UBSEditModeComponent::InstallHooks();
+    InstallBuildingSkillsNetworkHooks();
     InstallBuildingSkillsRuntimeSmoke();
 #if !UE_SERVER
     InputInitializedHandle = AFGCharacterPlayer::OnPlayerInputInitialized.AddLambda(

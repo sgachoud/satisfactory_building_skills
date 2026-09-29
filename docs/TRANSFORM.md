@@ -55,12 +55,20 @@ membership. Native instanced visuals, collision and spatial lookup data are move
 with the saved building transforms. Group references and pivots are updated in the
 same operation; no permanent parent actor is created.
 
-Currently supported: ordinary rigid buildings without connected conveyors, pipes or
-power wires, and rigid lightweight structures such as foundations and walls.
-Spline/network/resource-bound buildings, conveyor parts, pipelines, railways, wires
-and train platforms are rejected. Disconnect external connections before moving a
-machine. The entire selection is validated first, so a rejected member prevents a
-partial transform. Connections are not automatically rebuilt or reconnected.
+Connected machines, conveyor belts/lifts, pipes, rail tracks, wires, train platforms,
+extractors, and lightweight structures use their existing native objects. Connections
+inside the selection remain connected. An unselected belt, pipe or rail adjoining a
+moved endpoint stretches while its far endpoint remains fixed. Power-wire endpoints
+follow their attached buildings. A selected spline attached directly to an unselected
+rigid building keeps that attachment anchored.
+
+Spline updates rebuild saved control points, visual instances, collision, clearance,
+and endpoint positions. Conveyor chains are retired through the native subsystem and
+rebuilt with their items retained. Pipe contents remain intact while elevation and
+network caches refresh. Train-platform tracks and spline attachments follow their
+owners. Extractors retain the original resource node; moving one does not claim a new
+node or move the map's resource deposit. Every affected building is validated before
+mutation, and an unexpected native setter failure rolls back the batch.
 
 The server validates building identity, selection size, group revision, player state,
 range, finite values and scale/world bounds. Steps are limited to 100 m translation,

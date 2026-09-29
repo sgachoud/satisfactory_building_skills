@@ -60,29 +60,6 @@ namespace
 bool FBSTransformNative::Supports(AFGBuildable* Actor, FString& Error)
 {
     if (!IsValid(Actor)) return false;
-    // Spline networks and endpoint attachments need individual rebuild adapters.
-    // Reject the entire request before changing anything, rather than leaving
-    // collision, conveyor item simulation, rails or fluid networks behind.
-    for (auto* Class = Actor->GetClass(); Class; Class = Class->GetSuperClass())
-    {
-        const FString Name = Class->GetName();
-        if (Name.Contains(TEXT("Conveyor")) || Name.Contains(TEXT("Pipeline")) || Name.Contains(TEXT("Railroad")) ||
-            Name.Contains(TEXT("BuildableWire")) || Name.Contains(TEXT("TrainPlatform")) || Name.Contains(TEXT("BuildableResource")))
-        { Error = TEXT("This selection contains a network, spline or resource-bound building that cannot be transformed yet."); return false; }
-    }
-    if (Actor->FindComponentByClass<USplineComponent>())
-    { Error = TEXT("Spline buildings cannot be transformed yet."); return false; }
-    TInlineComponentArray<UFGFactoryConnectionComponent*> Belts(Actor);
-    TInlineComponentArray<UFGPipeConnectionComponentBase*> Pipes(Actor);
-    TInlineComponentArray<UFGCircuitConnectionComponent*> Power(Actor);
-    for (auto* C : Belts) if (C->IsConnected()) { Error = TEXT("Disconnect conveyors before transforming this building."); return false; }
-    for (auto* C : Pipes) if (C->IsConnected()) { Error = TEXT("Disconnect pipes before transforming this building."); return false; }
-    for (auto* C : Power)
-    {
-        TArray<AFGBuildableWire*> Wires;
-        C->GetWires(Wires);
-        if (!Wires.IsEmpty()) { Error = TEXT("Disconnect power wires before transforming this building."); return false; }
-    }
     return true;
 }
 
@@ -114,13 +91,14 @@ bool FBSTransformNative::Apply(UWorld* World, const FBSNativeTransform& Change)
     auto* Actor = Ref.Actor.Get();
     if (!IsValid(Actor) || Actor->GetIsDismantled()) return false;
     const FTransform Before = Actor->GetActorTransform();
-    if (Before.Equals(Change.Target, 0.0001)) return true;
+    if (Before.Equals(Change.Target, 0.0001) && Change.Spline.IsEmpty() && !Change.HasLift && !Change.HasWire) return true;
     // Capture/update instanced meshes before moving components. They live in
     // AbstractInstance's shared components, not in the actor's scene hierarchy.
     auto Targets = InstanceTargets(Actor->mInstanceHandles, Before, Change.Target);
     Targets.Append(InstanceTargets(Actor->mDynamicInstanceHandles, Before, Change.Target));
     if (!MoveActor(Actor, Change.Target)) return false;
     MoveInstances(Targets);
+    ApplyGeometry(Actor, Change, Before);
     if (auto* Buildables = AFGBuildableSubsystem::Get(World))
     {
         auto& Tree = Buildables->mBuildableComponentsOctree;
@@ -182,6 +160,16 @@ bool ABSGroupSubsystem::TransformSelection(AFGCharacterPlayer* Player, const FBS
         { Error = TEXT("Transform would exceed world or scale limits (0.01 to 100). No buildings changed."); return false; }
         Changes.Add(Change);
     }
+    if (!FBSTransformNative::PlanNetworks(Changes, Error)) return false;
+    TArray<FBSNativeTransform> Undo;
+    for (const auto& Change : Changes)
+    {
+        auto Restore = Change.Building.Actor ? FBSTransformNative::Capture(Change.Building.Actor) : Change;
+        Restore.Target = Change.Building.Transform;
+        Restore.Building.Transform = Change.Target;
+        Undo.Add(Restore);
+    }
+    FBSTransformNative::PrepareNetworks(GetWorld(), Changes);
     // Every member was validated. If a native setter unexpectedly fails, restore
     // the entire batch before publishing new group identities.
     int32 Applied = 0;
@@ -191,13 +179,14 @@ bool ABSGroupSubsystem::TransformSelection(AFGCharacterPlayer* Player, const FBS
         {
             for (int32 I = 0; I <= Applied; ++I)
             {
-                auto Restore = Changes[I]; Restore.Target = Restore.Building.Transform; Restore.Building.Transform = Changes[I].Target;
-                FBSTransformNative::Apply(GetWorld(), Restore);
+                FBSTransformNative::Apply(GetWorld(), Undo[I]);
             }
+            FBSTransformNative::RefreshNetworks(GetWorld(), Undo);
             Error = TEXT("A native building could not be moved; the transform was rolled back."); return false;
         }
         ++Applied;
     }
+    FBSTransformNative::RefreshNetworks(GetWorld(), Changes);
     Result = Selected;
     for (auto& G : Groups)
         for (auto& Ref : G.Buildings)
@@ -220,11 +209,19 @@ bool ABSGroupSubsystem::TransformSelection(AFGCharacterPlayer* Player, const FBS
         if (Existing) *Existing = Change; else TransformSnapshot.Add(Change);
     }
     // Keep reliable RPC packets bounded for selections of thousands of members.
-    for (int32 Start = 0; Start < Changes.Num(); Start += 48)
+    for (int32 Start = 0; Start < Changes.Num();)
     {
+        int32 End=Start, Bytes=0;
+        while(End<Changes.Num() && End-Start<48)
+        {
+            const int32 Size=512+Changes[End].Spline.Num()*80+Changes[End].WirePoints.Num()*32;
+            if(End>Start && Bytes+Size>24000) break;
+            Bytes+=Size; ++End;
+        }
         TArray<FBSNativeTransform> Batch;
-        Batch.Append(Changes.GetData() + Start, FMath::Min(48, Changes.Num() - Start));
+        Batch.Append(Changes.GetData() + Start, End-Start);
         Multicast_Transforms(Batch);
+        Start=End;
     }
     ++Revision;
     ForceNetUpdate();
@@ -239,6 +236,7 @@ void ABSGroupSubsystem::Multicast_Transforms_Implementation(const TArray<FBSNati
         PendingTransforms.RemoveAll([&](const FBSNativeTransform& Item) { return SameNativeBuilding(Item, Change); });
         if (!FBSTransformNative::Apply(GetWorld(), Change)) PendingTransforms.Add(Change);
     }
+    FBSTransformNative::RefreshNetworks(GetWorld(), Changes);
     SetActorTickEnabled(!PendingTransforms.IsEmpty());
 }
 void ABSGroupSubsystem::OnRep_TransformSnapshot() { Multicast_Transforms_Implementation(TransformSnapshot); }

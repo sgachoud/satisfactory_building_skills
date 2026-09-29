@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.2.0.
+Windows game, CL 502094. Current package: Building Skills 0.2.1.
 
 ## Completed checks
 
@@ -14,7 +14,7 @@ Windows game, CL 502094. Current package: Building Skills 0.2.0.
 - Steam Win64 Shipping packaging and installation succeeded. All seven installed
   files matched the archive by SHA-256. `Install` now performs this verification
   automatically and records `Saved/InstallationVerification.json`.
-- The installed Shipping game passed all 47 runtime assertions in a fresh temporary
+- The installed Shipping game passed all 85 runtime assertions in a fresh temporary
   world. The test injects key events into the game's player input and uses the native
   mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
   targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
@@ -48,13 +48,27 @@ Windows game, CL 502094. Current package: Building Skills 0.2.0.
   checked against the installed reference: Tiny = Left Ctrl, Small = Left Alt,
   Large = Left Shift. Configuration registration and the generated settings file
   were confirmed in the packaged game.
+- Network fixtures exercise native belts, pipes and rails through all ten transform
+  modes and inverse steps, including saved spline tangents, endpoint frames, visual
+  instances and collision data. Reconstructing actors from transformed native spline
+  data is checked separately; this is not an actual save/reload test.
+- Boundary checks move a connected storage container, deform a selected belt between
+  two fixed containers, stretch a connected lift, and retain pipe and rail links.
+  Differently rotated pipes retain a shared endpoint when scaled together. Pipe
+  contents remain intact, and a transformed miner keeps its original resource node.
+- Power-tower checks use the native two-strand connectors. Both strands follow a
+  translated and rotated tower, keep their far endpoints fixed, and update their
+  mesh transforms along with saved endpoint data.
+- A live conveyor chain is retired and rebuilt after rotation and scaling. All three
+  test items remain present, and the rebuilt simulation path matches the belt spline.
 
 The runtime test blocks every save request and never loads an existing save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
 Logs and screenshots are `Saved/RuntimeTest.log`, `Saved/RuntimeTest.png`, and
-`Saved/TransformTest.png`,
+`Saved/TransformTest.png`, and `Saved/NetworkTest.png`,
 relative to this repository. Reproduce with `scripts/RuntimeTest.ps1 -Render` while
 Satisfactory is closed. Use `scripts/VerifyInstall.ps1` to recheck installed files.
+For the focused network fixture, use `scripts/RuntimeTest.ps1 -Render -NetworksOnly`.
 
 The original startup-only checks missed two gameplay failures: the input guard
 rejected the Build Gun's own interaction widget, and the requested Edit mapping
@@ -81,8 +95,10 @@ while the player remains stationary.
 Transformed-building save/reload, collision and snapping across all supported building
 types, multiplayer/late join, every scale-axis visual, and transformed blueprint
 membership need manual coverage. Multiple placed blueprint expansion, complex nested
-selections, live rebinding, and uninstall compatibility also need the matrix below. The runtime fixture uses storage containers, lightweight foundations
-and default keys; it does not claim those broader cases or benchmark an existing
+selections, live rebinding, and uninstall compatibility also need the matrix below.
+The runtime fixtures use storage containers, lightweight foundations, belts, lifts,
+pipes, rails, power towers, wires and a miner with default keys; they do not claim
+those broader cases or benchmark an existing
 large factory. This build has not been packaged for Epic, Windows Server
 or Linux Server.
 
@@ -148,9 +164,6 @@ Use a separate test save containing machines, foundations and two placed bluepri
     is expected to be unavailable; do not expect reinstalling to recover it from a
     save written without the mod.
 
-Move/rotate/scale are not implemented in this iteration. Their compatibility checks
-from the design document apply when those operations are added.
-
 
 ## Transform manual checks
 
@@ -164,8 +177,10 @@ from the design document apply when those operations are added.
    Change each tier's movement, rotation, multiplier and repeat delay in mod settings.
 4. Press Esc once: stay in Edit, retain the selection and changes, and restore Group,
    Merge, Ungroup and selection-mode controls. Re-enter Transform and repeat.
-5. Try a selection containing a connected machine or spline building. The entire
-   transform should be rejected with an explanation, leaving all buildings unchanged.
+5. Move, rotate and scale connected machines, belts/lifts, pipes, rails, wires,
+   stations and extractors. Internal links must remain connected; boundary splines
+   must stretch to fixed external endpoints. Check items, fluids, train movement,
+   pipe indicators and resource bindings before and after the edit.
 6. Save and reload a separate test world after mixed transformations; verify native
    transforms, inventories, group membership and blueprint selection. Then repeat
    with a host and client, late joining, and concurrent edits.

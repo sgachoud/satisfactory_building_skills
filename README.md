@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.2.0`.
+The mod reference is `BuildingSkills`; the development version is `0.2.1`.
 
 ## Controls
 
@@ -72,8 +72,9 @@ returns to normal Edit, keeping the changes and selection.
 
 Movement bindings, T, and the three held step modifiers are rebindable. Step amounts
 and repeat delay are in **Mods > Building Skills**. See [Transform](docs/TRANSFORM.md)
-for defaults, scale semantics, and current building-type limits. Connected networks
-and spline buildings are rejected before any member of the selection changes.
+for defaults and scale semantics. Connected buildings retain their links. Belts,
+pipes and rails at the selection boundary stretch toward fixed, unselected endpoints;
+power wires follow their connection points. Extractors keep their resource bindings.
 
 ## Development
 
@@ -94,7 +95,8 @@ selection integration, build and asset scripts, installation verification, and
 automated validation in both the editor and the packaged game. Follow-up work
 covered native hint layout, the shortcut helper, refund-update batching, cached
 lightweight lookup, packaged group-hover regression checks, transform controls,
-native transform updates, the axis display, and transform validation.
+native transform updates, the axis display, transform validation, connected-network
+geometry updates, and specialized-building regression checks.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

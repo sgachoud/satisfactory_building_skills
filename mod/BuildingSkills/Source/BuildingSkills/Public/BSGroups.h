@@ -5,6 +5,7 @@
 #include "FGRemoteCallObject.h"
 #include "Subsystem/ModSubsystem.h"
 #include "BSTransform.h"
+#include "Components/SplineComponent.h"
 #include "BSGroups.generated.h"
 
 class AFGBuildable;
@@ -65,6 +66,13 @@ struct FBSNativeTransform
     UPROPERTY() FBSBuildingRef Building;
     UPROPERTY() FTransform Target;
     UPROPERTY() int32 InstanceIndex = INDEX_NONE;
+    UPROPERTY() TArray<FSplinePointData> Spline;
+    UPROPERTY() bool HasLift = false;
+    UPROPERTY() FTransform LiftTop;
+    UPROPERTY() bool HasWire = false;
+    UPROPERTY() FVector WireStart = FVector::ZeroVector;
+    UPROPERTY() FVector WireEnd = FVector::ZeroVector;
+    UPROPERTY() TArray<FVector> WirePoints;
 };
 
 class BUILDINGSKILLS_API FBSTransformNative
@@ -72,6 +80,14 @@ class BUILDINGSKILLS_API FBSTransformNative
 public:
     static bool Apply(UWorld* World, const FBSNativeTransform& Change);
     static bool Supports(AFGBuildable* Actor, FString& Error);
+    static bool PlanNetworks(TArray<FBSNativeTransform>& Changes, FString& Error);
+    static FBSNativeTransform Capture(AFGBuildable* Actor);
+    static void PrepareNetworks(UWorld* World, const TArray<FBSNativeTransform>& Changes);
+    static void ApplyGeometry(AFGBuildable* Actor, const FBSNativeTransform& Change, const FTransform& Before);
+    static void RefreshNetworks(UWorld* World, const TArray<FBSNativeTransform>& Changes);
+    static void RebuildSpline(AFGBuildable* Actor);
+    static bool RunNetworkChecks(AFGCharacterPlayer* Player);
+    static bool RunSettledNetworkChecks(AFGCharacterPlayer* Player, int32 Phase);
 };
 
 /** World-independent hierarchy operations, also used by automation tests. */

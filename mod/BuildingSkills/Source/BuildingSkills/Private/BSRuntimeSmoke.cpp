@@ -107,6 +107,7 @@ public:
             }
             Key(EKeys::LeftAlt, true);
             Key(EKeys::E, true);
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) Samples=71;
             Stage = 2;
             Next = Now + 1;
             return true;
@@ -426,6 +427,23 @@ public:
             Check(TEXT("Escape returns to normal Edit and keeps transformed selection"), Edit->IsEditing() && !Edit->bTransforming && Edit->Selection.Groups.Num()==1 && !UGameplayStatics::IsGamePaused(World));
             Check(TEXT("Normal edit controls return after Escape"), Edit->GetControlsText().ToString().Contains(TEXT("Multi-select")) && Edit->GetControlsText().ToString().Contains(TEXT("Transform")));
             break;
+        case 71:
+            Key(EKeys::E,false); Key(EKeys::LeftAlt,false);
+            ChecksPassed &= FBSTransformNative::RunNetworkChecks(Player);
+            break;
+        case 72:
+            TestBuilding.Reset();
+            PC->SetControlRotation((Player->GetActorLocation()+FVector(1800,1600,100)-Player->GetPawnViewLocation()).Rotation());
+            break;
+        case 73:
+            if (!FParse::Param(FCommandLine::Get(),TEXT("nullrhi"))) FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsNetworkTest.png"),true,false);
+            break;
+        case 74:
+            ChecksPassed &= FBSTransformNative::RunSettledNetworkChecks(Player,0);
+            break;
+        case 78:
+            ChecksPassed &= FBSTransformNative::RunSettledNetworkChecks(Player,1);
+            break;
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
@@ -441,7 +459,7 @@ public:
                         *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
         }
-        if (++Samples < 71) return true;
+        if (++Samples < 80) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;
