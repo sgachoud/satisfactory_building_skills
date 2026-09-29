@@ -2,6 +2,7 @@
 #include "BSEditModeComponent.h"
 #include "EnhancedInputComponent.h"
 #include "FGCharacterPlayer.h"
+#include "BSBlueprintSave.h"
 
 DEFINE_LOG_CATEGORY(LogBuildingSkills);
 void InstallBuildingSkillsRuntimeSmoke();
@@ -12,6 +13,7 @@ void FBuildingSkillsModule::StartupModule()
     UE_LOG(LogBuildingSkills, Display, TEXT("Building Skills module loaded."));
     UBSEditModeComponent::InstallHooks();
     InstallBuildingSkillsNetworkHooks();
+    ABSBlueprintSaveSession::InstallHooks();
     InstallBuildingSkillsRuntimeSmoke();
 #if !UE_SERVER
     InputInitializedHandle = AFGCharacterPlayer::OnPlayerInputInitialized.AddLambda(

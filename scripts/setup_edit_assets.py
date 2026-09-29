@@ -149,6 +149,31 @@ for (path, property_name, native_class), blueprint in zip(registrations, bluepri
         raise RuntimeError(f"Failed to register grouping content in {path}")
 unreal.log("BuildingSkills grouping assets and registrations saved.")
 
+# Save is scoped to exactly one selected group, so S remains movement otherwise.
+save_action = get_or_create(f"{ROOT}/IA_Save", unreal.InputAction)
+save_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+save_action.set_editor_property("consume_input", True)
+save_action.set_editor_property("trigger_when_paused", False)
+save_action.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=save_action)])
+save_settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=save_action)
+save_settings.set_editor_property("name", "BuildingSkills.Save")
+save_settings.set_editor_property("display_name", "Save Group as Blueprint")
+save_settings.set_editor_property("display_category", "Building Skills")
+save_settings.set_editor_property("is_player_mappable", True)
+save_action.set_editor_property("player_mappable_key_settings", save_settings)
+save_context = get_or_create(f"{ROOT}/MC_Save", unreal.FGChildInputMappingContext)
+save_context.set_editor_property("m_parent_context", edit_root)
+save_context.set_editor_property("m_display_name", "Building Skills - Save")
+save_context.set_editor_property("m_menu_priority", 203.0)
+save_key = unreal.Key()
+save_key.set_editor_property("key_name", "S")
+save_mapping = unreal.EnhancedActionKeyMapping(action=save_action, key=save_key)
+save_mapping.set_editor_property("display_button_hint", False)
+save_context.set_editor_property("mappings", [save_mapping])
+for asset in (save_action, save_context):
+    if not unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False):
+        raise RuntimeError(f"Failed to save {asset.get_path_name()}")
+
 # A separate scoped context replaces normal Edit operations while transforming.
 transform = get_or_create(f"{ROOT}/MC_Transform", unreal.FGChildInputMappingContext)
 transform.set_editor_property("m_parent_context", edit_root)

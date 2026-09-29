@@ -124,7 +124,7 @@ bool ABSGroupSubsystem::TransformSelection(AFGCharacterPlayer* Player, const FBS
     if (ExpectedRevision != Revision) { Error = TEXT("Selection changed. Try the transform again."); return false; }
     if (Selected.Buildings.Num() + Selected.Groups.Num() > 2048 || uint8(Mode) > 9 || !FMath::IsFinite(Amount) ||
         Translation.ContainsNaN() || Translation.Size() > 10000 || FMath::Abs(Amount) > 360 ||
-        (Translation.IsNearlyZero() && uint8(Mode) >= 4 && (Amount < 0.001 || Amount > 100)))
+        (Translation.IsNearlyZero() && uint8(Mode) >= 3 && (Amount < 0.001 || Amount > 100)))
     { Error = TEXT("Transform exceeds the supported step limits."); return false; }
     TArray<FBSBuildingRef> Members;
     for (const auto& Ref : Selected.Buildings) Members.AddUnique(Ref);

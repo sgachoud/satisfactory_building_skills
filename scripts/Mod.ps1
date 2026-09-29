@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'EditAssets', 'Test', 'Package', 'Release', 'Install')]
+    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'EditAssets', 'Test', 'Package', 'PackageLinux', 'Release', 'Install')]
     [string]$Action,
     [string]$SmlRoot = 'F:\dev\satisfactory_mods\SatisfactoryModLoader',
     [string]$EngineRoot = 'C:\Program Files\Unreal Engine - CSS',
@@ -130,7 +130,7 @@ switch ($Action) {
             throw "Content initialization did not report success. See $log"
         }
     }
-    { $_ -in 'Package', 'Release', 'Install' } {
+    { $_ -in 'Package', 'PackageLinux', 'Release', 'Install' } {
         foreach ($asset in @('BuildingSkills', 'RootGameInstance_BuildingSkills', 'RootGameWorld_BuildingSkills')) {
             Require-Path (Join-Path $pluginRoot "Content\$asset.uasset")
         }
@@ -139,7 +139,10 @@ switch ($Action) {
         foreach ($asset in @('IA_Group', 'IA_Merge', 'IA_Ungroup', 'IA_Transform', 'MC_EditRoot', 'MC_EditOperations', 'MC_Transform', 'IA_MoveForward', 'IA_MoveBackward', 'IA_MoveLeft', 'IA_MoveRight', 'IA_MoveUp', 'IA_MoveDown', 'IA_Tiny', 'IA_Small', 'IA_Large', 'IA_ScrollUp', 'IA_ScrollDown')) {
             Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset")
         }
-        if ($Action -ne 'Release' -and -not $SkipNativeBuild) {
+        foreach ($asset in @('IA_Save','MC_Save')) { Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset") }
+        if ($Action -eq 'PackageLinux' -and -not $SkipNativeBuild) {
+            & (Join-Path $PSScriptRoot 'BuildLinux.ps1') -SmlRoot $SmlRoot -EngineRoot $EngineRoot
+        } elseif ($Action -ne 'Release' -and -not $SkipNativeBuild) {
             & (Join-Path $PSScriptRoot 'BuildNative.ps1') -Target FactoryGameSteam -SmlRoot $SmlRoot -EngineRoot $EngineRoot
         }
         $uatArgs = @(
@@ -149,6 +152,7 @@ switch ($Action) {
             '-nocompileeditor', '-installed', "-UbtArgs=-NoUBA -MaxParallelActions=$MaxParallelActions"
         )
         if ($Action -eq 'Release') { $uatArgs += @('-build', '-server', '-serverplatform=Win64+Linux', '-merge') }
+        if ($Action -eq 'PackageLinux') { $uatArgs += @('-noclient', '-server', '-serverplatform=Linux') }
         if ($Action -eq 'Install') {
             Require-Path (Join-Path $GameRoot 'FactoryGame')
             if (Get-Process -Name FactoryGame, FactoryGameSteam, FactoryGameEGS, FactoryGameSteam-Win64-Shipping, FactoryGameEGS-Win64-Shipping -ErrorAction SilentlyContinue) {

@@ -2,7 +2,8 @@
 param(
     [string]$GameRoot = 'F:\Programme et jeux\Steam\steamapps\common\Satisfactory',
     [switch]$Render,
-    [switch]$NetworksOnly
+    [switch]$NetworksOnly,
+    [switch]$BlueprintsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,7 @@ $log = Join-Path $saved 'RuntimeTest.log'
 $exe = Join-Path $GameRoot 'Engine\Binaries\Win64\FactoryGameSteam-Win64-Shipping.exe'
 $arguments = @('FactoryGame', '-BuildingSkillsRuntimeTest', '-unattended', '-nosound', '-nosplash', '-NO_EOS_OVERLAY', ('-abslog="' + $log + '"'))
 if ($NetworksOnly) { $arguments += '-BuildingSkillsNetworkTest' }
+if ($BlueprintsOnly) { $arguments += '-BuildingSkillsBlueprintTest' }
 if ($Render) { $arguments += @('-RenderOffscreen', '-windowed', '-ResX=1600', '-ResY=900', '-ForceRes') }
 else { $arguments += '-nullrhi' }
 $previousSteamAppId = $env:SteamAppId
@@ -30,7 +32,7 @@ while (-not $testProcess.WaitForExit(30000)) {
         throw "Runtime test timed out. See $log"
     }
 }
-if ($Render -and -not $NetworksOnly) {
+if ($Render -and -not $NetworksOnly -and -not $BlueprintsOnly) {
     $screenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsRuntimeTest.png'
     if ((Test-Path -LiteralPath $screenshot) -and (Get-Item -LiteralPath $screenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $screenshot -Destination (Join-Path $saved 'RuntimeTest.png') -Force
@@ -39,6 +41,12 @@ if ($Render -and -not $NetworksOnly) {
     if ((Test-Path -LiteralPath $transformScreenshot) -and (Get-Item -LiteralPath $transformScreenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $transformScreenshot -Destination (Join-Path $saved 'TransformTest.png') -Force
     } else { throw 'The runtime test did not produce a fresh transform screenshot.' }
+}
+if ($Render -and -not $NetworksOnly) {
+    $blueprintScreenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsBlueprintTest.png'
+    if ((Test-Path -LiteralPath $blueprintScreenshot) -and (Get-Item -LiteralPath $blueprintScreenshot).LastWriteTime -ge $started) {
+        Copy-Item -LiteralPath $blueprintScreenshot -Destination (Join-Path $saved 'BlueprintTest.png') -Force
+    } else { throw 'The runtime test did not produce a fresh blueprint screenshot.' }
 }
 if ($Render) {
     $networkScreenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsNetworkTest.png'

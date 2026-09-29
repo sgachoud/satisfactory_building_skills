@@ -150,6 +150,10 @@ class BUILDINGSKILLS_API UBSGroupRemoteCallObject : public UFGRemoteCallObject
 public:
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out) const override;
     UPROPERTY(Replicated) bool ReplicationAnchor = true;
+    UFUNCTION(Server, Reliable) void Server_OpenBlueprintSave(FGuid Group, int32 ExpectedRevision);
+    UFUNCTION(Client, Reliable) void Client_OpenBlueprintSave(class ABSBlueprintSaveSession* Session, const FString& Error);
+    UFUNCTION(Server, Reliable) void Server_CloseBlueprintSave(class ABSBlueprintSaveSession* Session);
+    UFUNCTION(Client, Reliable) void Client_BlueprintMessage(const FString& Message);
     UFUNCTION(Server, Reliable)
     void Server_Apply(EBSGroupOperation Operation, const FBSSelection& Selection, int32 ExpectedRevision);
     UFUNCTION(Client, Reliable)

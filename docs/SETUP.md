@@ -81,7 +81,10 @@ coverage; reports are written under the repository's ignored `Saved/Automation` 
 # Recheck every installed package file against the archive by SHA-256.
 .\scripts\VerifyInstall.ps1
 
-# Exercise the installed game in a fresh temporary world; saving is blocked.
+# Linux dedicated-server package using the installed cross-compiler and SDK.
+.\scripts\Mod.ps1 PackageLinux
+
+# Exercise the installed game in a fresh temporary world; world saving is blocked.
 .\scripts\RuntimeTest.ps1 -Render
 ```
 
@@ -102,8 +105,7 @@ Deployment can be configured in Alpakit for the existing local game installation
 
 Before publishing, set real repository/support URLs, add a mod icon, confirm tested
 game/platform compatibility and review the multiplayer requirement. Keep `VersionName`
-equal to `SemVersion`, and integer `Version` equal to its major component (`0` for
-`0.1.0`), following the reference project's release convention.
+equal to `SemVersion`, and increment the integer `Version` for each release.
 
 For `LNK1181` mentioning `delayimp.lib`, check that MSVC v14.38 **x64/x86** tools are
 installed; the ARM64 package alone is insufficient.
@@ -134,3 +136,8 @@ Alpakit then cooks, packages and installs the new DLL. `-SkipNativeBuild` on `In
 is only for immediately reusing an already successful native build during iteration.
 The broader `Release` path still uses the standard full target build and is untested
 for the Transform feature.
+
+`PackageLinux` uses `scripts/BuildLinux.ps1` to compile only Building Skills against
+the existing Linux SDK binaries, then cooks and archives the Linux server plugin.
+Install its archive contents under the server's `FactoryGame/Mods/GameFeatures/BuildingSkills`
+directory, beside the matching SML installation. Use the same mod version on clients.

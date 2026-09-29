@@ -9,10 +9,10 @@ bool FBSTransformMathTest::RunTest(const FString&)
     for (int32 I = 0; I < 10; ++I)
     {
         const auto Mode = EBSTransformMode(I);
-        const auto Changed = FBSTransformMath::Apply(Original, Pivot, Mode, I < 4 ? 15 : 1.1, FVector::ZeroVector);
-        const auto Restored = FBSTransformMath::Apply(Changed, Pivot, Mode, I < 4 ? -15 : 1.0/1.1, FVector::ZeroVector);
+        const auto Changed = FBSTransformMath::Apply(Original, Pivot, Mode, I < 3 ? 15 : 1.1, FVector::ZeroVector);
+        const auto Restored = FBSTransformMath::Apply(Changed, Pivot, Mode, I < 3 ? -15 : 1.0/1.1, FVector::ZeroVector);
         TestTrue(*FString::Printf(TEXT("%s inverse returns position, rotation and scale"), *FBSTransformMath::Name(Mode)), Restored.Equals(Original, .0001));
-        if (I < 4) TestTrue(TEXT("Rotation preserves distance to pivot"), FMath::IsNearlyEqual(FVector::Distance(Changed.GetLocation(), Pivot), FVector::Distance(Original.GetLocation(), Pivot), .0001));
+        if (I < 3) TestTrue(TEXT("Rotation preserves distance to pivot"), FMath::IsNearlyEqual(FVector::Distance(Changed.GetLocation(), Pivot), FVector::Distance(Original.GetLocation(), Pivot), .0001));
         else
         {
             const auto Axes = FBSTransformMath::Axes(Mode);
@@ -21,6 +21,10 @@ bool FBSTransformMathTest::RunTest(const FString&)
         }
     }
     const FTransform Rotated = FBSTransformMath::Apply(FTransform(Pivot + FVector(100,0,0)), Pivot, EBSTransformMode::RotateZ, 90, FVector::ZeroVector);
+    const auto Uniform = FBSTransformMath::Apply(Original,Pivot,EBSTransformMode::ScaleXYZ,2,FVector::ZeroVector);
+    TestTrue(TEXT("XYZ scales every local size component"),Uniform.GetScale3D().Equals(Original.GetScale3D()*2,.0001));
+    TestTrue(TEXT("XYZ preserves rotation"),Uniform.GetRotation().Equals(Original.GetRotation(),.0001));
+    TestTrue(TEXT("XYZ scales distance from shared pivot"),Uniform.GetLocation().Equals(Pivot+(Original.GetLocation()-Pivot)*2,.0001));
     TestTrue(TEXT("Z rotation uses shared pivot"), Rotated.GetLocation().Equals(Pivot + FVector(0,100,0), .0001));
     TestTrue(TEXT("Forward follows facing X"), FBSTransformMath::ViewTranslation(0,0).Equals(FVector(1,0,0),.0001));
     TestTrue(TEXT("Forward follows facing Y"), FBSTransformMath::ViewTranslation(90,0).Equals(FVector(0,1,0),.0001));

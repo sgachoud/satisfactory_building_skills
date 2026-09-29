@@ -48,7 +48,7 @@ FVector FBSTransformMath::Axes(EBSTransformMode Mode)
 }
 FString FBSTransformMath::Name(EBSTransformMode Mode)
 {
-    const TCHAR* Names[] = {TEXT("Rotate X"), TEXT("Rotate Y"), TEXT("Rotate Z"), TEXT("Rotate XYZ"), TEXT("Scale XY"), TEXT("Scale XZ"), TEXT("Scale YZ"), TEXT("Scale X"), TEXT("Scale Y"), TEXT("Scale Z")};
+    const TCHAR* Names[] = {TEXT("Rotate X"), TEXT("Rotate Y"), TEXT("Rotate Z"), TEXT("Scale XYZ"), TEXT("Scale XY"), TEXT("Scale XZ"), TEXT("Scale YZ"), TEXT("Scale X"), TEXT("Scale Y"), TEXT("Scale Z")};
     return uint8(Mode) < UE_ARRAY_COUNT(Names) ? Names[uint8(Mode)] : TEXT("");
 }
 FTransform FBSTransformMath::Apply(const FTransform& Original, const FVector& Pivot, EBSTransformMode Mode, double Amount, const FVector& Translation)
@@ -56,10 +56,9 @@ FTransform FBSTransformMath::Apply(const FTransform& Original, const FVector& Pi
     FTransform Result = Original;
     if (!Translation.IsNearlyZero()) { Result.AddToTranslation(Translation); return Result; }
     const FVector Axes = FBSTransformMath::Axes(Mode);
-    if (uint8(Mode) < 4)
+    if (uint8(Mode) < 3)
     {
-        // A single quaternion about the XYZ diagonal rotates all three axes at
-        // once, and inverse scrolling exactly reverses the previous step.
+        // Inverse scrolling exactly reverses the previous rotation step.
         const FQuat Delta(Axes.GetSafeNormal(), FMath::DegreesToRadians(Amount) * Axes.Size());
         Result.SetLocation(Pivot + Delta.RotateVector(Original.GetLocation() - Pivot));
         Result.SetRotation((Delta * Original.GetRotation()).GetNormalized());

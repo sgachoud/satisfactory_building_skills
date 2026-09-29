@@ -90,7 +90,7 @@ void UBSEditModeComponent::ScrollTransform(int32 Delta)
     const auto Steps = TransformSteps();
     const int32 Count = FMath::Min(FMath::Abs(Delta), 16);
     for (int32 I = 0; I < Count && TransformCommands.Num() < 32; ++I)
-        TransformCommands.Add({TransformMode, uint8(TransformMode) < 4 ? Steps.Y * FMath::Sign(Delta) :
+        TransformCommands.Add({TransformMode, uint8(TransformMode) < 3 ? Steps.Y * FMath::Sign(Delta) :
             (Delta > 0 ? Steps.Z : 1.0 / Steps.Z), FVector::ZeroVector});
 }
 void UBSEditModeComponent::OnMove(int32 Direction)

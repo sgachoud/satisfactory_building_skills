@@ -60,6 +60,8 @@ public:
     FVector GetTransformPivot() const { return TransformPivot; }
     EBSTransformMode GetTransformMode() const { return TransformMode; }
     void OnTransformResult(bool Success, const FBSSelection& Result, const FString& Message, int32 Revision);
+    void OpenBlueprintSave(class ABSBlueprintSaveSession* Session, const FString& Error);
+    void BlueprintMessage(const FString& Message) { Feedback = Message; }
 private:
     friend class FBSRuntimeSmoke;
     static UBSEditModeComponent* ForGun(AFGBuildGun* Gun);
@@ -68,6 +70,14 @@ private:
     void OnGroup();
     void OnMerge();
     void OnUngroup();
+    void OnSave();
+    void TickBlueprintSave();
+    void CloseBlueprintSave(bool ResumeEdit = true);
+    UPROPERTY(Transient) FBSSelection BlueprintSelection;
+    UPROPERTY(Transient) TObjectPtr<UInputMappingContext> SaveContext;
+    UPROPERTY(Transient) TObjectPtr<UFGInteractWidget> BlueprintWindow;
+    UPROPERTY(Transient) TObjectPtr<class ABSBlueprintSaveSession> BlueprintSession;
+    bool bOpeningBlueprint = false;
     void OnTransform();
     void EndTransform();
     void CycleTransform(int32 Delta);

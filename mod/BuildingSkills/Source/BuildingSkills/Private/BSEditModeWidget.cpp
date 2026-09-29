@@ -141,7 +141,7 @@ int32 UBSEditModeWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Ge
         const bool Selected = Active[Axis] > 0;
         const FLinearColor Color = Colors[Axis].CopyWithNewOpacity(Selected ? 1.f : .22f);
         const FVector End = Center + Axes[Axis] * Radius;
-        if (uint8(Mode) < 4)
+        if (uint8(Mode) < 3)
         {
             const FVector U = Axes[(Axis + 1) % 3], V = Axes[(Axis + 2) % 3];
             TArray<FVector2D> Ring;

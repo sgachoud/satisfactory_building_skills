@@ -4,7 +4,7 @@
 #include "BSTransform.generated.h"
 
 UENUM()
-enum class EBSTransformMode : uint8 { RotateX, RotateY, RotateZ, RotateXYZ, ScaleXY, ScaleXZ, ScaleYZ, ScaleX, ScaleY, ScaleZ };
+enum class EBSTransformMode : uint8 { RotateX, RotateY, RotateZ, ScaleXYZ, ScaleXY, ScaleXZ, ScaleYZ, ScaleX, ScaleY, ScaleZ };
 
 USTRUCT()
 struct BUILDINGSKILLS_API FBSTransformSettings

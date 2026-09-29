@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.2.1.
+Windows game, CL 502094. Current package: Building Skills 0.3.0.
 
 ## Completed checks
 
@@ -14,7 +14,10 @@ Windows game, CL 502094. Current package: Building Skills 0.2.1.
 - Steam Win64 Shipping packaging and installation succeeded. All seven installed
   files matched the archive by SHA-256. `Install` now performs this verification
   automatically and records `Saved/InstallationVerification.json`.
-- The installed Shipping game passed all 85 runtime assertions in a fresh temporary
+- Linux Server Shipping compiled and packaged successfully. The archive's shared
+  library matches the fresh build by SHA-256 and is an x86-64 ELF binary. This is
+  build verification; Linux execution and online gameplay remain manual checks.
+- The installed Shipping game passed all 95 runtime assertions in a fresh temporary
   world. The test injects key events into the game's player input and uses the native
   mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
   targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
@@ -39,6 +42,8 @@ Windows game, CL 502094. Current package: Building Skills 0.2.1.
 - Transform checks enter with T, inject the native R and mouse-wheel bindings,
   and rotate a group containing one storage container and two lightweight foundations.
   All ten modes and their inverse steps restore the original native transforms.
+  The fourth mode is uniform Scale XYZ; editor checks verify it scales all axes
+  and distance from the pivot without changing rotation.
   Invalid scaling is rejected without changing the hierarchy revision.
 - Held Ctrl plus Up moves that group along the camera-relative axis with the Tiny
   step. Page Up moves along Z. The native Escape route restores normal Edit, keeps
@@ -61,14 +66,24 @@ Windows game, CL 502094. Current package: Building Skills 0.2.1.
   mesh transforms along with saved endpoint data.
 - A live conveyor chain is retired and rebuilt after rotation and scaling. All three
   test items remain present, and the rebuilt simulation path matches the belt spline.
+- Blueprint checks open the native window with S, verify Load/Clear are hidden and
+  Clear is blocked, and restore Edit with the same group when closing. The native
+  save RPC writes a uniquely named blueprint which reads back and loads exactly one
+  actor-backed building plus two lightweight foundations. Original buildings and
+  transforms remain intact. The test deletes its unique blueprint afterward.
+- The unattended blueprint test calls the native save RPC after the UI's online
+  name-filter stage, which does not complete in that test environment. Interactive
+  name filtering, clicking Save, overwrite confirmation and multiplayer file
+  transfer still need manual coverage; the production UI keeps those native flows.
 
-The runtime test blocks every save request and never loads an existing save. Its
+The runtime test blocks world saves and never loads an existing world save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
-Logs and screenshots are `Saved/RuntimeTest.log`, `Saved/RuntimeTest.png`, and
-`Saved/TransformTest.png`, and `Saved/NetworkTest.png`,
+Logs and screenshots are `Saved/RuntimeTest.log`, `Saved/RuntimeTest.png`,
+`Saved/TransformTest.png`, `Saved/NetworkTest.png`, and `Saved/BlueprintTest.png`,
 relative to this repository. Reproduce with `scripts/RuntimeTest.ps1 -Render` while
 Satisfactory is closed. Use `scripts/VerifyInstall.ps1` to recheck installed files.
 For the focused network fixture, use `scripts/RuntimeTest.ps1 -Render -NetworksOnly`.
+For the focused blueprint fixture, use `scripts/RuntimeTest.ps1 -Render -BlueprintsOnly`.
 
 The original startup-only checks missed two gameplay failures: the input guard
 rejected the Build Gun's own interaction widget, and the requested Edit mapping
@@ -99,8 +114,7 @@ selections, live rebinding, and uninstall compatibility also need the matrix bel
 The runtime fixtures use storage containers, lightweight foundations, belts, lifts,
 pipes, rails, power towers, wires and a miner with default keys; they do not claim
 those broader cases or benchmark an existing
-large factory. This build has not been packaged for Epic, Windows Server
-or Linux Server.
+large factory. This build has not been packaged for Epic or Windows Server.
 
 Run `scripts/Mod.ps1 BuildEditor`, `scripts/Mod.ps1 EditAssets`, and
 `scripts/Mod.ps1 Test` for editor checks. Reports are in `Saved/Automation`.
@@ -145,7 +159,7 @@ Use a separate test save containing machines, foundations and two placed bluepri
    Dismantle a nested group and verify all selected descendants disappear, materials
    are refunded once, and unrelated buildings remain. Check cancelled dismantles,
    disqualified buildings, full inventory, and lightweight foundations/walls.
-9. Rebind the existing multi-dismantle and Build Gun mode actions, and all four
+9. Rebind the existing multi-dismantle and Build Gun mode actions, and all
    Building Skills actions. Repeat the tests. M must open Map outside Edit, trigger
    Merge only inside Edit, and work normally after closing Edit. Plain E must still
    interact. Check both Alt+E release orders.
@@ -158,7 +172,7 @@ Use a separate test save containing machines, foundations and two placed bluepri
     temporary actors, Edit-only bindings, or duplicate HUD should remain.
 12. Repeat as a listen host and remote client. Group changes must agree, including
     concurrent edits and late joins. Save on the host and reload. Dedicated server
-    platforms also need build and gameplay checks before claiming support.
+    gameplay also needs verification on the packaged Linux dedicated server.
 13. On a copy of the save, remove the mod, load, save again and reload. Compare base
     building counts, transforms, inventories, recipes and connections. Group metadata
     is expected to be unavailable; do not expect reinstalling to recover it from a
@@ -183,4 +197,21 @@ Use a separate test save containing machines, foundations and two placed bluepri
    pipe indicators and resource bindings before and after the edit.
 6. Save and reload a separate test world after mixed transformations; verify native
    transforms, inventories, group membership and blueprint selection. Then repeat
-   with a host and client, late joining, and concurrent edits.
+    with a host and client, late joining, and concurrent edits.
+
+## Blueprint saving manual checks
+
+1. Select one nested group containing machines and lightweight buildings. S / Save
+   must appear in the bottom hints and open the native blueprint designer window.
+   Check name, description, icon, color and category; Load and Clear must be absent.
+2. Save a uniquely named blueprint and place it elsewhere. All selected descendants
+   must appear once, with their relative transforms and connections preserved.
+   The original buildings and group must remain unchanged.
+3. Save using an existing name and check the native overwrite confirmation. Cancel
+   it once, then confirm it. Close the window without saving and verify Edit resumes
+   with the same selection.
+4. Select singles, multiple groups, or enter Transform. Save must be unavailable
+   and S must retain its usual movement behavior. Rebind Save and repeat.
+5. Repeat on a Linux dedicated server with two Windows clients. Verify blueprint
+   availability on the saving client, independent windows for both players, and
+   rejection if another player changes the selected group while its window is open.

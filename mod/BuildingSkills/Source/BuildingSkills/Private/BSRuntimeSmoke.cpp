@@ -1,8 +1,13 @@
 #include "BSEditModeComponent.h"
 #include "BSEditModeWidget.h"
+#include "BSBlueprintSave.h"
+#include "FGBlueprintSubsystem.h"
+#include "UObject/StructOnScope.h"
 #include "BuildingSkills.h"
 #include "Buildables/FGBuildable.h"
 #include "Components/TextBlock.h"
+#include "Components/EditableText.h"
+#include "Components/MultiLineEditableText.h"
 #include "Blueprint/WidgetTree.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
@@ -56,6 +61,8 @@ public:
         static TArray<FBSBuildingRef> StressBuildings;
         static TArray<FBSBuildingRef> TransformBuildings;
         static FVector MoveStart;
+        static FString BlueprintTestName;
+        static TArray<FBSBuildingRef> BlueprintMembers;
         const double Now = FPlatformTime::Seconds();
         if (Now - Started > 240)
         {
@@ -108,6 +115,7 @@ public:
             Key(EKeys::LeftAlt, true);
             Key(EKeys::E, true);
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) Samples=71;
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest"))) Samples=79;
             Stage = 2;
             Next = Now + 1;
             return true;
@@ -374,9 +382,9 @@ public:
             for (int32 I=0; I<10; ++I)
             {
                 const auto Mode = EBSTransformMode(I);
-                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<4 ? 15 : 1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
+                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<3 ? 15 : 1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
                 Selected = Result;
-                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<4 ? -15 : 1.0/1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
+                if (!Groups->TransformSelection(Player, Selected, Groups->Revision, Mode, I<3 ? -15 : 1.0/1.1, FVector::ZeroVector, Result, Error)) { AllModes = false; break; }
                 Selected = Result;
             }
             Edit->Selection = Selected;
@@ -444,6 +452,110 @@ public:
         case 78:
             ChecksPassed &= FBSTransformNative::RunSettledNetworkChecks(Player,1);
             break;
+        case 79:
+            if(FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest")))
+            {
+                Key(EKeys::E,false); Key(EKeys::LeftAlt,false);
+                auto* LW=AFGLightweightBuildableSubsystem::Get(World);
+                auto* Class=LoadClass<AFGBuildable>(nullptr,TEXT("/Game/FactoryGame/Buildable/Building/Foundation/Build_Foundation_8x4_01.Build_Foundation_8x4_01_C"));
+                auto* Recipe=LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Recipes/Buildings/Foundations/Recipe_Foundation_8x4_01.Recipe_Foundation_8x4_01_C"));
+                Edit->Selection.Buildings={FBSBuildingRef::FromActor(Buildings[0].Get())};
+                if(LW && Class && Recipe) for(int32 I=0;I<2;++I)
+                {
+                    FRuntimeBuildableInstanceData Data;
+                    Data.Transform=FTransform(Player->GetActorLocation()+FVector(1600,I*800,-600));
+                    Data.BuiltWithRecipe=Recipe;
+                    const int32 Index=LW->AddFromBuildableInstanceData(Class,Data);
+                    Edit->Selection.Buildings.Add(FBSBuildingRef::FromLightweight(World,Class,Index));
+                }
+                Edit->OnGroup();
+            }
+            break;
+        case 80:
+            Check(TEXT("Single group offers Save in native gun hints"), Edit->GetControlsText().ToString().Contains(TEXT("Save")));
+            Key(EKeys::S,true);
+            break;
+        case 81:
+        {
+            Key(EKeys::S,false);
+            Check(TEXT("S opens the native blueprint designer window"), IsValid(Edit->BlueprintSession) && IsValid(Edit->BlueprintWindow));
+            auto* Window=Edit->BlueprintWindow.Get();
+            if(!Window) break;
+            bool SaveOnly=true;
+            for(const auto* Name:{TEXT("mClearDesingerButton"),TEXT("mLoadButton")})
+            {
+                auto* Button=Window->WidgetTree->FindWidget(FName(Name));
+                SaveOnly &= Button && Button->GetVisibility()==ESlateVisibility::Collapsed && !Button->GetIsEnabled();
+            }
+            Check(TEXT("Blueprint group window hides and disables Load and Clear"),SaveOnly);
+            BlueprintTestName=TEXT("BuildingSkills_Automation_")+FGuid::NewGuid().ToString(EGuidFormats::Digits);
+            BlueprintMembers=Edit->BlueprintSession->Members;
+            Edit->BlueprintSession->DismantleCurrentBuildables(Cast<AFGPlayerController>(PC));
+            bool Intact=true;
+            for(const auto& Member:BlueprintMembers) Intact &= Member.IsAlive(World);
+            Check(TEXT("Native Clear cannot dismantle a save-session group"),Intact && BlueprintMembers.Num()==3);
+            auto* NameInput=Cast<UEditableText>(Window->WidgetTree->FindWidget(TEXT("mNameInput")));
+            Check(TEXT("Native blueprint name field is editable"),NameInput!=nullptr);
+            if(NameInput)
+            {
+                NameInput->SetText(FText::FromString(BlueprintTestName));
+                NameInput->OnTextCommitted.Broadcast(FText::FromString(BlueprintTestName),ETextCommit::OnEnter);
+            }
+            if(auto* Description=Cast<UMultiLineEditableText>(Window->WidgetTree->FindWidget(TEXT("mDescriptionInput"))))
+            {
+                Description->SetText(FText::FromString(TEXT("Selected group integration test")));
+                Description->OnTextCommitted.Broadcast(Description->GetText(),ETextCommit::OnEnter);
+            }
+            break;
+        }
+        case 82:
+            if(!FParse::Param(FCommandLine::Get(),TEXT("nullrhi"))) FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsBlueprintTest.png"),true,false);
+            break;
+        case 83:
+            if(auto* Controller=Cast<AFGPlayerController>(PC))
+                if(auto* RCO=Controller->GetRemoteCallObjectOfClass<UFGBlueprintRemoteCallObject>(); RCO && Edit->BlueprintSession)
+                {
+                    // The unattended account has no online UGC name-filter response.
+                    // Submit through the same native RPC as the window after its
+                    // filter, rather than depending on that external service.
+                    auto* Blueprints=AFGBlueprintSubsystem::Get(World);
+                    FBlueprintRecord Record;
+                    Record.BlueprintName=BlueprintTestName;
+                    Record.BlueprintDescription=TEXT("Selected group integration test");
+                    Record.Category=Blueprints->GetCategoryForUndefined();
+                    Record.SubCategory=Blueprints->GetSubCategoryForUndefined();
+                    FBlueprintCategoryRecord Category;
+                    Blueprints->GetGeneratedUndefinedCategoryRecord(Category);
+                    RCO->Server_SaveBlueprintInDesigner(Edit->BlueprintSession,Controller,Record,Category,Category.SubCategoryRecords[0]);
+                }
+            break;
+        case 86:
+        {
+            auto* Blueprints=AFGBlueprintSubsystem::Get(World);
+            auto* Descriptor=Blueprints?Blueprints->GetBlueprintDescriptorByNameString(BlueprintTestName):nullptr;
+            Check(TEXT("Native Save creates a blueprint descriptor for the selected group"),Descriptor!=nullptr);
+            if(Descriptor)
+            {
+                const bool Read=Blueprints->ReadBlueprintFromDisc(BlueprintTestName);
+                Check(TEXT("Saved group blueprint reads back from disk with native archive data"),Read && Blueprints->mStoredBlueprintData.IsValid());
+                TArray<AFGBuildable*> Loaded;
+                if(Read) Blueprints->LoadStoredBlueprint(Descriptor,FTransform::Identity,Loaded,true);
+                Check(TEXT("Blueprint loads exactly the three selected actor/lightweight members"),Loaded.Num()==BlueprintMembers.Num() && Loaded.Num()==3);
+                bool Unchanged=true;
+                for(const auto& Member:BlueprintMembers)
+                {
+                    Unchanged &= Member.IsAlive(World);
+                    if(auto* Actor=Member.ResolveActor(World)) Unchanged &= Actor->GetActorTransform().Equals(Member.Transform,.01);
+                }
+                Check(TEXT("Saving a blueprint leaves original buildings and transforms intact"),Unchanged);
+                Blueprints->DeleteBlueprintDescriptor(Descriptor);
+            }
+            Edit->CloseBlueprintSave();
+            break;
+        }
+        case 87:
+            Check(TEXT("Closing blueprint save returns to Edit with the selected group"),Edit->IsEditing() && Player->IsBuildGunEquipped() && Edit->Selection.Groups.Num()==1 && !Edit->BlueprintWindow);
+            break;
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
@@ -459,7 +571,7 @@ public:
                         *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
         }
-        if (++Samples < 80) return true;
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 80 : 88)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;

@@ -8,7 +8,7 @@ it is not an undo command.
 ## Controls
 
 - The existing configured Build Gun mode key (normally **R**) cycles **Rotate X,
-  Rotate Y, Rotate Z, Rotate XYZ, Scale XY, Scale XZ, Scale YZ, Scale X, Scale Y,
+  Rotate Y, Rotate Z, Scale XYZ, Scale XY, Scale XZ, Scale YZ, Scale X, Scale Y,
   Scale Z**, then wraps to Rotate X.
 - **Scroll up/down** applies/reverses one step of the active operation.
 - **Up/Down/Left/Right** move along the horizontal world axes nearest the camera's
@@ -39,8 +39,9 @@ connection. The left panel displays the currently effective amounts.
 
 The pivot is the mean of the selected native building origins. Nested groups expand
 to individual members, with duplicates removed. Rotations move every member around
-that shared pivot. X/Y/Z rotation axes are world-aligned; XYZ applies a simultaneous
-angular step about the XYZ diagonal, with an exact inverse for downward scroll.
+that shared pivot. X/Y/Z rotation axes are world-aligned. Scale XYZ changes all
+three scale components uniformly and spreads origins about the shared pivot without
+changing rotation. Downward scroll applies the reciprocal multiplier.
 
 Scaling spreads member origins along the selected world axes about the pivot and
 multiplies the corresponding local size components of each building. It does not

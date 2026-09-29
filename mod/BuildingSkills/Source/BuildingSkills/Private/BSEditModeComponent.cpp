@@ -271,6 +271,7 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     Bind(TEXT("/BuildingSkills/Inputs/IA_Group.IA_Group"), &ThisClass::OnGroup);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Merge.IA_Merge"), &ThisClass::OnMerge);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Ungroup.IA_Ungroup"), &ThisClass::OnUngroup);
+    Bind(TEXT("/BuildingSkills/Inputs/IA_Save.IA_Save"), &ThisClass::OnSave);
 }
 
 bool UBSEditModeComponent::InputAllowed() const
@@ -565,6 +566,13 @@ void UBSEditModeComponent::ClearSelection()
 void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorComponentTickFunction* Function)
 {
     Super::TickComponent(Delta, Type, Function);
+    TickBlueprintSave();
+    if (BlueprintSession || bOpeningBlueprint)
+    {
+        UpdateControlHints(false);
+        if (Indicator) Indicator->SetVisibility(ESlateVisibility::Collapsed);
+        return;
+    }
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* Gun = Player ? Player->GetBuildGun() : nullptr;
     auto* State = Gun && Player->IsBuildGunEquipped() ? Cast<UFGBuildGunStateDismantle>(Gun->GetCurrentState()) : nullptr;
@@ -644,6 +652,7 @@ void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
 
 void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 {
+    CloseBlueprintSave(false);
     EndTransform();
     UpdateNativeGunHUD(false);
     UpdateControlHints(false);
@@ -670,11 +679,13 @@ void UBSEditModeComponent::ReleaseInput()
 {
     if (InputSubsystem.IsValid())
     {
+        if (SaveContext) InputSubsystem->RemoveMappingContext(SaveContext);
         if (TransformContext) InputSubsystem->RemoveMappingContext(TransformContext);
         if (ToggleContext) InputSubsystem->RemoveMappingContext(ToggleContext);
         if (OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
     }
     TransformContext = nullptr;
+    SaveContext = nullptr;
     ToggleContext = nullptr;
     OperationsContext = nullptr;
     if (!BoundInput) return;
@@ -690,7 +701,7 @@ FText UBSEditModeComponent::GetStatusText() const
     if (bTransforming)
     {
         const FVector Steps = TransformSteps();
-        return FText::FromString(FString::Printf(TEXT("EDIT  |  TRANSFORM\n%s  |  %d buildings\nMove: %g m  |  Rotate: %g°  |  Scale: ×%g%s%s"),
+        return FText::FromString(FString::Printf(TEXT("EDIT  |  TRANSFORM\n%s  |  %d buildings\nMove: %g m  |  Rotate: %gÂ°  |  Scale: Ã—%g%s%s"),
             *FBSTransformMath::Name(TransformMode), ResolvedCount, Steps.X / 100, Steps.Y, Steps.Z,
             Feedback.IsEmpty() ? TEXT("") : TEXT("\n"), *Feedback));
     }
@@ -744,7 +755,10 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
         Hints.Emplace(LOCTEXT("MergeHint", "Merge"), Key(TEXT("BuildingSkills.Merge")));
         const FBSSelection Current = EffectiveSelection();
         if (Current.Groups.Num() == 1 && Current.Buildings.IsEmpty())
+        {
             Hints.Emplace(LOCTEXT("UngroupHint", "Ungroup"), Key(TEXT("BuildingSkills.Ungroup")));
+            Hints.Emplace(LOCTEXT("SaveHint", "Save"), Key(TEXT("BuildingSkills.Save")));
+        }
         Hints.Emplace(LOCTEXT("CloseEditHint", "Close Edit"), Key(TEXT("BuildingSkills.ToggleEditMode")));
     }
     return Hints;

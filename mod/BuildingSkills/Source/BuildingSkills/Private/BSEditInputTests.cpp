@@ -146,6 +146,30 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("Map restored after closing Edit"), Fired(Map));
         Key(EKeys::M, false); Tick();
     }
+    auto* SaveContext = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Save.MC_Save"));
+    if (TestNotNull(TEXT("Conditional save context exists"), SaveContext) && TestEqual(TEXT("One Save command"), SaveContext->GetMappings().Num(),1))
+    {
+        const auto& Save=SaveContext->GetMappings()[0];
+        TestTrue(TEXT("Save is configurable"),Save.IsPlayerMappable());
+        TestEqual(TEXT("Save defaults to S"),Save.Key,EKeys::S);
+        auto* Backward=NewObject<UInputAction>();
+        Vanilla->MapKey(Backward,EKeys::S);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::S,true); Tick();
+        TestTrue(TEXT("S moves normally without a single group"),Fired(Backward));
+        Key(EKeys::S,false); Tick();
+        Subsystem.AddMappingContext(SaveContext,1000);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::S,true); Tick();
+        TestTrue(TEXT("S activates Save when its context is enabled"),Fired(Save.Action));
+        TestFalse(TEXT("Saving consumes backward movement"),Fired(Backward));
+        Key(EKeys::S,false); Tick();
+        Subsystem.RemoveMappingContext(SaveContext);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::S,true); Tick();
+        TestTrue(TEXT("S movement returns after Save context removal"),Fired(Backward));
+        Key(EKeys::S,false); Tick();
+    }
     auto* Transform = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Transform.MC_Transform"));
     if (TestNotNull(TEXT("Transform context exists"), Transform))
     {

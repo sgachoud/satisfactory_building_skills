@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.2.1`.
+The mod reference is `BuildingSkills`; the development version is `0.3.0`.
 
 ## Controls
 
@@ -15,6 +15,7 @@ The mod reference is `BuildingSkills`; the development version is `0.2.1`.
 | M | Merge |
 | U | Ungroup, available for exactly one selected group |
 | T | Enter Transform with the current selection |
+| S | Save as blueprint, available for exactly one selected group |
 
 The Building Skills commands can be changed in the game's keybinding settings.
 Multi-select and selection-mode switching use the existing game bindings. Group,
@@ -27,6 +28,12 @@ Hold multi-select and sweep over targets to add them. Begin the gesture on an
 already selected item to remove items. A pinned selection excludes the unrelated
 object under the cursor; when nothing is pinned, commands use the highlighted target.
 Closing the gun clears the local selection. Groups themselves persist in the save.
+
+**Save** opens the native blueprint details window for the selected group's complete
+contents, including nested groups. Choose its name, description, icon and category,
+then save a normal game blueprint. Load and Clear are unavailable in this window.
+Saving leaves the original buildings and group in place. S remains a movement key
+when the Save action is unavailable.
 
 - **Group** creates a new group containing the selected individual buildings and
   selected groups. Existing groups become children of the new group.
@@ -65,7 +72,7 @@ preserve the group hierarchy for later reinstalls.
 ## Transform
 
 Press **T** in Edit to hold the selection fixed and transform it. **R** cycles
-Rotate X / Y / Z / XYZ, then Scale XY / XZ / YZ / X / Y / Z. Scroll to apply the
+Rotate X / Y / Z, then Scale XYZ / XY / XZ / YZ / X / Y / Z. Scroll to apply the
 active operation; the colored axis display marks the active axes at the shared pivot.
 Arrow keys move relative to your facing; Page Up / Down move vertically. **Esc**
 returns to normal Edit, keeping the changes and selection.
@@ -83,6 +90,7 @@ power wires follow their connection points. Extractors keep their resource bindi
 - [Setup](docs/SETUP.md): toolchain and commands.
 - [Verification](docs/TESTING.md): completed checks and in-game test matrix.
 - [Grouping implementation](docs/GROUPING.md): hierarchy and integration details.
+- [Blueprint saving](docs/BLUEPRINTS.md): saving a group and online checks.
 
 The plugin is junctioned into the shared SML project's `Mods/GameFeatures` folder.
 Generated files and build products are ignored. The project targets CSS Unreal 5.6.1
@@ -96,7 +104,8 @@ automated validation in both the editor and the packaged game. Follow-up work
 covered native hint layout, the shortcut helper, refund-update batching, cached
 lightweight lookup, packaged group-hover regression checks, transform controls,
 native transform updates, the axis display, transform validation, connected-network
-geometry updates, and specialized-building regression checks.
+geometry updates, specialized-building regression checks, group blueprint saving,
+uniform XYZ scaling, and Linux server packaging.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

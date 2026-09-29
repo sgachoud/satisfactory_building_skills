@@ -73,8 +73,8 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         bool Modes = true;
         for (int32 I=0; I<10; ++I)
         {
-            Modes &= Transform({A}, EBSTransformMode(I), I<4 ? 15 : 1.1, FVector::ZeroVector);
-            Modes &= Transform({A}, EBSTransformMode(I), I<4 ? -15 : 1/1.1, FVector::ZeroVector);
+            Modes &= Transform({A}, EBSTransformMode(I), I<3 ? 15 : 1.1, FVector::ZeroVector);
+            Modes &= Transform({A}, EBSTransformMode(I), I<3 ? -15 : 1/1.1, FVector::ZeroVector);
         }
         Check(*FString::Printf(TEXT("%s all rotation and scale modes keep reversible native geometry"), *A->GetName()), Modes &&
             S->GetSplineComponent()->GetLocationAtSplinePoint(1, ESplineCoordinateSpace::World).Equals(Before + Delta, .5));
