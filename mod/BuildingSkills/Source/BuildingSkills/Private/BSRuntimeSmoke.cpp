@@ -459,8 +459,10 @@ public:
                 auto* LW=AFGLightweightBuildableSubsystem::Get(World);
                 auto* Class=LoadClass<AFGBuildable>(nullptr,TEXT("/Game/FactoryGame/Buildable/Building/Foundation/Build_Foundation_8x4_01.Build_Foundation_8x4_01_C"));
                 auto* Recipe=LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Recipes/Buildings/Foundations/Recipe_Foundation_8x4_01.Recipe_Foundation_8x4_01_C"));
-                Edit->Selection.Buildings={FBSBuildingRef::FromActor(Buildings[0].Get())};
-                if(LW && Class && Recipe) for(int32 I=0;I<2;++I)
+                // Focused regression: no actor-backed machine may hide missing
+                // bounds on an entirely lightweight group.
+                Edit->Selection.Buildings.Reset();
+                if(LW && Class && Recipe) for(int32 I=0;I<3;++I)
                 {
                     FRuntimeBuildableInstanceData Data;
                     Data.Transform=FTransform(Player->GetActorLocation()+FVector(1600,I*800,-600));
@@ -481,6 +483,9 @@ public:
             Check(TEXT("S opens the native blueprint designer window"), IsValid(Edit->BlueprintSession) && IsValid(Edit->BlueprintWindow));
             auto* Window=Edit->BlueprintWindow.Get();
             if(!Window) break;
+            if(FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest")))
+                Check(TEXT("Foundation-only blueprint bounds cover all three foundations"),
+                    Edit->BlueprintSession->GetBlueprintDimensions()==FIntVector(1,3,1));
             bool SaveOnly=true;
             for(const auto* Name:{TEXT("mClearDesingerButton"),TEXT("mLoadButton")})
             {
@@ -540,7 +545,7 @@ public:
                 Check(TEXT("Saved group blueprint reads back from disk with native archive data"),Read && Blueprints->mStoredBlueprintData.IsValid());
                 TArray<AFGBuildable*> Loaded;
                 if(Read) Blueprints->LoadStoredBlueprint(Descriptor,FTransform::Identity,Loaded,true);
-                Check(TEXT("Blueprint loads exactly the three selected actor/lightweight members"),Loaded.Num()==BlueprintMembers.Num() && Loaded.Num()==3);
+                Check(TEXT("Blueprint loads exactly the three selected members"),Loaded.Num()==BlueprintMembers.Num() && Loaded.Num()==3);
                 bool Unchanged=true;
                 for(const auto& Member:BlueprintMembers)
                 {

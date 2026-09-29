@@ -4,6 +4,7 @@
 #include "FGBlueprintSubsystem.h"
 #include "FGCharacterPlayer.h"
 #include "FGHealthComponent.h"
+#include "FGLightweightBuildableSubsystem.h"
 #include "Equipment/FGBuildGun.h"
 #include "EngineUtils.h"
 #include "Patching/NativeHookManager.h"
@@ -51,10 +52,26 @@ bool ABSBlueprintSaveSession::Prepare(FString& Error)
         auto* Building = Member.ResolveActor(GetWorld());
         if (!IsValid(Building)) { Error = TEXT("A selected building could not be read."); return false; }
         mBuildables.AddUnique(Building);
-        Bounds += Building->GetComponentsBoundingBox(true);
+        FBox MemberBounds(ForceInit);
+        if (Member.LightweightClass)
+        {
+            // Lightweight actors are temporary interaction shells with no mesh
+            // components. Their real geometry lives in the instance subsystem.
+            auto* Lightweight = AFGLightweightBuildableSubsystem::Get(GetWorld());
+            const int32 Index = Member.ResolveIndex(GetWorld());
+            const auto* Data = Lightweight && Index != INDEX_NONE
+                ? Lightweight->GetRuntimeDataForBuildableClassAndIndex(Member.LightweightClass, Index) : nullptr;
+            if (Data && Data->BoundingBox.IsValid) MemberBounds = Data->BoundingBox.TransformBy(Data->Transform);
+        }
+        if (!MemberBounds.IsValid) MemberBounds = Building->GetComponentsBoundingBox(true);
+        if (!MemberBounds.IsValid)
+        { Error = TEXT("A selected building's geometry is not available yet. Try again after it finishes loading."); return false; }
+        Bounds += MemberBounds;
         InReach |= FVector::DistSquared(Member.Location(), Player->GetActorLocation()) <= FMath::Square(Player->GetBuildGun()->GetBuildGunRange() + 1000.f);
     }
-    if (!InReach || !Bounds.IsValid) { Error = TEXT("Move within Build Gun range of the group."); return false; }
+    UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint Save bounds: members=%d reachable=%d valid=%d size=%s"),
+        Members.Num(), InReach, Bounds.IsValid, *Bounds.GetSize().ToString());
+    if (!InReach) { Error = TEXT("Move within Build Gun range of the group."); return false; }
     // Center horizontally, with the bottom of the selection at blueprint floor height.
     BlueprintOrigin = FTransform(FVector(Bounds.GetCenter().X, Bounds.GetCenter().Y, Bounds.Min.Z));
     const FVector Size = Bounds.GetSize() / TILE_SIZE;

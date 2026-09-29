@@ -21,6 +21,10 @@ actors immediately before serialization. Server validation checks ownership,
 group revision, building identity, group size and player range again on Save.
 If the group changes while the window is open, close it and select the group again.
 
+Blueprint bounds include the lightweight subsystem's local mesh bounds transformed
+into world space. Temporary foundation actors have no mesh components, so measuring
+only actor components would reject foundation-only groups and undersize mixed groups.
+
 Load and Clear are also blocked in the native save-session methods so controller
 shortcuts cannot place or dismantle buildings through this window. Ordinary
 blueprint designers retain their normal functionality.

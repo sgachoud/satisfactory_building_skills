@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.3.0`.
+The mod reference is `BuildingSkills`; the development version is `0.3.1`.
 
 ## Controls
 

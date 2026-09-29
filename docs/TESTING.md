@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.3.0.
+Windows game, CL 502094. Current package: Building Skills 0.3.1.
 
 ## Completed checks
 
@@ -17,7 +17,7 @@ Windows game, CL 502094. Current package: Building Skills 0.3.0.
 - Linux Server Shipping compiled and packaged successfully. The archive's shared
   library matches the fresh build by SHA-256 and is an x86-64 ELF binary. This is
   build verification; Linux execution and online gameplay remain manual checks.
-- The installed Shipping game passed all 95 runtime assertions in a fresh temporary
+- Version 0.3.0 passed all 95 runtime assertions in a fresh temporary
   world. The test injects key events into the game's player input and uses the native
   mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
   targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
@@ -75,6 +75,12 @@ Windows game, CL 502094. Current package: Building Skills 0.3.0.
   name-filter stage, which does not complete in that test environment. Interactive
   name filtering, clicking Save, overwrite confirmation and multiplayer file
   transfer still need manual coverage; the production UI keeps those native flows.
+- Version 0.3.1 passed all 11 focused blueprint assertions using three lightweight
+  foundations and no actor-backed machine. Before the fix, S reached the save code
+  but empty actor-component bounds incorrectly rejected the group as out of range.
+  The fixed run opens the window with S, verifies 1-by-3-by-1 blueprint dimensions,
+  saves and reloads all three members, leaves originals unchanged, and returns to Edit.
+  Lightweight geometry bounds now also contribute to mixed-group blueprint dimensions.
 
 The runtime test blocks world saves and never loads an existing world save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.

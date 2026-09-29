@@ -1,5 +1,6 @@
 #include "BSEditModeComponent.h"
 #include "BSBlueprintSave.h"
+#include "BuildingSkills.h"
 #include "FGCharacterPlayer.h"
 #include "FGPlayerController.h"
 #include "Equipment/FGBuildGun.h"
@@ -11,8 +12,11 @@
 
 void UBSEditModeComponent::OnSave()
 {
+    UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint Save input: editing=%d transform=%d allowed=%d pending=%d opening=%d window=%d"),
+        IsEditing(), bTransforming, InputAllowed(), bRequestPending, bOpeningBlueprint, BlueprintWindow != nullptr);
     if (!IsEditing() || bTransforming || !InputAllowed() || bRequestPending || bOpeningBlueprint || BlueprintWindow) return;
     const auto Current = EffectiveSelection();
+    UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint Save selection: groups=%d individuals=%d"), Current.Groups.Num(), Current.Buildings.Num());
     if (Current.Groups.Num() != 1 || !Current.Buildings.IsEmpty()) return;
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* PC = Player ? Cast<AFGPlayerController>(Player->GetController()) : nullptr;
@@ -26,6 +30,7 @@ void UBSEditModeComponent::OnSave()
 
 void UBSEditModeComponent::OpenBlueprintSave(ABSBlueprintSaveSession* Session, const FString& Error)
 {
+    UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint Save open: session=%s error=%s"), *GetNameSafe(Session), *Error);
     bOpeningBlueprint = false;
     BlueprintSession = Session;
     if (!IsValid(Session) || !IsEditing()) { Feedback = Error; CloseBlueprintSave(); return; }
