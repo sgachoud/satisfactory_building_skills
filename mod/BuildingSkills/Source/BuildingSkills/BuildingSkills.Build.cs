@@ -14,7 +14,7 @@ public class BuildingSkills : ModuleRules
             "GeometryCollectionEngine", "AnimGraphRuntime", "AssetRegistry", "NavigationSystem",
             "AIModule", "GameplayTasks", "SlateCore", "Slate", "UMG", "RenderCore",
             "CinematicCamera", "Foliage", "NetCore", "GameplayTags", "Json", "JsonUtilities",
-            "DummyHeaders", "FactoryGame", "SML"
+            "DummyHeaders", "FactoryGame", "SML", "EnhancedInput"
         });
 
         if (Target.Type == TargetRules.TargetType.Editor)

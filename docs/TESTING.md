@@ -1,6 +1,30 @@
 # Verification
 
-## Setup validation
+## Edit-mode validation
+
+On 2026-09-29, the Edit-mode code compiled and linked for FactoryEditor Win64
+Development. Input asset generation completed with zero errors. The
+`BuildingSkills.Input.EditChord` automation test passed, exercising Unreal's actual
+mapping rebuild, input evaluation and chord-blocker injection with the saved assets:
+
+- Plain E triggers the ordinary action and does not trigger Edit.
+- Alt+E triggers Edit and suppresses the competing E action, even when that other
+  context has higher priority.
+- Holding the chord keeps the competing action blocked.
+- Releasing E stops the shortcut, and ordinary E works after the chord.
+- Removing the modifier through the engine's remapping mechanism removes the Alt
+  requirement; the default chord is not hard-coded into the C++ callback.
+
+Run with `scripts/Mod.ps1 Test`. Reports are in `Saved/Automation` relative to this
+repository. This test does not execute the stubbed FactoryGame equipment methods or
+verify the rendered HUD.
+
+Windows packaging also passed for Steam and Epic Shipping targets (1 minute 50 seconds).
+All five mod content assets were cooked, including the input action and child context.
+The updated archive is `Saved/ArchivedPlugins/BuildingSkills/BuildingSkills-Windows.zip`
+relative to the shared SML project root. It has not been deployed or tested in-game.
+
+## Initial setup validation
 
 Completed on 2026-09-29 with CSS Unreal 5.6.1 and SML 3.12.0:
 
@@ -26,8 +50,9 @@ Logs are local and ignored: `Saved/InitContent.log`, `Saved/Package.log`, and Un
 build log at `%LOCALAPPDATA%/UnrealBuildTool/Log.txt`.
 
 `Package` completed successfully for Windows (Steam and Epic Shipping binaries) in
-1 minute 30 seconds. The archive is
-`F:/dev/satisfactory_mods/SatisfactoryModLoader/Saved/ArchivedPlugins/BuildingSkills/BuildingSkills-Windows.zip`.
+1 minute 30 seconds. The archive is at
+`Saved/ArchivedPlugins/BuildingSkills/BuildingSkills-Windows.zip`, relative to the
+shared SML project root.
 The three starter content packages were cooked. No deployment or in-game smoke test
 has run. Windows Server, Linux Server and the combined `Release` action are untested.
 
@@ -36,11 +61,25 @@ has run. Windows Server, Linux Server and the combined `Release` action are unte
 1. Package with Alpakit and copy the build into a development game installation.
 2. Launch the game and check that **Building Skills 0.1.0** appears in the mod list.
 3. Confirm `LogBuildingSkills: Building Skills module loaded.` appears in the log.
-4. Load a test save, save/reload, and return to the menu. Check for errors naming
-   BuildingSkills or its root modules. The scaffold should make no gameplay changes.
-5. Test host/client and the intended dedicated-server platforms once multiplayer
-   behavior is implemented. The initial descriptor requires installation on both peers.
+4. On foot, press Alt+E: the Build Gun should appear with an EDIT indicator and no
+   construction hologram. Holding it must not repeatedly open/close the mode. Press
+   it again to close. Check both starting with the gun holstered and starting in
+   build, dismantle or paint mode.
+5. Stand by an interactable machine. Plain E must still open it; Alt+E must open Edit
+   without also interacting or quick-switching. Check both key-release orders.
+6. Change **Open / Close Edit Mode** under **Building Skills** in the keybinding
+   settings, including changing the modifier and binding a single key. Confirm the
+   action and its on-screen hint follow the new binding and persist after restarting.
+7. Switch to normal build/dismantle/paint, select a hotbar recipe or sample a building.
+   Edit's indicator should disappear and vanilla behavior should work. Left click
+   in empty Edit mode must neither build nor dismantle anything.
+8. Check interaction menus, pause, vehicles, death/respawn, portals, save reload and
+   reconnect. The shortcut must not open Edit in restricted contexts; no orphaned
+   indicator or duplicate input callbacks should remain afterward.
+9. Repeat with a listen host and remote client before claiming multiplayer support.
+   Server platforms also need packaging and smoke tests. The descriptor requires
+   installation on both peers.
 
 The shared modding project's FactoryGame implementations are stubs. Editor compilation
-and asset checks cannot establish packaged-game behavior. Add focused automated tests
-when gameplay logic exists; there is no gameplay test suite for this empty scaffold.
+and the input regression test cannot establish packaged-game equipment behavior.
+Building-editing operations are not part of this first feature.

@@ -59,6 +59,13 @@ shared precompiled headers, matching the reference project's build optimization.
 
 ## Package
 
+For Edit-mode development, build the editor first. The input assets are committed;
+to regenerate their definitions deliberately, run `scripts/Mod.ps1 EditAssets`.
+This updates only the two assets under `/BuildingSkills/Inputs`, using the vanilla
+Alt chord and player-actions parent context. The game feature scans this directory
+for child input mapping contexts. Run `scripts/Mod.ps1 Test` for input regression
+coverage; reports are written under the repository's ignored `Saved/Automation` folder.
+
 ```powershell
 # Windows clients (Steam and Epic); no deployment or game launch.
 .\scripts\Mod.ps1 Package

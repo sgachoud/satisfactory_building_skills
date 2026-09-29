@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'Package', 'Release')]
+    [ValidateSet('Link', 'ProjectFiles', 'BuildEditor', 'InitContent', 'EditAssets', 'Test', 'Package', 'Release')]
     [string]$Action,
     [string]$SmlRoot = 'F:\dev\satisfactory_mods\SatisfactoryModLoader',
     [string]$EngineRoot = 'C:\Program Files\Unreal Engine - CSS'
@@ -65,6 +65,31 @@ if (Get-Process -Name UnrealEditor, UnrealEditor-Cmd -ErrorAction SilentlyContin
 }
 
 switch ($Action) {
+    'EditAssets' {
+        New-Item -ItemType Directory -Path (Join-Path $repoRoot 'Saved') -Force | Out-Null
+        Invoke-Checked (Join-Path $EngineRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe') @(
+            $project, '-run=pythonscript', "-script=$(Join-Path $PSScriptRoot 'setup_edit_assets.py')",
+            '-unattended', '-nullrhi', '-nosound', '-nop4',
+            "-abslog=$(Join-Path $repoRoot 'Saved\EditAssets.log')"
+        )
+    }
+    'Test' {
+        New-Item -ItemType Directory -Path (Join-Path $repoRoot 'Saved') -Force | Out-Null
+        $testStarted = Get-Date
+        Invoke-Checked (Join-Path $EngineRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe') @(
+            $project, '-unattended', '-nullrhi', '-nosound', '-nop4',
+            '-ExecCmds=Automation RunTests BuildingSkills', '-TestExit=Automation Test Queue Empty',
+            "-ReportExportPath=$(Join-Path $repoRoot 'Saved\Automation')",
+            "-abslog=$(Join-Path $repoRoot 'Saved\Automation.log')"
+        )
+        $report = Join-Path $repoRoot 'Saved\Automation\index.json'
+        Require-Path $report
+        if ((Get-Item -LiteralPath $report).LastWriteTime -lt $testStarted) { throw 'Automation report is stale.' }
+        $results = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+        if ($results.failed -gt 0 -or ($results.succeeded + $results.succeededWithWarnings) -lt 1) {
+            throw "Automation did not pass: $report"
+        }
+    }
     'ProjectFiles' {
         Invoke-Checked (Join-Path $batchRoot 'Build.bat') @(
             '-projectfiles', "-Project=$project", '-game', '-engine'
@@ -108,6 +133,8 @@ switch ($Action) {
         foreach ($asset in @('BuildingSkills', 'RootGameInstance_BuildingSkills', 'RootGameWorld_BuildingSkills')) {
             Require-Path (Join-Path $pluginRoot "Content\$asset.uasset")
         }
+        Require-Path (Join-Path $pluginRoot 'Content\Inputs\IA_ToggleEditMode.uasset')
+        Require-Path (Join-Path $pluginRoot 'Content\Inputs\MC_BuildingSkills.uasset')
         $uatArgs = @(
             "-ScriptsForProject=$project", 'PackagePlugin', "-project=$project",
             '-clientconfig=Shipping', '-serverconfig=Shipping', '-utf8output',

@@ -4,7 +4,7 @@
     "VersionName": "0.1.0",
     "SemVersion": "0.1.0",
     "FriendlyName": "Building Skills",
-    "Description": "Building Skills for Satisfactory. Initial development scaffold; gameplay features are not implemented yet.",
+    "Description": "Adds an Edit mode entry point to the Build Gun with a configurable Alt+E shortcut. Building-editing actions are under development.",
     "Category": "Modding",
     "CreatedBy": "sgachoud",
     "CreatedByURL": "https://github.com/sgachoud",
@@ -25,6 +25,11 @@
     ],
     "BuiltInInitialFeatureState": "Active",
     "Plugins": [
+        {
+            "Name": "EnhancedInput",
+            "Enabled": true,
+            "BasePlugin": true
+        },
         {
             "Name": "SML",
             "Enabled": true,
