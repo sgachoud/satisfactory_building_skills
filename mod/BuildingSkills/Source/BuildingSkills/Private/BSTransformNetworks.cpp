@@ -374,11 +374,17 @@ void FBSTransformNative::RebuildSpline(AFGBuildable* Actor)
     }
     if (Collision)
     {
+        const bool WasRegistered = Collision->IsRegistered();
         Collision->DestroyPhysics();
         Collision->mCachedCollisionInfo.Reset();
         TArray<FCachedCollisionBoxInfo> Boxes;
         UFGSplineMeshGenerationLibrary::BuildSplineCollisionInfoBoxesWithVariableSteps(Spline, Extent, Spacing, Boxes, Offset);
-        Collision->AddBoxes(Boxes); Collision->CreatePhysics(); Collision->UpdateBounds();
+        Collision->AddBoxes(Boxes);
+        // Native DestroyPhysics also unregisters the component. CreatePhysics
+        // alone cannot restore scene queries while it is unregistered. OnRegister
+        // builds physics from the cached boxes, so do not call CreatePhysics twice.
+        if (WasRegistered) Collision->RegisterComponent();
+        Collision->UpdateBounds();
     }
     Actor->Internal_CallRemoveInstances();
     Actor->CallSetupInstances();

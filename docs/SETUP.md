@@ -69,7 +69,7 @@ Run `scripts/Mod.ps1 Test` for hierarchy, save-property and input regression
 coverage; reports are written under the repository's ignored `Saved/Automation` folder.
 
 ```powershell
-# Windows clients (Steam and Epic); no deployment or game launch.
+# Steam Windows client; no deployment or game launch.
 .\scripts\Mod.ps1 Package
 
 # Combined Windows client, Windows Server and Linux Server release archive.

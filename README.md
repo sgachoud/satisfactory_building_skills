@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.3.2`.
+The mod reference is `BuildingSkills`; the development version is `0.3.3`.
 
 ## Controls
 
@@ -105,7 +105,8 @@ covered native hint layout, the shortcut helper, refund-update batching, cached
 lightweight lookup, packaged group-hover regression checks, transform controls,
 native transform updates, the axis display, transform validation, connected-network
 geometry updates, specialized-building regression checks, group blueprint saving,
-uniform XYZ scaling, Linux server packaging, and multiplayer save-window handoff fixes.
+uniform XYZ scaling, Linux server packaging, multiplayer save-window handoff fixes,
+and restoring spline collision registration after transforms.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

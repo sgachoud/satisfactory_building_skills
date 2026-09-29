@@ -153,6 +153,9 @@ switch ($Action) {
         )
         if ($Action -eq 'Release') { $uatArgs += @('-build', '-server', '-serverplatform=Win64+Linux', '-merge') }
         if ($Action -eq 'PackageLinux') { $uatArgs += @('-noclient', '-server', '-serverplatform=Linux') }
+        # The native development build above compiles Steam only. Explicitly
+        # select it so packaging cannot include an older cached Epic binary.
+        if ($Action -in 'Package', 'Install') { $uatArgs += '-target=FactoryGameSteam' }
         if ($Action -eq 'Install') {
             Require-Path (Join-Path $GameRoot 'FactoryGame')
             if (Get-Process -Name FactoryGame, FactoryGameSteam, FactoryGameEGS, FactoryGameSteam-Win64-Shipping, FactoryGameEGS-Win64-Shipping -ErrorAction SilentlyContinue) {

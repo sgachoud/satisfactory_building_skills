@@ -14,6 +14,8 @@
 #include "FGRailroadTrackConnectionComponent.h"
 #include "Resources/FGResourceNode.h"
 #include "EngineUtils.h"
+#include "Engine/World.h"
+#include "PhysicsEngine/BodySetup.h"
 
 namespace { TWeakObjectPtr<AFGBuildableConveyorBelt> SimulationBelt; }
 
@@ -44,6 +46,27 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         if (!Success) UE_LOG(LogBuildingSkills, Warning, TEXT("NETWORK TEST transform: %s"), *Error);
         return Success;
     };
+    auto Targetable = [&](AFGBuildable* Target)
+    {
+        auto* Spline=Cast<IFGSplineBuildableInterface>(Target)->GetSplineComponent();
+        const FVector Middle=Spline->GetLocationAtDistanceAlongSpline(Spline->GetSplineLength()*.5,ESplineCoordinateSpace::World);
+        const FVector Up=Spline->GetUpVectorAtDistanceAlongSpline(Spline->GetSplineLength()*.5,ESplineCoordinateSpace::World);
+        bool Found=false;
+        for(bool Complex:{false,true})
+        {
+            TArray<FHitResult> Hits;
+            FCollisionQueryParams Params(SCENE_QUERY_STAT(BuildingSkillsBeltTargeting),Complex);
+            World->LineTraceMultiByChannel(Hits,Middle+Up*500,Middle-Up*500,ECC_GameTraceChannel5,Params);
+            for(const auto& Hit:Hits)
+            {
+                Found|=Hit.GetActor()==Target;
+                UE_LOG(LogBuildingSkills,Display,TEXT("BELT TARGET TRACE complex=%d actor=%s component=%s target=%s"),Complex,*GetNameSafe(Hit.GetActor()),*GetNameSafe(Hit.GetComponent()),*GetNameSafe(Target));
+            }
+        }
+        auto* Collision=Target->FindComponentByClass<UFGSplineCollisionComponent>();
+        UE_LOG(LogBuildingSkills,Display,TEXT("SPLINE TARGET STATE actor=%s hit=%d registered=%d physics=%d collision=%d response=%d"),*GetNameSafe(Target),Found,Collision && Collision->IsRegistered(),Collision && Collision->IsPhysicsStateCreated(),Collision?int32(Collision->GetCollisionEnabled()):-1,Collision?int32(Collision->GetCollisionResponseToChannel(ECC_GameTraceChannel5)):-1);
+        return Found && Collision && Collision->IsRegistered() && Collision->IsPhysicsStateCreated();
+    };
     auto SplineSpawn = [&](const TCHAR* Path, const FVector& Offset) -> AFGBuildable*
     {
         auto* A = Spawn(Path, Offset, false);
@@ -60,6 +83,7 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
     auto* Rail = Cast<AFGBuildableRailroadTrack>(SplineSpawn(TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"), FVector(0,1500,0)));
     Check(TEXT("Native belt, pipe and rail fixtures spawn"), Belt && Pipe && Rail);
     if (!Belt || !Pipe || !Rail) return false;
+    Check(TEXT("Fresh belt can be targeted on the Build Gun trace channel"),Targetable(Belt));
     for (auto* A : TArray<AFGBuildable*>{Belt, Pipe, Rail})
     {
         auto* S = Cast<IFGSplineBuildableInterface>(A);
@@ -82,6 +106,10 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         if(Tangents)for(int32 I=0;I<OriginalPoints.Num();++I) Tangents &= S->GetSplinePointData()[I].ArriveTangent.Equals(OriginalPoints[I].ArriveTangent,.01) && S->GetSplinePointData()[I].LeaveTangent.Equals(OriginalPoints[I].LeaveTangent,.01);
         Check(*FString::Printf(TEXT("%s inverse steps restore spline tangents"),*A->GetName()),Tangents);
         Check(*FString::Printf(TEXT("%s rebuilt visual and collision data exists"), *A->GetName()), !A->mInstanceHandles.IsEmpty() && A->FindComponentByClass<UFGSplineCollisionComponent>());
+        Check(*FString::Printf(TEXT("%s remains targetable after repeated transforms"), *A->GetName()), Targetable(A));
+        auto* Collision=A->FindComponentByClass<UFGSplineCollisionComponent>();
+        Check(*FString::Printf(TEXT("%s collision rebuild does not duplicate physics boxes"), *A->GetName()), Collision && Collision->mBodySetup &&
+            Collision->mBodySetup->AggGeom.BoxElems.Num()==Collision->mCachedCollisionInfo.Num());
         const FTransform RestoredPose(FRotator(15,25,10),A->GetActorLocation()+FVector(0,0,1500),FVector(1.2,.9,1.1));
         auto* Restored=Buildables->BeginSpawnBuildable(A->GetClass(),RestoredPose);
         auto* RestoredSpline=Cast<IFGSplineBuildableInterface>(Restored);
@@ -106,6 +134,11 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST belt: applied=%d link=%d start=%s fixed=%s end=%s expected=%s"),Applied,Belt->GetConnection1()->GetConnection()==Port,*Belt->GetConnection0()->GetComponentLocation().ToString(),*Fixed.ToString(),*Belt->GetConnection1()->GetComponentLocation().ToString(),*(End+Delta).ToString());
         Check(TEXT("Moving a connected machine stretches its unselected belt and preserves the link"), Applied && Belt->GetConnection1()->GetConnection()==Port &&
             Belt->GetConnection1()->GetComponentLocation().Equals(End+Delta,.1) && Belt->GetConnection0()->GetComponentLocation().Equals(Fixed,.1));
+        Check(TEXT("Belt remains targetable after its connected machine moves"),Targetable(Belt));
+        // Exercise the geometry application used by receiving clients, without
+        // server network planning. This is not a remote-client replication test.
+        const auto ReplicatedChange=Capture(Belt);
+        Check(TEXT("Replaying belt geometry preserves Build Gun targeting"),Apply(World,ReplicatedChange) && Targetable(Belt));
         auto* OtherStorage=Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"),FVector(-1000,0,0));
         TInlineComponentArray<UFGFactoryConnectionComponent*> OtherPorts(OtherStorage);
         for(auto* OtherPort:OtherPorts)

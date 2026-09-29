@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094. Current package: Building Skills 0.3.2.
+Windows game, CL 502094. Current development version: Building Skills 0.3.3.
 
 ## Completed checks
 
@@ -92,6 +92,21 @@ The 0.3.2 editor suite passed all five tests. Its packaged regression additional
 checks delayed session discovery, holding Save during the delay, stale replies,
 awake replication settings and timeout cleanup. That new runtime scenario still
 needs execution; installation is waiting for the running client to close.
+
+Version 0.3.3 restores spline collision registration after rebuilding belts, pipes
+and rails. The native collision teardown unregisters the component; merely calling
+its physics creation method leaves it absent from scene queries. Registration now
+recreates physics once through the native registration callback. New runtime checks
+trace on the Build Gun channel before and after moving a connected machine, after
+repeated transforms, and after replaying received geometry. They also check physics
+registration and duplicate collision boxes. Windows Shipping, Linux Server Shipping
+and FactoryEditor compilation succeeded, and all five editor tests passed. Both
+0.3.3 archives were packaged and their native binaries matched the fresh builds by
+SHA-256. The new packaged targeting checks still need execution; replaying geometry
+locally does not verify multiplayer replication. The installed client remains
+0.3.1. Installation and packaged runtime testing are deferred while the user is playing.
+Development Windows packaging explicitly selects Steam to exclude stale Epic
+binaries from the shared build cache.
 
 The runtime test blocks world saves and never loads an existing world save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
@@ -212,6 +227,8 @@ Use a separate test save containing machines, foundations and two placed bluepri
    stations and extractors. Internal links must remain connected; boundary splines
    must stretch to fixed external endpoints. Check items, fluids, train movement,
    pipe indicators and resource bindings before and after the edit.
+   After moving a connected machine, target its stretched belt in both Edit and
+   dismantle on the remote client. Repeat after another move and after reconnecting.
 6. Save and reload a separate test world after mixed transformations; verify native
    transforms, inventories, group membership and blueprint selection. Then repeat
     with a host and client, late joining, and concurrent edits.
