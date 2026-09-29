@@ -88,14 +88,15 @@ public:
     void RemoveLightweight(TSubclassOf<AFGBuildable> Class, int32 Index);
     void RemoveBuilding(AFGBuildable* Building);
     int32 FindLightweightIndex(const FBSBuildingRef& Ref) const;
+    void InvalidateLightweightLookup(TSubclassOf<AFGBuildable> Class) { LightweightLookup.Remove(Class); LightweightCounts.Remove(Class); }
     bool Execute(AFGCharacterPlayer* Player, EBSGroupOperation Operation, const FBSSelection& Selection,
         int32 ExpectedRevision, FBSSelection& Result, FString& Error);
     UPROPERTY(SaveGame, Replicated) TArray<FBSGroup> Groups;
     UPROPERTY(SaveGame) int32 SchemaVersion = 1;
     UPROPERTY(Replicated) int32 Revision = 0;
 private:
-    // Build spatial buckets once per frame/class, not once per selected building.
-    mutable uint64 LookupFrame = MAX_uint64;
+    // Keep spatial buckets until native instance membership changes.
+    mutable TMap<TSubclassOf<AFGBuildable>, int32> LightweightCounts;
     mutable TMap<TSubclassOf<AFGBuildable>, TMultiMap<FIntVector, int32>> LightweightLookup;
 };
 

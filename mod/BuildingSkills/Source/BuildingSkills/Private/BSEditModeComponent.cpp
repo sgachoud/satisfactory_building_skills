@@ -19,6 +19,10 @@
 #include "Patching/NativeHookManager.h"
 #include "PlayerMappableKeySettings.h"
 #include "UObject/UnrealType.h"
+#include "UObject/StructOnScope.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/WrapBox.h"
+#include "Components/CanvasPanelSlot.h"
 #include "UI/FGGameUI.h"
 #include "UI/FGInteractWidget.h"
 
@@ -58,6 +62,20 @@ void UBSEditModeComponent::InstallHooks()
 {
     if (!WITH_EDITOR) {
     // Editor FactoryGame methods are stubs. Hook real game binaries only.
+    SUBSCRIBE_METHOD(UFGBuildGunStateDismantle::UpdatePeekDismantleRefunds,
+        [](auto& Scope, UFGBuildGunStateDismantle* State, bool NoBuildCost)
+        {
+            if (auto* Edit = ForGun(State->GetBuildGun()))
+            {
+                if (Edit->bRefundNoBuildCost != NoBuildCost) Edit->bSelectionDirty = true;
+                Edit->bRefundNoBuildCost = NoBuildCost;
+                // Each AddPending call otherwise rebuilds the complete refund UI.
+                // Edit needs no refunds; dismantle refreshes once after a batch.
+                if (Edit->EditGun.IsValid() || Edit->bSyncing ||
+                    (Edit->bNativeTick && !Edit->Highlighted.IsEmpty())) { Scope.Cancel(); return; }
+                ++Edit->RefundRefreshes;
+            }
+        });
     SUBSCRIBE_UOBJECT_METHOD_AFTER(UFGBuildGunStateDismantle, GetSupportedBuildModes_Implementation,
         [](const UFGBuildGunStateDismantle* State, TArray<TSubclassOf<UFGBuildGunModeDescriptor>>& Modes)
         {
@@ -150,6 +168,15 @@ void UBSEditModeComponent::InstallHooks()
     SUBSCRIBE_METHOD(AFGLightweightBuildableSubsystem::RemoveByInstanceIndex,
         [](auto&, AFGLightweightBuildableSubsystem* LW, TSubclassOf<AFGBuildable> Class, int32 Index)
         { if (auto* Groups = ABSGroupSubsystem::Get(LW->GetWorld())) Groups->RemoveLightweight(Class, Index); });
+    SUBSCRIBE_METHOD(AFGLightweightBuildableSubsystem::InvalidateRuntimeInstanceDataForIndex,
+        [](auto&, AFGLightweightBuildableSubsystem* LW, TSubclassOf<AFGBuildable> Class, int32)
+        { if (auto* Groups = ABSGroupSubsystem::Get(LW->GetWorld())) Groups->InvalidateLightweightLookup(Class); });
+    SUBSCRIBE_METHOD(AFGLightweightBuildableSubsystem::AddFromBuildableInstanceData,
+        [](auto&, AFGLightweightBuildableSubsystem* LW, TSubclassOf<AFGBuildable> Class, FRuntimeBuildableInstanceData&, bool, int32, uint16, AActor*, int32)
+        { if (auto* Groups = ABSGroupSubsystem::Get(LW->GetWorld())) Groups->InvalidateLightweightLookup(Class); });
+    SUBSCRIBE_METHOD(AFGLightweightBuildableSubsystem::AddFromReplicatedData,
+        [](auto&, AFGLightweightBuildableSubsystem* LW, TSubclassOf<AFGBuildable> Class, TSubclassOf<UFGRecipe>, const FLightweightBuildableReplicationItem&, int32, AActor*, int32)
+        { if (auto* Groups = ABSGroupSubsystem::Get(LW->GetWorld())) Groups->InvalidateLightweightLookup(Class); });
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildable, Dismantle_Implementation,
         [](auto&, AFGBuildable* Building)
         { if (auto* Groups = ABSGroupSubsystem::Get(Building->GetWorld())) Groups->RemoveBuilding(Building); });
@@ -283,9 +310,9 @@ void UBSEditModeComponent::OnOperationResult(bool Success, const FBSSelection& R
 
 FBSSelection UBSEditModeComponent::EffectiveSelection() const
 {
-    auto* System = ABSGroupSubsystem::Get(GetWorld());
-    const FBSSelection& Value = Selection.IsEmpty() ? Hover : Selection;
-    return System ? FBSGroupTree::Normalize(System->Groups, Value) : Value;
+    // Selection is normalized when it changes or the replicated tree changes.
+    // HUD reads must not rescan every group for every selected building.
+    return Selection.IsEmpty() ? Hover : Selection;
 }
 
 TArray<FBSBuildingRef> UBSEditModeComponent::ResolveSelection(const FBSSelection& Value) const
@@ -309,9 +336,15 @@ FBSSelection UBSEditModeComponent::HoverSelection(UFGBuildGunStateDismantle* Sta
     if (!Building && State->mPendingDismantleActors.Contains(State->mCurrentlyAimedAtActor))
         Building = Cast<AFGBuildable>(State->mCurrentlyAimedAtActor);
     if (!IsValid(Building)) return Result;
+    const auto Mode = State->GetBuildGun()->GetCurrentBuildGunMode();
+    auto* System = ABSGroupSubsystem::Get(GetWorld());
+    const int32 Revision = System ? System->Revision : INDEX_NONE;
+    if (!Hover.IsEmpty() && HoverActor == Building && HoverMode == Mode.Get() && HoverRevision == Revision) return Hover;
+    HoverActor = Building;
+    HoverMode = Mode.Get();
+    HoverRevision = Revision;
     FBSBuildingRef Ref = FBSBuildingRef::FromActor(Building);
     if (!Ref.IsAlive(GetWorld())) return Result;
-    const auto Mode = State->GetBuildGun()->GetCurrentBuildGunMode();
     if (Mode == UBSEditBlueprintModeDescriptor::StaticClass() || Mode == State->mBlueprintDismantleMode)
     {
         if (auto* Proxy = Ref.Blueprint(GetWorld()))
@@ -328,7 +361,7 @@ FBSSelection UBSEditModeComponent::HoverSelection(UFGBuildGunStateDismantle* Sta
     }
     if (Mode == UBSGroupModeDescriptor::StaticClass() || Mode == UBSEditGroupModeDescriptor::StaticClass())
     {
-        if (auto* System = ABSGroupSubsystem::Get(GetWorld()))
+        if (System)
         {
             FGuid Root = FBSGroupTree::Root(System->Groups, FBSGroupTree::Owner(System->Groups, Ref));
             if (Root.IsValid()) Result.Groups.Add(Root);
@@ -398,6 +431,7 @@ void UBSEditModeComponent::SyncDismantle(UFGBuildGunStateDismantle* State)
     const auto Mode = State->GetBuildGun()->GetCurrentBuildGunMode();
     if (!IsEditing() && Selection.IsEmpty() && Mode == State->mDefaultDismantleMode)
     {
+        ResolvedCount = Hover.Buildings.Num();
         if (!Highlighted.IsEmpty())
         {
             bSyncing = true;
@@ -414,17 +448,19 @@ void UBSEditModeComponent::SyncDismantle(UFGBuildGunStateDismantle* State)
     bSyncing = true;
     State->SetAimedAtActor(nullptr);
     bSyncing = false;
+    bool Changed = bSelectionDirty || State->mPendingDismantleActors.Num() != ExpectedPendingCount;
+    if (!Changed)
+        for (AFGBuildable* B : Highlighted) if (!IsValid(B) || B->GetIsDismantled()) { Changed = true; break; }
+    if (!Changed) return;
     TArray<FBSBuildingRef> Buildings = ResolveSelection(EffectiveSelection());
+    ResolvedCount = Buildings.Num();
     if (Buildings.Num() > 2048)
     {
         Buildings.Empty();
         Feedback = TEXT("Selection exceeds 2048 buildings; nothing will be dismantled.");
         bSelectionDirty = true;
     }
-    bool Changed = bSelectionDirty || State->mPendingDismantleActors.Num() != Buildings.Num();
-    if (!Changed)
-        for (AFGBuildable* B : Highlighted) if (!IsValid(B) || B->GetIsDismantled()) { Changed = true; break; }
-    if (!Changed) return;
+    ++SelectionRebuilds;
     State->ResetBuildGunDelay();
     bSyncing = true;
     State->ClearPendingSelectedActors();
@@ -446,6 +482,8 @@ void UBSEditModeComponent::SyncDismantle(UFGBuildGunStateDismantle* State)
     State->mIsMultiSelectActive = WasMulti;
     bSyncing = false;
     bSelectionDirty = false;
+    ExpectedPendingCount = State->mPendingDismantleActors.Num();
+    if (!IsEditing()) State->UpdatePeekDismantleRefunds(bRefundNoBuildCost);
 }
 
 void UBSEditModeComponent::ReleaseHighlights()
@@ -458,6 +496,9 @@ void UBSEditModeComponent::ReleaseHighlights()
 void UBSEditModeComponent::ClearSelection()
 {
     Selection = {}; Hover = {}; LastHover = {}; PendingResult = {};
+    HoverActor.Reset(); HoverMode.Reset(); HoverRevision = INDEX_NONE;
+    ResolvedCount = 0;
+    ExpectedPendingCount = 0;
     PendingRevision = INDEX_NONE;
     bRequestPending = false; bMultiHeld = false; bSelectionDirty = true;
     ReleaseHighlights();
@@ -516,6 +557,7 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
         }
     }
     UpdateNativeGunHUD(IsEditing());
+    UpdateControlHints(IsEditing() && InputAllowed());
     if (Indicator) Indicator->SetVisibility(InputAllowed() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
@@ -544,6 +586,7 @@ void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
 void UBSEditModeComponent::LeaveEditMode(bool Unequip)
 {
     UpdateNativeGunHUD(false);
+    UpdateControlHints(false);
     if (InputSubsystem.IsValid() && OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
     OperationsContext = nullptr;
     bEnteringEdit = false;
@@ -588,16 +631,16 @@ FText UBSEditModeComponent::GetStatusText() const
     FString ModeName = TEXT("Normal");
     if (Mode == UBSGroupModeDescriptor::StaticClass() || Mode == UBSEditGroupModeDescriptor::StaticClass()) ModeName = TEXT("Group");
     else if (Mode == UBSEditBlueprintModeDescriptor::StaticClass() || (State && Mode == State->mBlueprintDismantleMode)) ModeName = TEXT("Blueprint");
-    return FText::FromString(FString::Printf(TEXT("%s  |  %s\n%d groups, %d individual buildings  (%d buildings total)%s%s"),
+    return FText::FromString(FString::Printf(TEXT("%s  |  %s\nGroups: %d  |  Individuals: %d\nSelected buildings: %d%s%s"),
         IsEditing() ? TEXT("EDIT") : TEXT("DISMANTLE"), *ModeName, Current.Groups.Num(), Current.Buildings.Num(),
-        ResolveSelection(Current).Num(), Feedback.IsEmpty() ? TEXT("") : TEXT("\n"), *Feedback));
+        ResolvedCount, Feedback.IsEmpty() ? TEXT("") : TEXT("\n"), *Feedback));
 }
 
-FText UBSEditModeComponent::GetControlsText() const
+TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
 {
     auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
     auto* PC = Player ? Cast<APlayerController>(Player->GetController()) : nullptr;
-    auto Key = [&](FName Name) { return UFGInputLibrary::GetInputActionNameAsText_Keyboard(PC, Name).ToString(); };
+    auto Key = [&](FName Name) { return UFGInputLibrary::GetInputActionNameAsText_Keyboard(PC, Name); };
     auto MappingName = [](const UInputAction* Action, const TCHAR* ContextPath) -> FName
     {
         // Vanilla actions put their rebindable name on the context mapping,
@@ -608,17 +651,100 @@ FText UBSEditModeComponent::GetControlsText() const
                 if (Mapping.Action == Action && !Mapping.Key.IsGamepadKey()) return Mapping.GetMappingName();
         return NAME_None;
     };
-    FString Text = FString::Printf(TEXT("%s: Multi-select    %s: Selection mode"),
-        *Key(MappingName(MultiSelectAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle.MC_BuildGunDismantle"))),
-        *Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
+    TArray<TPair<FText, FText>> Hints;
+    Hints.Emplace(LOCTEXT("MultiSelectHint", "Multi-select"),
+        Key(MappingName(MultiSelectAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle.MC_BuildGunDismantle"))));
+    Hints.Emplace(LOCTEXT("SelectionModeHint", "Selection mode"),
+        Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
     if (IsEditing())
     {
-        Text += FString::Printf(TEXT("\n%s: Group    %s: Merge"), *Key(TEXT("BuildingSkills.Group")), *Key(TEXT("BuildingSkills.Merge")));
+        Hints.Emplace(LOCTEXT("GroupHint", "Group"), Key(TEXT("BuildingSkills.Group")));
+        Hints.Emplace(LOCTEXT("MergeHint", "Merge"), Key(TEXT("BuildingSkills.Merge")));
         const FBSSelection Current = EffectiveSelection();
-        if (Current.Groups.Num() == 1 && Current.Buildings.IsEmpty()) Text += FString::Printf(TEXT("    %s: Ungroup"), *Key(TEXT("BuildingSkills.Ungroup")));
-        Text += FString::Printf(TEXT("\n%s: Close Edit    Editing does not dismantle buildings"), *Key(TEXT("BuildingSkills.ToggleEditMode")));
+        if (Current.Groups.Num() == 1 && Current.Buildings.IsEmpty())
+            Hints.Emplace(LOCTEXT("UngroupHint", "Ungroup"), Key(TEXT("BuildingSkills.Ungroup")));
+        Hints.Emplace(LOCTEXT("CloseEditHint", "Close Edit"), Key(TEXT("BuildingSkills.ToggleEditMode")));
     }
+    return Hints;
+}
+
+FText UBSEditModeComponent::GetControlsText() const
+{
+    FString Text;
+    for (const auto& Hint : GetControlHints()) Text += Hint.Value.ToString() + TEXT(": ") + Hint.Key.ToString() + TEXT("  ");
     return FText::FromString(Text);
+}
+
+void UBSEditModeComponent::UpdateControlHints(bool Editing)
+{
+    if (!Editing)
+    {
+        if (ControlHints && Indicator) Indicator->SetHints(nullptr);
+        ControlHints = nullptr;
+        LastControlHints.Empty();
+        return;
+    }
+    if (!ControlHints)
+    {
+        auto* Class = LoadClass<UUserWidget>(nullptr, TEXT("/Game/FactoryGame/Interface/UI/InGame/-Shared/KeybindingHints/Widget_HintContainer.Widget_HintContainer_C"));
+        auto* Player = Cast<AFGCharacterPlayer>(GetOwner());
+        auto* PC = Player ? Cast<APlayerController>(Player->GetController()) : nullptr;
+        if (!Class || !PC) return;
+        ControlHints = CreateWidget<UUserWidget>(PC, Class);
+        // Embed equipment hints just as the native Build Gun does. Registering
+        // this child widget directly with the viewport creates a separate UI layer.
+        if (Indicator) Indicator->SetHints(ControlHints);
+        if (ControlHints->WidgetTree)
+        {
+            // Use the keyboard hint branch. Edit currently exposes rebindable
+            // keyboard commands only.
+            if (auto* Gamepad = ControlHints->WidgetTree->FindWidget(TEXT("mButtonHintBar"))) Gamepad->SetVisibility(ESlateVisibility::Collapsed);
+            if (auto* Wrap = Cast<UWrapBox>(ControlHints->WidgetTree->FindWidget(TEXT("mHintContainer"))))
+            {
+                Wrap->SetHorizontalAlignment(HAlign_Center);
+                Wrap->SetExplicitWrapSize(false);
+                if (auto* CanvasSlot = Cast<UCanvasPanelSlot>(Wrap->Slot))
+                {
+                    CanvasSlot->SetAnchors(FAnchors(0, 0, 1, 1));
+                    CanvasSlot->SetOffsets(FMargin(0));
+                    CanvasSlot->SetAlignment(FVector2D::ZeroVector);
+                }
+            }
+        }
+    }
+    const auto Hints = GetControlHints();
+    FString Fingerprint;
+    for (const auto& Hint : Hints) Fingerprint += Hint.Key.ToString() + TEXT("|") + Hint.Value.ToString() + TEXT(";");
+    if (Fingerprint == LastControlHints) return;
+    auto* Function = ControlHints->FindFunction(TEXT("SetKeybindingHints"));
+    if (!Function) return;
+    // Use the vanilla equipment hint container and its public Blueprint function.
+    // The scoped parameter storage also destroys its array and FTexts after dispatch.
+    FStructOnScope Parameters(Function);
+    for (TFieldIterator<FArrayProperty> It(Function); It; ++It)
+    {
+        if (!It->HasAnyPropertyFlags(CPF_Parm)) continue;
+        auto* Inner = CastField<FStructProperty>(It->Inner);
+        if (!Inner) continue;
+        FTextProperty* Action = nullptr;
+        FTextProperty* Key = nullptr;
+        for (TFieldIterator<FTextProperty> Field(Inner->Struct); Field; ++Field)
+        {
+            if (Field->GetName().StartsWith(TEXT("Action_"))) Action = *Field;
+            if (Field->GetName().StartsWith(TEXT("KeyBinding_"))) Key = *Field;
+        }
+        if (!Action || !Key) continue;
+        FScriptArrayHelper Array(*It, It->ContainerPtrToValuePtr<void>(Parameters.GetStructMemory()));
+        for (const auto& Hint : Hints)
+        {
+            auto* Item = Array.GetRawPtr(Array.AddValue());
+            Action->SetPropertyValue_InContainer(Item, Hint.Key);
+            Key->SetPropertyValue_InContainer(Item, Hint.Value);
+        }
+        ControlHints->ProcessEvent(Function, Parameters.GetStructMemory());
+        LastControlHints = Fingerprint;
+        break;
+    }
 }
 
 #undef LOCTEXT_NAMESPACE

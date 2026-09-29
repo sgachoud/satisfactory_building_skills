@@ -29,7 +29,10 @@ those members when grouping them.
 The native lightweight reference includes a runtime slot and cached transform but
 has no documented durable save identity. Building Skills therefore saves the class,
 recipe and full transform, not the slot. After load it resolves only a unique match.
-Per-frame spatial buckets avoid scanning all instances for every selected member.
+Spatial buckets are cached by building class and invalidated by native addition,
+replication and removal hooks (with array-size checks as a fallback). Hovering no
+longer scans all instances of a class each frame. Matching still checks the actual
+recipe/transform and rejects ambiguous coincident instances.
 Deletion hooks remove memberships before slots can be reused. Exact overlapping
 instances with identical fingerprints fail closed. Moving buildings in a different
 mod can invalidate fingerprints; transform tracking is outside this iteration.
@@ -48,7 +51,11 @@ Runtime copies of the input contexts are bound through the local player's enhanc
 input subsystem. The Edit operation context is present only while Edit is open;
 the discoverable child-context assets retain the player-mappable settings and names.
 Owning the runtime copies prevents native context changes from removing the shortcut.
-Ungroup remains conditional on a single selected group in the Edit HUD.
+Ungroup remains conditional on a single selected group in the bottom hints.
+Edit uses the vanilla equipment `Widget_HintContainer` and its `SetKeybindingHints`
+function. Its parameter array is scoped and destroyed after dispatch, and it only
+rebuilds when bindings or available commands change. The status panel sits on the
+left; the shortcut hook adds a column inside the keyboard helper.
 The vanilla dismantle state continues binding its own multi-select action and the
 Build Gun continues handling mode switching, including rebinding and its mode UI.
 
@@ -64,6 +71,12 @@ expansion with the shared persistent list. Pending actors are fed back into the 
 and lightweight temporary actors are pinned only while selected. Edit blocks both
 primary dismantle execution and the server dismantle request. Ordinary dismantle
 continues through the native pipeline.
+
+Selection expansion and temporary-actor rebuilding happen only when selection or
+group membership changes. Native refund calculation is suppressed during a batch
+and runs once afterward for dismantle; Edit never requests dismantle refunds.
+This prevents per-member UI construction and redundant work when hovering a group.
+HUD counts use the resolved selection cache rather than expanding groups again.
 
 Edit entry waits until the gun is equipped in the dismantle state before applying
 its Edit descriptor and binding its commands. The native target setter is allowed

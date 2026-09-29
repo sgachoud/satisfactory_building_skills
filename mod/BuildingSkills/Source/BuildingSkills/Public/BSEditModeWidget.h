@@ -7,8 +7,12 @@ UCLASS()
 class BUILDINGSKILLS_API UBSEditModeWidget : public UUserWidget
 {
     GENERATED_BODY()
+public:
+    void SetHints(UUserWidget* Hints);
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;
+    virtual void ReleaseSlateResources(bool ReleaseChildren) override;
+    TSharedPtr<class SBox> HintHost;
 };
 
 /** Row injected into the game's actual bottom-right keyboard shortcut list. */

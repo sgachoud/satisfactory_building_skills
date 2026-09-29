@@ -289,12 +289,13 @@ int32 ABSGroupSubsystem::FindLightweightIndex(const FBSBuildingRef& Ref) const
     auto* LW = AFGLightweightBuildableSubsystem::Get(GetWorld());
     const auto* Instances = LW ? LW->GetAllLightweightBuildableInstances().Find(Ref.LightweightClass) : nullptr;
     if (!Instances || !Ref.Recipe) return INDEX_NONE;
-    if (LookupFrame != GFrameCounter) { LightweightLookup.Empty(); LookupFrame = GFrameCounter; }
+    if (LightweightCounts.FindRef(Ref.LightweightClass) != Instances->Num()) LightweightLookup.Remove(Ref.LightweightClass);
     auto Cell = [](const FVector& P) { return FIntVector(FMath::FloorToInt(P.X / 100), FMath::FloorToInt(P.Y / 100), FMath::FloorToInt(P.Z / 100)); };
     auto* Lookup = LightweightLookup.Find(Ref.LightweightClass);
     if (!Lookup)
     {
         Lookup = &LightweightLookup.Add(Ref.LightweightClass);
+        LightweightCounts.Add(Ref.LightweightClass, Instances->Num());
         for (int32 I = 0; I < Instances->Num(); ++I)
             if ((*Instances)[I].IsValid()) Lookup->Add(Cell((*Instances)[I].Transform.GetLocation()), I);
     }
@@ -340,6 +341,7 @@ void ABSGroupSubsystem::PreSaveGame_Implementation(int32, int32)
 
 void ABSGroupSubsystem::PostLoadGame_Implementation(int32, int32)
 {
+    LightweightLookup.Empty(); LightweightCounts.Empty();
     // Do not resolve buildings here: vanilla actors and lightweight records may still be loading.
     for (auto& G : Groups) for (auto& B : G.Buildings) B.RuntimeIndex = INDEX_NONE;
 }

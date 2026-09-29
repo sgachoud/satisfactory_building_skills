@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups. Its **Edit** mode
 shares Normal, Blueprint, and Group selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.1.0`.
+The mod reference is `BuildingSkills`; the development version is `0.1.1`.
 
 ## Controls
 
@@ -18,7 +18,8 @@ The mod reference is `BuildingSkills`; the development version is `0.1.0`.
 The four Building Skills commands can be changed in the game's keybinding settings.
 Multi-select and selection-mode switching use the existing game bindings. Group,
 Merge, and Ungroup are active only in Edit; M retains its usual Map action elsewhere.
-The HUD displays the current bindings, selection mode, and selection counts.
+The left panel displays selection mode and counts. Edit commands use the native
+bottom hint bar, and the bottom-right shortcut helper includes the Edit binding.
 
 Selection persists when switching modes, including multiple blueprints and groups.
 Hold multi-select and sweep over targets to add them. Begin the gesture on an
@@ -76,7 +77,9 @@ and SML 3.12.0, declaring game CL 502094 as its minimum.
 
 OpenAI Codex assisted with plugin setup, Edit input and HUD, nested grouping,
 selection integration, build and asset scripts, installation verification, and
-automated validation in both the editor and the packaged game.
+automated validation in both the editor and the packaged game. Follow-up work
+covered native hint layout, the shortcut helper, refund-update batching, cached
+lightweight lookup, and packaged group-hover regression checks.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

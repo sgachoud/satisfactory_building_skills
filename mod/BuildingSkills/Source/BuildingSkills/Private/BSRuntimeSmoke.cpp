@@ -11,6 +11,10 @@
 #include "Equipment/FGBuildGun.h"
 #include "Equipment/FGBuildGunDismantle.h"
 #include "FGBuildableSubsystem.h"
+#include "FGLightweightBuildableSubsystem.h"
+#include "UObject/UObjectArray.h"
+#include "Components/UniformGridSlot.h"
+#include "Components/BackgroundBlur.h"
 #include "FGRecipe.h"
 #include "FGCharacterPlayer.h"
 #include "FGGameMode.h"
@@ -46,6 +50,9 @@ public:
         static TWeakObjectPtr<AFGBuildable> TestBuilding;
         static TArray<TWeakObjectPtr<AFGBuildable>> Buildings;
         static bool ChecksPassed = true;
+        static uint64 RebuildBaseline = 0, RefundBaseline = 0;
+        static int32 ObjectBaseline = 0, WidgetBaseline = 0;
+        static TArray<FBSBuildingRef> StressBuildings;
         const double Now = FPlatformTime::Seconds();
         if (Now - Started > 240)
         {
@@ -105,6 +112,8 @@ public:
         {
             FVector Origin, Extent;
             TestBuilding->GetActorBounds(false, Origin, Extent);
+            // Lightweight temporary actors do not own their instanced mesh bounds.
+            if (TestBuilding->GetIsLightweightTemporary()) Origin = TestBuilding->GetActorLocation();
             Player->GetController()->SetControlRotation((Origin - Player->GetPawnViewLocation()).Rotation());
         }
         if (Now < Next) return true;
@@ -119,6 +128,12 @@ public:
         {
             ChecksPassed &= Passed;
             UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME ASSERT: %s: %s"), Description, Passed ? TEXT("PASS") : TEXT("FAIL"));
+        };
+        auto CountWidgets = [World]()
+        {
+            int32 Count = 0;
+            for (TObjectIterator<UUserWidget> It; It; ++It) if (It->GetWorld() == World) ++Count;
+            return Count;
         };
         auto* Groups = ABSGroupSubsystem::Get(World);
         switch (Samples)
@@ -200,25 +215,141 @@ public:
                 (!Buildings[0].IsValid() || Buildings[0]->GetIsDismantled()) && (!Buildings[2].IsValid() || Buildings[2]->GetIsDismantled()));
             Check(TEXT("Vanilla leaves the unselected building intact"), Buildings[1].IsValid() && !Buildings[1]->GetIsDismantled());
             break;
+        case 25:
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 26:
+        {
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            TestBuilding = Buildings[1];
+            auto* LW = AFGLightweightBuildableSubsystem::Get(World);
+            auto* Class = LoadClass<AFGBuildable>(nullptr, TEXT("/Game/FactoryGame/Buildable/Building/Foundation/Build_Foundation_8x4_01.Build_Foundation_8x4_01_C"));
+            auto* Recipe = LoadClass<UFGRecipe>(nullptr, TEXT("/Game/FactoryGame/Recipes/Buildings/Foundations/Recipe_Foundation_8x4_01.Recipe_Foundation_8x4_01_C"));
+            if (LW && Class && Recipe)
+            {
+                for (int32 Index = 0; Index < 128; ++Index)
+                {
+                    FRuntimeBuildableInstanceData Data;
+                    Data.Transform = FTransform(Player->GetActorLocation() + FVector(2000 + (Index % 16) * 800, (Index / 16) * 800, -600));
+                    Data.BuiltWithRecipe = Recipe;
+                    const int32 RuntimeIndex = LW->AddFromBuildableInstanceData(Class, Data);
+                    StressBuildings.Add(FBSBuildingRef::FromLightweight(World, Class, RuntimeIndex));
+                }
+            }
+            Check(TEXT("Stress fixture has 128 valid lightweight foundations"), StressBuildings.Num() == 128 &&
+                !StressBuildings.ContainsByPredicate([&](const auto& Ref) { return !Ref.IsAlive(World); }));
+            Edit->Selection.Buildings = StressBuildings;
+            Edit->Selection.Buildings.Add(FBSBuildingRef::FromActor(Buildings[1].Get()));
+            Edit->bSelectionDirty = true;
+            Key(EKeys::G, true);
+            break;
+        }
+        case 27:
+            Key(EKeys::G, false);
+            Check(TEXT("Mixed actor/lightweight group created"), Edit->Selection.Groups.Num() == 1 && Edit->ResolvedCount == 129);
+            Edit->ClearSelection();
+            Gun->SetCurrentBuildGunMode(UBSEditGroupModeDescriptor::StaticClass());
+            break;
+        case 28:
+            Check(TEXT("Hover alone expands a 129-building group"), Edit->Selection.IsEmpty() && Edit->Hover.Groups.Num() == 1 &&
+                Dismantle && Dismantle->GetPendingDismantleActors().Num() == 129);
+            RebuildBaseline = Edit->SelectionRebuilds;
+            RefundBaseline = Edit->RefundRefreshes;
+            ObjectBaseline = GUObjectArray.GetObjectArrayNum();
+            WidgetBaseline = CountWidgets();
+            Check(TEXT("Edit has native bottom hints"), Edit->ControlHints && Edit->Indicator && Edit->Indicator->IsInViewport() &&
+                !Edit->LastControlHints.IsEmpty() && (FParse::Param(FCommandLine::Get(), TEXT("nullrhi")) ||
+                Edit->ControlHints->GetCachedGeometry().GetAbsolutePosition().Y > 500));
+            break;
+        case 38:
+            Check(TEXT("Stable actor group hover does not rebuild selection or refunds"),
+                Edit->SelectionRebuilds == RebuildBaseline && Edit->RefundRefreshes == RefundBaseline);
+            TestBuilding = StressBuildings[0].ResolveActor(World);
+            break;
+        case 40:
+            Check(TEXT("Hovering a lightweight member selects the same complete group"),
+                Edit->Hover.Groups.Num() == 1 && Dismantle && Dismantle->GetPendingDismantleActors().Num() == 129);
+            RebuildBaseline = Edit->SelectionRebuilds;
+            RefundBaseline = Edit->RefundRefreshes;
+            ObjectBaseline = GUObjectArray.GetObjectArrayNum();
+            WidgetBaseline = CountWidgets();
+            break;
+        case 48:
+            UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME STRESS: rebuilds=%llu refunds=%llu newObjectSlots=%d widgetDelta=%d"),
+                Edit->SelectionRebuilds - RebuildBaseline, Edit->RefundRefreshes - RefundBaseline, GUObjectArray.GetObjectArrayNum() - ObjectBaseline, CountWidgets() - WidgetBaseline);
+            Check(TEXT("Stable lightweight group hover does not rebuild selection or refunds"),
+                Edit->SelectionRebuilds == RebuildBaseline && Edit->RefundRefreshes == RefundBaseline);
+            Check(TEXT("Group hover has no accumulating UI widgets"), CountWidgets() - WidgetBaseline <= 32);
+            Check(TEXT("All 129 group members remain highlighted"), Dismantle && Dismantle->GetPendingDismantleActors().Num() == 129);
+            TestBuilding = Buildings[1];
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 49:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Key(EKeys::F, true); break;
+        case 50:
+            Key(EKeys::F, false);
+            Gun->SetCurrentBuildGunMode(UBSGroupModeDescriptor::StaticClass()); break;
+        case 51:
+            Check(TEXT("Vanilla group hover expands actor and lightweight members"), Dismantle && Dismantle->GetPendingDismantleActors().Num() == 129);
+            RebuildBaseline = Edit->SelectionRebuilds;
+            RefundBaseline = Edit->RefundRefreshes;
+            ObjectBaseline = GUObjectArray.GetObjectArrayNum();
+            WidgetBaseline = CountWidgets();
+            break;
+        case 56:
+            UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME DISMANTLE STRESS: rebuilds=%llu refunds=%llu newObjectSlots=%d widgetDelta=%d"),
+                Edit->SelectionRebuilds - RebuildBaseline, Edit->RefundRefreshes - RefundBaseline, GUObjectArray.GetObjectArrayNum() - ObjectBaseline, CountWidgets() - WidgetBaseline);
+            Check(TEXT("Vanilla group hover avoids repeated refund/selection rebuilds"),
+                Edit->SelectionRebuilds == RebuildBaseline && Edit->RefundRefreshes == RefundBaseline);
+            Check(TEXT("Vanilla group hover has no accumulating UI widgets"), CountWidgets() - WidgetBaseline <= 32);
+            break;
+        case 57:
+        {
+            auto* LW = AFGLightweightBuildableSubsystem::Get(World);
+            const auto Original = StressBuildings[0];
+            const int32 OriginalIndex = Original.ResolveIndex(World);
+            FRuntimeBuildableInstanceData Data;
+            Data.Transform = Original.Transform;
+            Data.BuiltWithRecipe = Original.Recipe;
+            const int32 OverlapIndex = LW->AddFromBuildableInstanceData(Original.LightweightClass, Data);
+            Check(TEXT("Cached lightweight lookup rejects an added coincident instance"), !Original.IsAlive(World));
+            LW->RemoveByInstanceIndex(Original.LightweightClass, OverlapIndex);
+            Check(TEXT("Cached lightweight lookup recovers after ambiguity is removed"), Original.ResolveIndex(World) == OriginalIndex);
+            LW->RemoveByInstanceIndex(Original.LightweightClass, OriginalIndex);
+            Data = FRuntimeBuildableInstanceData();
+            Data.Transform = FTransform(Original.Transform.GetLocation() + FVector(0, 0, -1200));
+            Data.BuiltWithRecipe = Original.Recipe;
+            LW->AddFromBuildableInstanceData(Original.LightweightClass, Data);
+            Check(TEXT("Cached lightweight lookup never adopts a reused slot elsewhere"), !Original.IsAlive(World));
+            break;
+        }
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
             Dismantle ? Dismantle->GetPendingDismantleActors().Num() : -1, Edit->Hover.Buildings.Num(), Dismantle && Dismantle->IsMultiDismantleActive(),
             UGameplayStatics::IsGamePaused(World), Player->IsInteractWidgetOpen(),
             Edit->Indicator ? *Edit->Indicator->GetCachedGeometry().GetLocalSize().ToString() : TEXT("no widget"));
-        if (Samples == 3 && !FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+        if (Samples == 28 && !FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+        {
+            for (TObjectIterator<UBackgroundBlur> It; It; ++It)
+                if (It->GetWorld() == World && It->IsVisible())
+                    UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME BLUR: %s parent=%s position=%s size=%s strength=%f"),
+                        *It->GetPathName(), *GetNameSafe(It->GetParent()), *It->GetCachedGeometry().GetAbsolutePosition().ToString(),
+                        *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
-        if (++Samples < 25) return true;
+        }
+        if (++Samples < 58) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;
             const FString Name = It->GetClass()->GetName();
-            if (!Name.Contains(TEXT("Dismantle")) && !Name.Contains(TEXT("Shortcuts")) && !Name.Contains(TEXT("Edit")) && !Name.Contains(TEXT("BuildMenu"))) continue;
+            if (!Name.Contains(TEXT("Dismantle")) && !Name.Contains(TEXT("Shortcuts")) && !Name.Contains(TEXT("Edit")) && !Name.Contains(TEXT("BuildMenu")) && !Name.Contains(TEXT("HintContainer")) && !Name.Contains(TEXT("BuildMode"))) continue;
             UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME UI: %s visible=%d viewport=%d"), *Name, It->IsVisible(), It->IsInViewport());
             It->WidgetTree->ForEachWidget([](UWidget* Widget)
             {
                 auto* Text = Cast<UTextBlock>(Widget);
                 UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME UI CHILD: %s %s visible=%d text=%s"), *Widget->GetName(), *Widget->GetClass()->GetName(), Widget->IsVisible(), Text ? *Text->GetText().ToString() : TEXT(""));
+                if (auto* GridSlot = Cast<UUniformGridSlot>(Widget->Slot))
+                    UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME GRID: %s row=%d col=%d pos=%s size=%s"), *Widget->GetName(), GridSlot->GetRow(), GridSlot->GetColumn(), *Widget->GetCachedGeometry().GetAbsolutePosition().ToString(), *Widget->GetCachedGeometry().GetLocalSize().ToString());
             });
         }
         if (Input)

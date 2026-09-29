@@ -54,6 +54,7 @@ public:
     void OnOperationResult(bool Success, const FBSSelection& Result, const FString& Message, int32 Revision);
     FText GetStatusText() const;
     FText GetControlsText() const;
+    TArray<TPair<FText, FText>> GetControlHints() const;
     bool IsEditing() const;
 private:
     friend class FBSRuntimeSmoke;
@@ -66,6 +67,7 @@ private:
     void Request(EBSGroupOperation Operation);
     void LeaveEditMode(bool Unequip);
     void UpdateNativeGunHUD(bool Editing);
+    void UpdateControlHints(bool Editing);
     void ReleaseInput();
     void UpdateSelection(UFGBuildGunStateDismantle* State);
     FBSSelection HoverSelection(UFGBuildGunStateDismantle* State);
@@ -79,6 +81,8 @@ private:
     UPROPERTY(Transient) TObjectPtr<UInputAction> MultiSelectAction;
     UPROPERTY(Transient) TObjectPtr<UInputAction> ModeAction;
     UPROPERTY(Transient) TObjectPtr<UBSEditModeWidget> Indicator;
+    UPROPERTY(Transient) TObjectPtr<UUserWidget> ControlHints;
+    FString LastControlHints;
     UPROPERTY(Transient) FBSSelection Selection;
     UPROPERTY(Transient) FBSSelection Hover;
     UPROPERTY(Transient) FBSSelection PendingResult;
@@ -92,6 +96,9 @@ private:
     UPROPERTY(Transient) TObjectPtr<UInputMappingContext> OperationsContext;
     TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> InputSubsystem;
     FBSSelection LastHover;
+    TWeakObjectPtr<AFGBuildable> HoverActor;
+    TWeakObjectPtr<UClass> HoverMode;
+    int32 HoverRevision = INDEX_NONE;
     FString Feedback;
     int32 PendingRevision = INDEX_NONE;
     int32 ObservedRevision = INDEX_NONE;
@@ -105,4 +112,9 @@ private:
     bool bSyncing = false;
     bool bRequestPending = false;
     bool bSelectionDirty = true;
+    bool bRefundNoBuildCost = false;
+    int32 ResolvedCount = 0;
+    int32 ExpectedPendingCount = 0;
+    uint64 SelectionRebuilds = 0;
+    uint64 RefundRefreshes = 0;
 };

@@ -1,8 +1,8 @@
 {
     "FileVersion": 3,
-    "Version": 0,
-    "VersionName": "0.1.0",
-    "SemVersion": "0.1.0",
+    "Version": 1,
+    "VersionName": "0.1.1",
+    "SemVersion": "0.1.1",
     "FriendlyName": "Building Skills",
     "Description": "Persistent nested building groups, configurable Edit commands, and shared Normal, Blueprint and Group selection in Edit and dismantle modes.",
     "Category": "Modding",

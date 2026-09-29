@@ -9,6 +9,10 @@
 #include "Styling/CoreStyle.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Images/SImage.h"
+#include "Components/Image.h"
+#include "Blueprint/WidgetTree.h"
 
 void UBSEditShortcutWidget::NativeConstruct()
 {
@@ -24,8 +28,11 @@ void UBSEditShortcutWidget::NativeConstruct()
                         LastRow = FMath::Max(LastRow, OtherSlot->GetRow());
                         LastColumn = FMath::Max(LastColumn, OtherSlot->GetColumn());
                     }
-            GridSlot->SetRow(LastRow + 1);
-            GridSlot->SetColumn(LastColumn);
+            GridSlot->SetRow(LastRow);
+            GridSlot->SetColumn(LastColumn + 1);
+            // The native shortcut canvas has a fixed width. Grow leftward so
+            // the extra column stays inside its bottom-right screen margin.
+            Grid->SetRenderTranslation(FVector2D(-70, 0));
             GridSlot->SetHorizontalAlignment(HAlign_Center);
             GridSlot->SetVerticalAlignment(VAlign_Center);
         }
@@ -33,19 +40,31 @@ void UBSEditShortcutWidget::NativeConstruct()
 
 TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
 {
-    return SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().FillWidth(1).HAlign(HAlign_Right).Padding(0, 3)
+    return SNew(SBox).WidthOverride(64).HeightOverride(58)
+    [
+        SNew(SBorder).Padding(FMargin(4, 2))
+        .BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+        .BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f, 0.65f))
         [
-            SNew(STextBlock)
-            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 12))
-            .Justification(ETextJustify::Center)
-            .ColorAndOpacity(FLinearColor::White)
-            .Text_Lambda([this]()
-            {
-                return FText::Format(NSLOCTEXT("BuildingSkills", "EditShortcut", "Edit\n{0}"),
-                    UFGInputLibrary::GetInputActionNameAsText(GetOwningPlayer(), TEXT("BuildingSkills.ToggleEditMode")));
-            })
-        ];
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)
+            [
+                SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+                .Text_Lambda([this]()
+                {
+                    // Both Alt keys activate vanilla's Alt chord action.
+                    FString Key = UFGInputLibrary::GetInputActionNameAsText(GetOwningPlayer(), TEXT("BuildingSkills.ToggleEditMode")).ToString();
+                    Key.ReplaceInline(TEXT("Right Alt"), TEXT("Alt"));
+                    Key.ReplaceInline(TEXT("Left Alt"), TEXT("Alt"));
+                    return FText::FromString(Key);
+                })
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [SNew(SBox).HeightOverride(1)[SNew(SImage).Image(FCoreStyle::Get().GetBrush("WhiteBrush"))]]
+            + SVerticalBox::Slot().FillHeight(1).HAlign(HAlign_Center).VAlign(VAlign_Center)
+            [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)).Text(NSLOCTEXT("BuildingSkills", "EditShortcutLabel", "Edit"))]
+        ]
+    ];
 }
 
 #define LOCTEXT_NAMESPACE "BuildingSkills"
@@ -53,15 +72,15 @@ TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
 TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
 {
     return SNew(SOverlay)
-        + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 100, 0, 0)
+        + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(35, 0, 0, 0)
         [
-            SNew(SBorder).Padding(FMargin(24, 12))
+            SNew(SBorder).Padding(FMargin(16, 12))
             .BorderBackgroundColor(FLinearColor(0.03f, 0.03f, 0.03f, 0.9f))
             [
                 SNew(SVerticalBox)
-                + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
+                + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)
                 [
-                    SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 18)).Justification(ETextJustify::Center).Text_Lambda([this]()
+                    SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 15)).Justification(ETextJustify::Left).Text_Lambda([this]()
                     {
                         auto* Pawn = GetOwningPlayerPawn();
                         auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
@@ -69,17 +88,22 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
                     })
                     .ColorAndOpacity(FLinearColor(1.0f, 0.45f, 0.08f))
                 ]
-                + SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)
-                [
-                    SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 14)).Justification(ETextJustify::Center).Text_Lambda([this]()
-                    {
-                        auto* Pawn = GetOwningPlayerPawn();
-                        auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
-                        return Edit ? Edit->GetControlsText() : FText::GetEmpty();
-                    })
-                ]
+
             ]
-        ];
+        ]
+        + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(0, 0, 0, 120)
+        [SAssignNew(HintHost, SBox).WidthOverride(1100).HeightOverride(64)];
+}
+
+void UBSEditModeWidget::SetHints(UUserWidget* Hints)
+{
+    if (HintHost) HintHost->SetContent(Hints ? Hints->TakeWidget() : SNullWidget::NullWidget);
+}
+
+void UBSEditModeWidget::ReleaseSlateResources(bool ReleaseChildren)
+{
+    Super::ReleaseSlateResources(ReleaseChildren);
+    HintHost.Reset();
 }
 
 #undef LOCTEXT_NAMESPACE

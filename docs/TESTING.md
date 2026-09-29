@@ -1,7 +1,7 @@
 # Verification
 
 Validated on 2026-09-29 with CSS Unreal 5.6.1, SML 3.12.0 and the installed Steam
-Windows game, CL 502094.
+Windows game, CL 502094. Current package: Building Skills 0.1.1.
 
 ## Completed checks
 
@@ -13,7 +13,7 @@ Windows game, CL 502094.
 - Steam Win64 Shipping packaging and installation succeeded. All seven installed
   files matched the archive by SHA-256. `Install` now performs this verification
   automatically and records `Saved/InstallationVerification.json`.
-- The installed Shipping game passed all 20 runtime assertions in a fresh temporary
+- The installed Shipping game passed all 35 runtime assertions in a fresh temporary
   world. The test injects key events into the game's player input and uses the native
   mode-cycle API. It verifies Alt+E opening/closing, visible Edit HUD, building
   targeting, Ctrl multi-selection, selection persistence through Edit's Normal,
@@ -22,9 +22,18 @@ Windows game, CL 502094.
 - The same run opens vanilla dismantle with F, selects multiple buildings, cycles
   its available modes, holds the dismantle input, and verifies that both selected
   buildings disappear while the unselected building survives.
-- The rendered screenshot was inspected: EDIT, the configured keyboard hints,
-  highlighted building, and bottom-right Edit shortcut are visible. The native
-  dismantle-only overlay is hidden during Edit and restored for dismantling.
+- The group-hover fixture adds 128 native lightweight foundations to an actor-backed
+  machine. It checks group expansion when aiming at the machine and at a foundation,
+  stable selection/refund refresh counters, and bounded UI-widget counts. Stable
+  hover recorded zero selection rebuilds, zero refund refreshes and zero new UI
+  widgets. Vanilla dismantle is also checked against the 129-building group.
+- Lightweight lookup checks add an identical overlapping foundation, remove the
+  overlap, delete the original, and add a replacement elsewhere. Ambiguous matches
+  are rejected and reused slots never become the original building.
+- The rendered screenshot was inspected: the EDIT status panel is on the left,
+  configured controls use native hint widgets at the bottom, and Alt+E / Edit sits
+  inside the bottom-right shortcut grid. The native dismantle-only overlay is hidden
+  during Edit and restored for dismantling.
 
 The runtime test blocks every save request and never loads an existing save. Its
 hooks activate only with `-BuildingSkillsRuntimeTest`; normal play is unaffected.
@@ -44,13 +53,22 @@ one-level ungrouping and invalid selections, hierarchy normalization, save-prope
 serialization, modifier remapping, rebindable commands, and the scoped M/Map conflict.
 Editor FactoryGame methods are stubs, so these tests cannot replace packaged-game checks.
 
+The reported group-hover crash exhausted Unreal's UObject limit in the native
+refund UI update called from `AddPendingDismantleActor`. Selection batches now
+suppress those intermediate refund updates, Edit skips refunds entirely, and
+unchanged groups retain their pending list. Spatial lookup no longer rebuilds a
+whole building class each frame. The regression records UI-widget growth separately
+from total UObject slots, because unrelated world streaming can allocate objects
+while the player remains stationary.
+
 ## Remaining manual coverage
 
-Multiple placed blueprint expansion, lightweight buildings, complex nested selections
-in the game, live rebinding, actual save/reload, multiplayer, and uninstall compatibility
-still need the matrix below. The runtime fixture uses actor-backed storage containers
-and default keys; it does not claim those broader cases. This grouping build has not
-been packaged for Epic, Windows Server or Linux Server.
+Multiple placed blueprint expansion, complex nested selections in the game, live
+rebinding, actual save/reload, multiplayer, and uninstall compatibility still need
+the matrix below. The runtime fixture uses storage containers, lightweight foundations
+and default keys; it does not claim those broader cases or benchmark an existing
+large factory. This grouping build has not been packaged for Epic, Windows Server
+or Linux Server.
 
 Run `scripts/Mod.ps1 BuildEditor`, `scripts/Mod.ps1 EditAssets`, and
 `scripts/Mod.ps1 Test` for editor checks. Reports are in `Saved/Automation`.
@@ -61,7 +79,9 @@ Use a separate test save containing machines, foundations and two placed bluepri
 
 1. Confirm the bottom-right reminder includes the configured Edit shortcut (Alt+E
    by default), including after rebinding it. Open Edit from both holstered and
-   equipped states; the custom HUD must say EDIT and offer Group/Merge.
+   equipped states; the left panel must say EDIT and the bottom hints must offer
+   Group/Merge. Hover a large existing group in Edit and vanilla dismantle, then move
+   between its machines and foundations; neither should freeze or crash.
    Hold the configured multi-dismantle key (default Ctrl) and
    aim across two machines and two foundations. Release it and press Group (G).
    Confirm four buildings are highlighted, one group is selected, and left click
