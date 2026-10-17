@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$SmlRoot = 'F:/dev/satisfactory_mods/SatisfactoryModLoader',
-    [string]$EngineRoot = 'C:/Program Files/Unreal Engine - CSS'
+    [string]$EngineRoot = 'C:/Program Files/Unreal Engine - CSS',
+    [ValidateRange(1, 4)][int]$CompilerWorkers = 2
 )
 $ErrorActionPreference = 'Stop'
 $bsPlugin = Join-Path $SmlRoot 'Mods/GameFeatures/BuildingSkills'
@@ -19,12 +20,12 @@ if (-not $bsCompilerMatch.Success) { throw 'Could not identify the configured Li
 $bsCompiler = $bsCompilerMatch.Groups[1].Value
 Push-Location (Join-Path $EngineRoot 'Engine/Source')
 try {
-    $bsResponses = @(Get-ChildItem -LiteralPath $bsIntermediate -Filter '*.cpp.o.rsp')
+    # Ignore stale response files left behind by a different unity layout.
+    $bsCurrentLink = Get-Content -LiteralPath (Join-Path $bsIntermediate 'libFactoryServer-BuildingSkills-Linux-Shipping.so.rsp') -Raw
+    $bsResponses = @([regex]::Matches($bsCurrentLink, '(?m)^"([^"]+\.cpp\.o)"') | ForEach-Object { $_.Groups[1].Value + '.rsp' })
     if ($bsResponses.Count -eq 0) { throw 'No plugin C++ translation units found.' }
-    foreach ($bsResponse in $bsResponses) {
-        & $bsCompiler "@$($bsResponse.FullName)"
-        if ($LASTEXITCODE -ne 0) { throw "Linux compilation failed: $($bsResponse.Name)" }
-    }
+    $bsLogs = Join-Path (Split-Path -Parent $PSScriptRoot) 'Saved/NativeBuild/FactoryServer'
+    & (Join-Path $PSScriptRoot 'CompileUnits.ps1') -Compiler $bsCompiler -ResponseFiles $bsResponses -WorkingDirectory (Get-Location).Path -OutputDirectory $bsLogs -Workers $CompilerWorkers
     # UBT's generated linker script touches only this plugin's binary/debug files.
     & $bsLinkScript
     if ($LASTEXITCODE -ne 0) { throw 'Linux plugin linking failed.' }

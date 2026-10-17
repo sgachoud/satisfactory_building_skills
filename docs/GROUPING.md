@@ -26,6 +26,11 @@ those members when grouping them.
 
 ## Lightweight identity
 
+Connected selection is a fourth shared selection mode. It expands through the
+reusable bounding-box/filter query described in [CONNECTED.md](CONNECTED.md), then
+feeds individual references into the same persistent selection and native
+dismantle pipeline. K opens the common settings without clearing pinned selections.
+
 The native lightweight reference includes a runtime slot and cached transform but
 has no documented durable save identity. Building Skills therefore saves the class,
 recipe and full transform, not the slot. After load it resolves only a unique match.
@@ -94,12 +99,33 @@ validation whenever Satisfactory/SML changes.
 ## Authority and scope
 
 A registered player-owned remote call object sends Group/Merge/Ungroup requests.
+Selection uploads and operation results use acknowledged packets of at most 32
+entries. This keeps a 900-object selection below Unreal's per-message limit,
+including an Ungroup result that returns every member. The server executes only
+after the entire selection arrives. Invalid sequences, changed metadata and
+oversized totals are rejected; inactivity times out without discarding the local
+selection or permanently blocking the controls. Progress extends the deadline.
+Client and server need the 0.9.5 selection-transfer protocol for this path.
 The server checks Edit state, character availability, selection size and validity,
-range to the selection, and a hierarchy revision to reject stale concurrent requests.
-The client applies returned selection only after the corresponding replicated
-revision arrives. The subsystem is registered by the root game-world module;
+range to the selection, and a hierarchy revision for selected groups to reject
+stale concurrent requests. Explicit individual buildings are validated against
+their current server identities without depending on unrelated hierarchy changes.
+Autosaves only advance the hierarchy revision when they actually prune members
+or groups.
+The saved group tree is transferred in bounded, acknowledged chunks rather than
+one replicated array. The client keeps its previous tree until a complete snapshot
+passes validation, then applies the tree and its revision together. Returned
+selections wait for that committed revision. Timed-out or malformed transfers are
+retried without exposing a partial tree. The subsystem is registered by the root game-world module;
 the remote call object is registered by the root game-instance module.
 
 Automated hierarchy/save-property tests do not prove the game's own save traversal,
 lightweight reconstruction, replication, or uninstall behavior. Those require the
 manual matrix in TESTING.md.
+
+## Empty groups
+
+Deleting the last member removes its group immediately. Empty ancestors are pruned
+recursively; a parent remains while any child still contains buildings. Both native
+actor destruction and lightweight-instance deletion feed this cleanup. Save-time
+pruning also removes unresolved members. Metadata cleanup never dismantles buildings.

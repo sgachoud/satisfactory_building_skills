@@ -7,6 +7,7 @@ public class BuildingSkills : ModuleRules
         // Match the existing small-mod workflow without the engine's large shared PCH.
         PCHUsage = PCHUsageMode.NoPCHs;
         CppStandard = CppStandardVersion.Cpp20;
+        AddEngineThirdPartyPrivateStaticDependencies(Target, "ICU");
 
         // SML / FactoryGame public headers expose these transitive dependencies.
         PublicDependencyModuleNames.AddRange(new string[] {

@@ -1,4 +1,5 @@
 #include "BSGroups.h"
+#include "AbstractInstanceManager.h"
 #include "BuildingSkills.h"
 #include "Buildables/FGBuildableConveyorBelt.h"
 #include "Buildables/FGBuildableConveyorLift.h"
@@ -7,6 +8,8 @@
 #include "Buildables/FGBuildableResourceExtractor.h"
 #include "Buildables/FGBuildableWire.h"
 #include "FGCharacterPlayer.h"
+#include "FGOutlineComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "FGBuildableSubsystem.h"
 #include "FGFactoryConnectionComponent.h"
 #include "FGPipeConnectionComponent.h"
@@ -16,6 +19,9 @@
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "Engine/NetSerialization.h"
+#include "Serialization/BitReader.h"
+#include "Serialization/BitWriter.h"
 
 namespace { TWeakObjectPtr<AFGBuildableConveyorBelt> SimulationBelt; }
 
@@ -25,7 +31,7 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
     auto* World = Player->GetWorld();
     auto* Buildables = AFGBuildableSubsystem::Get(World);
     auto* Groups = ABSGroupSubsystem::Get(World);
-    const FVector Base = Player->GetActorLocation() + FVector(1800, 1800, 0);
+    const FVector Base = Player->GetActorLocation() + FVector(1800, 1800, 1800);
     bool Passed = true;
     auto Check = [&](const TCHAR* Name, bool Result)
     { Passed &= Result; UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME ASSERT: %s: %s"), Name, Result ? TEXT("PASS") : TEXT("FAIL")); };
@@ -42,7 +48,11 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
     {
         FBSSelection Selection, Result; FString Error;
         for (auto* A : Actors) if (A) Selection.Buildings.Add(FBSBuildingRef::FromActor(A));
+        const int32 TopologyRevision=Groups->Revision, PublishedRevision=Groups->PublishedGroupRevision;
+        const uint64 TransformVersion=Groups->TransformSerial;
         const bool Success = Groups->TransformSelection(Player, Selection, Groups->Revision, Mode, Amount, Delta, Result, Error);
+        if (Success) Check(TEXT("Transform advances building versions without publishing group topology"),
+            Groups->Revision==TopologyRevision && Groups->PublishedGroupRevision==PublishedRevision && Groups->TransformSerial>TransformVersion);
         if (!Success) UE_LOG(LogBuildingSkills, Warning, TEXT("NETWORK TEST transform: %s"), *Error);
         return Success;
     };
@@ -59,13 +69,21 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
             World->LineTraceMultiByChannel(Hits,Middle+Up*500,Middle-Up*500,ECC_GameTraceChannel5,Params);
             for(const auto& Hit:Hits)
             {
-                Found|=Hit.GetActor()==Target;
-                UE_LOG(LogBuildingSkills,Display,TEXT("BELT TARGET TRACE complex=%d actor=%s component=%s target=%s"),Complex,*GetNameSafe(Hit.GetActor()),*GetNameSafe(Hit.GetComponent()),*GetNameSafe(Target));
+                AActor* Resolved = Hit.GetActor();
+                if (auto* Manager = Cast<AAbstractInstanceManager>(Resolved))
+                {
+                    FInstanceHandle Handle;
+                    if (Manager->ResolveHit(Hit, Handle)) Resolved = Manager->GetOwnerByHandle(Handle);
+                }
+                Found |= Resolved == Target;
+                UE_LOG(LogBuildingSkills,Display,TEXT("BELT TARGET TRACE complex=%d actor=%s resolved=%s component=%s target=%s"),Complex,*GetNameSafe(Hit.GetActor()),*GetNameSafe(Resolved),*GetNameSafe(Hit.GetComponent()),*GetNameSafe(Target));
             }
         }
         auto* Collision=Target->FindComponentByClass<UFGSplineCollisionComponent>();
         UE_LOG(LogBuildingSkills,Display,TEXT("SPLINE TARGET STATE actor=%s hit=%d registered=%d physics=%d collision=%d response=%d"),*GetNameSafe(Target),Found,Collision && Collision->IsRegistered(),Collision && Collision->IsPhysicsStateCreated(),Collision?int32(Collision->GetCollisionEnabled()):-1,Collision?int32(Collision->GetCollisionResponseToChannel(ECC_GameTraceChannel5)):-1);
-        return Found && Collision && Collision->IsRegistered() && Collision->IsPhysicsStateCreated();
+        // Belts and pipes use AbstractInstance collision, while rails use their
+        // registered spline component. The actual world trace must resolve the owner.
+        return Found;
     };
     auto SplineSpawn = [&](const TCHAR* Path, const FVector& Offset) -> AFGBuildable*
     {
@@ -74,6 +92,11 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         {
             *S->GetMutableSplinePointData() = { FSplinePointData(FVector::ZeroVector, FVector(1000,0,0)), FSplinePointData(FVector(1000,0,0), FVector(1000,0,0)) };
             A->FinishSpawning(A->GetActorTransform());
+            // Native network relevance activates spline collision. Fixtures run
+            // synchronously before the relevance manager's next update, so take
+            // the same native activation path before asserting the baseline.
+            if (auto* Belt = Cast<AFGBuildableConveyorBelt>(A)) Belt->GainedNetSignificance_Implementation();
+            if (auto* Pipe = Cast<AFGBuildablePipeBase>(A)) Pipe->GainedNetSignificance_Implementation();
             return A;
         }
         return nullptr;
@@ -108,8 +131,27 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         Check(*FString::Printf(TEXT("%s rebuilt visual and collision data exists"), *A->GetName()), !A->mInstanceHandles.IsEmpty() && A->FindComponentByClass<UFGSplineCollisionComponent>());
         Check(*FString::Printf(TEXT("%s remains targetable after repeated transforms"), *A->GetName()), Targetable(A));
         auto* Collision=A->FindComponentByClass<UFGSplineCollisionComponent>();
-        Check(*FString::Printf(TEXT("%s collision rebuild does not duplicate physics boxes"), *A->GetName()), Collision && Collision->mBodySetup &&
-            Collision->mBodySetup->AggGeom.BoxElems.Num()==Collision->mCachedCollisionInfo.Num());
+        bool UniqueCollision = true;
+        int32 ActiveCollision = 0;
+        if (Collision && Collision->IsRegistered())
+        {
+            UniqueCollision = Collision->IsPhysicsStateCreated() && Collision->mBodySetup &&
+                Collision->mBodySetup->AggGeom.BoxElems.Num() == Collision->mCachedCollisionInfo.Num();
+            ActiveCollision = UniqueCollision ? 1 : 0;
+        }
+        else
+        {
+            TSet<uint64> Handles;
+            for (const auto& Handle : A->mInstanceHandles)
+                if (Handle && Handle->IsInstanced())
+                    if (const auto* Component = Handle->GetCollisionInstanceComponent())
+                    {
+                        const uint64 Key = (uint64(Component->GetUniqueID()) << 32) | Handle->GetCollisionHandleId();
+                        UniqueCollision &= !Handles.Contains(Key) && Component->IsRegistered() && Component->IsPhysicsStateCreated();
+                        Handles.Add(Key); ++ActiveCollision;
+                    }
+        }
+        Check(*FString::Printf(TEXT("%s native collision backend is active without duplicate handles or boxes"), *A->GetName()), UniqueCollision && ActiveCollision > 0);
         const FTransform RestoredPose(FRotator(15,25,10),A->GetActorLocation()+FVector(0,0,1500),FVector(1.2,.9,1.1));
         auto* Restored=Buildables->BeginSpawnBuildable(A->GetClass(),RestoredPose);
         auto* RestoredSpline=Cast<IFGSplineBuildableInterface>(Restored);
@@ -119,22 +161,75 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
             RestoredSpline->GetSplineConnection1()->GetComponentLocation().Equals(RestoredPose.TransformPosition(S->GetSplinePointData().Last().Location),.1) &&
             RestoredSpline->GetSplineConnection1()->GetForwardVector().Equals(RestoredPose.TransformVector(S->GetSplinePointData().Last().ArriveTangent).GetSafeNormal(),.001));
     }
-    auto* Storage = Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"), FVector(1000,0,0));
+    auto* Storage = Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/ConstructorMk1/Build_ConstructorMk1.Build_ConstructorMk1_C"), FVector(1000.049,0.049,0.049));
     TInlineComponentArray<UFGFactoryConnectionComponent*> Ports(Storage);
-    Check(TEXT("Connected storage fixture has conveyor ports"), Storage && !Ports.IsEmpty());
+    Check(TEXT("Constructor fixture has conveyor ports"), Storage && !Ports.IsEmpty());
     if (Storage && !Ports.IsEmpty())
     {
+        {
+        FBSSelection Selection, Result; FString Error;
+        // Exercise a half-step spawn using the actual network serializer, not
+        // a second copy of the production rounding calculation.
+        FVector Location = Storage->GetActorLocation();
+        Location.X = FMath::FloorToDouble(Location.X) + .25;
+        auto MidpointFixture = Capture(Storage);
+        MidpointFixture.Target.SetLocation(Location);
+        Check(TEXT("Constructor fixture reaches the exact network midpoint"),
+            Apply(World, MidpointFixture) && Storage->GetActorLocation().Equals(Location, .000001));
+        Selection.Buildings = {FBSBuildingRef::FromActor(Storage)};
+        auto Expected = Selection.Buildings;
+        FVector_NetQuantize10 ObservedLocation(Location);
+        FBitWriter Writer(0, true); bool Serialized = true;
+        ObservedLocation.NetSerialize(Writer, nullptr, Serialized);
+        FBitReader Reader(Writer.GetData(), Writer.GetNumBits());
+        ObservedLocation.NetSerialize(Reader, nullptr, Serialized);
+        Expected[0].Transform.SetLocation(ObservedLocation);
+        FBSTransformOptions Options;
+        Check(TEXT("Unconnected constructor accepts the client spawn-rounded position"),
+            Serialized && Groups->TransformSelection(Player, Selection, Groups->Revision, EBSTransformMode::RotateX, 0, FVector(0,0,.01), Result, Error, &Options, &Expected));
+        Check(TEXT("Building version rejects an old selection even after a sub-rounding edit"),
+            !Groups->TransformSelection(Player, Selection, Groups->Revision, EBSTransformMode::RotateX, 0, FVector(0,0,.01), Result, Error, &Options, &Expected));
+        }
         auto* Port = Ports[0];
         for (auto* P : Ports) if (P->GetDirection() != Belt->GetConnection1()->GetDirection()) { Port=P; break; }
         Belt->GetConnection1()->SetConnection(Port);
         const FVector Fixed = Belt->GetConnection0()->GetComponentLocation();
         const FVector End = Port->GetComponentLocation();
         const FVector Delta(0,100,100);
+        const auto OriginalMachine = Capture(Storage);
+        const auto OriginalBelt = Capture(Belt);
+        auto* Outline=UFGOutlineComponent::Get(World);
+        TArray<TPair<USceneComponent*,FVector>> ProxyLocations;
+        if (Outline)
+        {
+            Outline->ShowOutline(Storage,EOutlineColor::OC_DISMANTLE);
+            if (const auto* State=Outline->GetImmutableOutlineStateForActor(Storage))
+            {
+                for (const auto& Pair:State->OutlineProxies) if (IsValid(Pair.Value)) ProxyLocations.Emplace(Pair.Value,Pair.Value->GetComponentLocation());
+                for (const auto& Pair:State->InstancedOutlineProxies) if (IsValid(Pair.Value)) ProxyLocations.Emplace(Pair.Value,Pair.Value->GetComponentLocation());
+            }
+        }
         const bool Applied = Transform({Storage}, EBSTransformMode::RotateZ, 0, Delta);
+        bool ProxiesFollow=!ProxyLocations.IsEmpty();
+        for (const auto& Pair:ProxyLocations) ProxiesFollow &= Pair.Key->GetComponentLocation().Equals(Pair.Value+Delta,.01);
+        Check(TEXT("Existing outline proxies follow the transform immediately"),ProxiesFollow);
+        if (Outline) Outline->HideOutline(Storage);
         UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST belt: applied=%d link=%d start=%s fixed=%s end=%s expected=%s"),Applied,Belt->GetConnection1()->GetConnection()==Port,*Belt->GetConnection0()->GetComponentLocation().ToString(),*Fixed.ToString(),*Belt->GetConnection1()->GetComponentLocation().ToString(),*(End+Delta).ToString());
         Check(TEXT("Moving a connected machine stretches its unselected belt and preserves the link"), Applied && Belt->GetConnection1()->GetConnection()==Port &&
             Belt->GetConnection1()->GetComponentLocation().Equals(End+Delta,.1) && Belt->GetConnection0()->GetComponentLocation().Equals(Fixed,.1));
         Check(TEXT("Belt remains targetable after its connected machine moves"),Targetable(Belt));
+        const auto MovedMachine = Capture(Storage), MovedBelt = Capture(Belt);
+        FBSSelection HistoryResult; FString HistoryError;
+        Check(TEXT("Undo restores connected machine and full belt geometry"), Groups->RestoreTransform(Player, false, HistoryResult, HistoryError) && Matches(World, OriginalMachine) && Matches(World, OriginalBelt) && Targetable(Belt));
+        Check(TEXT("Redo restores connected machine and full belt geometry"), Groups->RestoreTransform(Player, true, HistoryResult, HistoryError) && Matches(World, MovedMachine) && Matches(World, MovedBelt) && Targetable(Belt));
+        FBSSelection Selection, Result;
+        Selection.Buildings.Add(FBSBuildingRef::FromActor(Storage));
+        auto Expected = Selection.Buildings;
+        FBSTransformOptions Options; Options.Gesture = FGuid::NewGuid();
+        const int32 OldRevision = Groups->Revision;
+        Transform({Rail}, EBSTransformMode::RotateX, 0, FVector(0,0,10));
+        Check(TEXT("Unrelated edits do not invalidate a selection fingerprint"), Groups->Revision == OldRevision && Groups->TransformSelection(Player, Selection, OldRevision, EBSTransformMode::RotateX, 0, FVector(0,0,10), Result, HistoryError, &Options, &Expected));
+        Check(TEXT("Concurrent stale edits to the same building are rejected"), !Groups->TransformSelection(Player, Selection, OldRevision, EBSTransformMode::RotateX, 0, FVector(0,0,10), Result, HistoryError, &Options, &Expected));
         // Exercise the geometry application used by receiving clients, without
         // server network planning. This is not a remote-client replication test.
         const auto ReplicatedChange=Capture(Belt);

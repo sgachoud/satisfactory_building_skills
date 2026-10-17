@@ -121,9 +121,11 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
     if (TestNotNull(TEXT("Edit operations context exists"), Operations))
     {
-        TestEqual(TEXT("Four configurable commands"), Operations->GetMappings().Num(), 4);
+        TestEqual(TEXT("Edit commands include configurable blueprint anchor"), Operations->GetMappings().Num(), 7);
         UInputAction* Map = NewObject<UInputAction>();
         Vanilla->MapKey(Map, EKeys::M);
+        UInputAction* Left = NewObject<UInputAction>();
+        Vanilla->MapKey(Left, EKeys::A);
         Subsystem.RequestRebuildControlMappings(Options);
         Key(EKeys::M, true); Tick();
         TestTrue(TEXT("M opens Map outside Edit"), Fired(Map));
@@ -135,10 +137,20 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
             TestTrue(TEXT("Operation is rebindable"), Op.IsPlayerMappable());
             TestEqual(TEXT("Group/Merge have native hints; Ungroup uses the conditional HUD hint"),
                 !!Op.bDisplayButtonHint, Op.GetMappingName() != FName(TEXT("BuildingSkills.Ungroup")));
+            if (Op.GetMappingName() == FName(TEXT("BuildingSkills.BlueprintAnchor")))
+            {
+                Key(EKeys::A, true); Tick();
+                TestTrue(TEXT("Plain A still moves left in Edit"), Fired(Left));
+                TestFalse(TEXT("Plain A does not choose an anchor"), Fired(Op.Action));
+                Key(EKeys::A, false); Tick();
+                Key(EKeys::LeftAlt, true); Tick();
+            }
             Key(Op.Key, true); Tick();
             TestTrue(TEXT("Configured operation activates"), Fired(Op.Action));
             if (Op.Key == EKeys::M) TestFalse(TEXT("Merge suppresses Map inside Edit"), Fired(Map));
+            if (Op.Key == EKeys::A) TestFalse(TEXT("Alt+A blocks movement only for its chord"), Fired(Left));
             Key(Op.Key, false); Tick();
+            Key(EKeys::LeftAlt, false); Tick();
         }
         Subsystem.RemoveMappingContext(Operations);
         Subsystem.RequestRebuildControlMappings(Options);
@@ -147,25 +159,52 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         Key(EKeys::M, false); Tick();
     }
     auto* SaveContext = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Save.MC_Save"));
-    if (TestNotNull(TEXT("Conditional save context exists"), SaveContext) && TestEqual(TEXT("One Save command"), SaveContext->GetMappings().Num(),1))
+    if (TestNotNull(TEXT("Conditional save context exists"), SaveContext) && TestEqual(TEXT("Save and Copy commands"), SaveContext->GetMappings().Num(),2))
     {
         const auto& Save=SaveContext->GetMappings()[0];
         TestTrue(TEXT("Save is configurable"),Save.IsPlayerMappable());
-        TestEqual(TEXT("Save defaults to S"),Save.Key,EKeys::S);
+        TestEqual(TEXT("Save primary key defaults to S"),Save.Key,EKeys::S);
+        TestEqual(TEXT("Save has one modifier"),Save.Triggers.Num(),1);
         auto* Backward=NewObject<UInputAction>();
         Vanilla->MapKey(Backward,EKeys::S);
         Subsystem.RequestRebuildControlMappings(Options);
         Key(EKeys::S,true); Tick();
-        TestTrue(TEXT("S moves normally without a single group"),Fired(Backward));
+        TestTrue(TEXT("S moves normally without a selection"),Fired(Backward));
         Key(EKeys::S,false); Tick();
         Subsystem.AddMappingContext(SaveContext,1000);
         Subsystem.RequestRebuildControlMappings(Options);
         Key(EKeys::S,true); Tick();
-        TestTrue(TEXT("S activates Save when its context is enabled"),Fired(Save.Action));
+        TestTrue(TEXT("Plain S moves backward even with a selection"),Fired(Backward));
+        TestFalse(TEXT("Plain S does not save"),Fired(Save.Action));
+        Key(EKeys::S,false); Tick();
+        Key(EKeys::LeftAlt,true); Tick();
+        Key(EKeys::S,true); Tick();
+        TestTrue(TEXT("Alt+S activates Save when its context is enabled"),Fired(Save.Action));
         TestFalse(TEXT("Saving consumes backward movement"),Fired(Backward));
         Key(EKeys::S,false); Tick();
+        Key(EKeys::LeftAlt,false); Tick();
+        const auto& Copy=SaveContext->GetMappings()[1];
+        TestTrue(TEXT("Copy is configurable"),Copy.IsPlayerMappable());
+        TestEqual(TEXT("Copy primary key defaults to C"),Copy.Key,EKeys::C);
+        TestEqual(TEXT("Copy has one modifier"),Copy.Triggers.Num(),1);
+        auto* Crouch=NewObject<UInputAction>();
+        Vanilla->MapKey(Crouch,EKeys::C);
+        Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::C,true); Tick();
+        TestTrue(TEXT("Plain C crouches or descends even with a selection"),Fired(Crouch));
+        TestFalse(TEXT("Plain C does not copy"),Fired(Copy.Action));
+        Key(EKeys::C,false); Tick();
+        Key(EKeys::LeftAlt,true); Tick();
+        Key(EKeys::C,true); Tick();
+        TestTrue(TEXT("Alt+C activates Copy inside Edit selection context"),Fired(Copy.Action));
+        TestFalse(TEXT("Copy consumes crouch"),Fired(Crouch));
+        Key(EKeys::C,false); Tick();
+        Key(EKeys::LeftAlt,false); Tick();
         Subsystem.RemoveMappingContext(SaveContext);
         Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::C,true); Tick();
+        TestTrue(TEXT("Crouch returns after selection context removal"),Fired(Crouch));
+        Key(EKeys::C,false); Tick();
         Key(EKeys::S,true); Tick();
         TestTrue(TEXT("S movement returns after Save context removal"),Fired(Backward));
         Key(EKeys::S,false); Tick();
@@ -173,7 +212,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
     auto* Transform = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Transform.MC_Transform"));
     if (TestNotNull(TEXT("Transform context exists"), Transform))
     {
-        TestEqual(TEXT("Six movements, wheel directions and three modifiers"), Transform->GetMappings().Num(), 11);
+        TestEqual(TEXT("Transform controls include temporary step settings"), Transform->GetMappings().Num(), 17);
         Subsystem.AddMappingContext(Transform, 1001);
         Subsystem.RequestRebuildControlMappings(Options);
         for (const auto& TransformMapping : Transform->GetMappings())

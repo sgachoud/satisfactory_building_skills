@@ -1,17 +1,30 @@
 [CmdletBinding()]
 param(
     [string]$SmlRoot = 'F:\dev\satisfactory_mods\SatisfactoryModLoader',
-    [string]$GameRoot = 'F:\Programme et jeux\Steam\steamapps\common\Satisfactory'
+    [string]$GameRoot = 'F:\Programme et jeux\Steam\steamapps\common\Satisfactory',
+    [string]$ArchivePath
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$archivePath = Join-Path $SmlRoot 'Saved\ArchivedPlugins\BuildingSkills\BuildingSkills-Windows.zip'
+if (-not $ArchivePath) { $ArchivePath = Join-Path $SmlRoot 'Saved\ArchivedPlugins\BuildingSkills\BuildingSkills-Windows.zip' }
 $installedRoot = [IO.Path]::GetFullPath((Join-Path $GameRoot 'FactoryGame\Mods\GameFeatures\BuildingSkills'))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 $verified = @()
 try {
+    $toc = @($archive.Entries | Where-Object { $_.FullName.EndsWith('.utoc') })
+    if ($toc.Count -ne 1) { throw 'Expected one cooked asset container in the package.' }
+    $tocStream = $toc[0].Open()
+    $tocBytes = New-Object IO.MemoryStream
+    try { $tocStream.CopyTo($tocBytes); $tocText = [Text.Encoding]::UTF8.GetString($tocBytes.ToArray()) }
+    finally { $tocStream.Dispose(); $tocBytes.Dispose() }
+    # The unencrypted IoStore directory index contains each cooked filename.
+    # Hash equality alone also accepts a faithfully installed empty package.
+    foreach ($name in @('BuildingSkills.uasset', 'RootGameWorld_BuildingSkills.uasset', 'RootGameInstance_BuildingSkills.uasset',
+        'MC_BuildingSkills.uasset', 'MC_EditOperations.uasset', 'IA_ToggleEditMode.uasset')) {
+        if (-not $tocText.Contains($name)) { throw "The package omitted required cooked content: $name" }
+    }
     foreach ($entry in $archive.Entries) {
         if (-not $entry.Name) { continue }
         $target = [IO.Path]::GetFullPath((Join-Path $installedRoot $entry.FullName))

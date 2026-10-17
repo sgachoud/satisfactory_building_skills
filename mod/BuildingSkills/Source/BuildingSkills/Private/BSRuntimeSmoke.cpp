@@ -1,7 +1,23 @@
 #include "BSEditModeComponent.h"
 #include "BSEditModeWidget.h"
+#include "BSTransformSettingsWidget.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/Input/SEditableText.h"
+#include "Widgets/SWindow.h"
 #include "BSBlueprintSave.h"
+#include "BSBlueprintScale.h"
+bool RunBuildingSkillsTransformerChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsPolishChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsNetworkCopyChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 Phase);
+void InstallBuildingSkillsBlueprintNetworkSmoke();
+bool RunBuildingSkillsVolumeChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsConnectedChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelection& Selection);
+#include "FGBlueprintProxy.h"
 #include "FGBlueprintSubsystem.h"
+#include "FGBlueprintSettings.h"
+#include "FGOutlineComponent.h"
 #include "UObject/StructOnScope.h"
 #include "BuildingSkills.h"
 #include "Buildables/FGBuildable.h"
@@ -15,6 +31,8 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Equipment/FGBuildGun.h"
+#include "Equipment/FGBuildGunBuild.h"
+#include "Hologram/FGBlueprintHologram.h"
 #include "Equipment/FGBuildGunDismantle.h"
 #include "FGBuildableSubsystem.h"
 #include "FGLightweightBuildableSubsystem.h"
@@ -22,6 +40,7 @@
 #include "Components/UniformGridSlot.h"
 #include "Components/BackgroundBlur.h"
 #include "FGRecipe.h"
+#include "FGRecipeManager.h"
 #include "FGInputLibrary.h"
 #include "FGCharacterPlayer.h"
 #include "FGGameMode.h"
@@ -36,6 +55,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+AFGBlueprintProxy* RunBuildingSkillsFoundationPlacementChecks(AFGCharacterPlayer* Player, bool& Passed);
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
 #include "Patching/NativeHookManager.h"
@@ -48,6 +68,21 @@
 class FBSRuntimeSmoke
 {
 public:
+    static inline bool ProbeClientForwarding = false;
+    static inline bool ObservedClientForwarding = false;
+    static bool ClickWidget(TSharedRef<SWidget> Widget)
+    {
+        auto& App = FSlateApplication::Get();
+        const auto Window = App.FindWidgetWindow(Widget);
+        if (!Window) return false;
+        const FVector2D Point = Widget->GetCachedGeometry().GetAbsolutePositionAtCoordinates(FVector2D(.5, .5));
+        const TSet<FKey> Up, Down = {EKeys::LeftMouseButton};
+        App.ProcessMouseMoveEvent(FPointerEvent(0, Point, App.GetCursorPos(), Up, EKeys::Invalid, 0, FModifierKeysState()));
+        const bool Pressed = App.ProcessMouseButtonDownEvent(Window->GetNativeWindow(),
+            FPointerEvent(0, Point, Point, Down, EKeys::LeftMouseButton, 0, FModifierKeysState()));
+        const bool Released = App.ProcessMouseButtonUpEvent(FPointerEvent(0, Point, Point, Up, EKeys::LeftMouseButton, 0, FModifierKeysState()));
+        return Pressed && Released;
+    }
     static bool Tick(float Delta)
     {
         static double Started = FPlatformTime::Seconds();
@@ -62,6 +97,7 @@ public:
         static TArray<FBSBuildingRef> StressBuildings;
         static TArray<FBSBuildingRef> TransformBuildings;
         static FVector MoveStart;
+        static FVector WheelPivot;
         static FString BlueprintTestName;
         static TArray<FBSBuildingRef> BlueprintMembers;
         const double Now = FPlatformTime::Seconds();
@@ -100,7 +136,7 @@ public:
             Player->GetCharacterMovement()->DisableMovement();
             Player->SetActorLocation(Player->GetActorLocation() + FVector(0, 0, 4000), false, nullptr, ETeleportType::TeleportPhysics);
             auto* Class = LoadClass<AFGBuildable>(nullptr, TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"));
-            if (auto* Subsystem = AFGBuildableSubsystem::Get(World); Subsystem && Class)
+            if (auto* Subsystem = AFGBuildableSubsystem::Get(World); Subsystem && Class && !FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) && !FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")))
             {
                 for (int32 Index = 0; Index < 3; ++Index)
                 {
@@ -117,8 +153,15 @@ public:
             Key(EKeys::E, true);
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) Samples=71;
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest"))) Samples=79;
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest"))) { Samples=130; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest"))) { Samples=150; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest"))) { Samples=250; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest"))) { Samples=300; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest"))) { Samples=400; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest"))) { Samples=450; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest"))) { Samples=500; TestBuilding.Reset(); }
             Stage = 2;
-            Next = Now + 1;
+            Next = Now + (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 18 : 1);
             return true;
         }
         if (TestBuilding.IsValid())
@@ -129,6 +172,7 @@ public:
             if (TestBuilding->GetIsLightweightTemporary()) Origin = TestBuilding->GetActorLocation();
             Player->GetController()->SetControlRotation((Origin - Player->GetPawnViewLocation()).Rotation());
         }
+        if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest"))) RunBuildingSkillsVolumeChecks(Player,-1);
         if (Now < Next) return true;
         Next = Now + 1;
         auto* Gun = Player->GetBuildGun();
@@ -142,6 +186,22 @@ public:
             ChecksPassed &= Passed;
             UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME ASSERT: %s: %s"), Description, Passed ? TEXT("PASS") : TEXT("FAIL"));
         };
+        static bool CheckedQueueCancellation = false;
+        if (!CheckedQueueCancellation)
+        {
+            CheckedQueueCancellation = true;
+            // Exercise the actual component queue before any command can be sent.
+            Edit->QueueTransform(EBSTransformMode::ScaleXYZ, 0, FVector(100,0,0));
+            Edit->QueueTransform(EBSTransformMode::ScaleXYZ, 0, FVector(-100,0,0));
+            Check(TEXT("Opposite queued movement in scale mode leaves no zero-scale command"), Edit->TransformCommands.IsEmpty());
+            Edit->TransformCommands.Reset();
+            Edit->QueueTransform(EBSTransformMode::ScaleXYZ, 1.1, FVector::ZeroVector);
+            Edit->QueueTransform(EBSTransformMode::ScaleXYZ, 1/1.1, FVector::ZeroVector);
+            Check(TEXT("Reciprocal queued scaling leaves no redundant server command"), Edit->TransformCommands.IsEmpty());
+            Edit->TransformCommands.Reset();
+            Edit->TransformOptions.Gesture.Invalidate();
+            Edit->RefreshTransformPreview();
+        }
         auto CountWidgets = [World]()
         {
             int32 Count = 0;
@@ -149,6 +209,31 @@ public:
             return Count;
         };
         auto* Groups = ABSGroupSubsystem::Get(World);
+        auto NativeDedupHintVisible = [&]()
+        {
+            bool Found = false;
+            TSet<UUserWidget*> Visited;
+            TFunction<void(UUserWidget*)> Visit = [&](UUserWidget* Widget)
+            {
+                if (!Widget || !Widget->IsVisible() || !Widget->WidgetTree || Visited.Contains(Widget)) return;
+                Visited.Add(Widget);
+                Widget->WidgetTree->ForEachWidget([&](UWidget* Child)
+                {
+                    if (auto* Text = Cast<UTextBlock>(Child); Text && Text->IsVisible() && Text->GetText().ToString().Contains(TEXT("deduplication")))
+                    {
+                        const FVector2D Size = Text->GetCachedGeometry().GetLocalSize();
+                        float Opacity = Widget->GetRenderOpacity();
+                        for (UWidget* Parent = Text; Parent; Parent = Parent->GetParent())
+                            Opacity *= Parent->IsVisible() ? Parent->GetRenderOpacity() : 0;
+                        Found |= Size.X > 1 && Size.Y > 1 && Opacity > .5f;
+                        UE_LOG(LogBuildingSkills, Display, TEXT("NATIVE DEDUP HINT: %s size=%s position=%s opacity=%g"), *Text->GetText().ToString(), *Size.ToString(), *Text->GetCachedGeometry().GetAbsolutePosition().ToString(), Opacity);
+                    }
+                    if (auto* Nested = Cast<UUserWidget>(Child)) Visit(Nested);
+                });
+            };
+            if (auto* UI = Player->GetGameUI()) for (auto* Widget : UI->GetInteractWidgetStack()) Visit(Widget);
+            return Found;
+        };
         switch (Samples)
         {
         case 0: Key(EKeys::E, false); Key(EKeys::LeftAlt, false); break;
@@ -184,7 +269,14 @@ public:
             UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME GROUP: system=%d count=%d requestPending=%d feedback=%s"), !!Groups, Groups ? Groups->Groups.Num() : -1, Edit->bRequestPending, *Edit->Feedback);
             Check(TEXT("G creates a group through the input binding and server request"), Groups && Groups->Groups.Num() == 1 && Edit->Selection.Groups.Num() == 1 && Edit->ResolveSelection(Edit->Selection).Num() == 2);
             TestBuilding = Buildings[2]; break;
-        case 11: Key(EKeys::LeftControl, true); break;
+        case 11:
+            Check(TEXT("Unselected hover remains outlined after pinning a group"), Edit->HoverHighlighted.Contains(Buildings[2].Get()) && Edit->HoverOutline && Edit->HoverOutline->GetOutlineStateColorForActor(Buildings[2].Get()) != EOutlineColor::OC_NONE);
+            Check(TEXT("Hover does not enter the pinned selection"), Edit->Selection.Buildings.IsEmpty() && Edit->Selection.Groups.Num() == 1);
+            Check(TEXT("Edit pinned and hover outlines share the green edit channel"),
+                Edit->bEditColorsApplied && Edit->HoverOutline &&
+                Edit->HoverOutline->GetOutlineStateColorForActor(Buildings[2].Get()) == EOutlineColor::OC_DISMANTLE &&
+                Player->GetOutline()->GetOutlineStateColorForActor(Buildings[0].Get()) == EOutlineColor::OC_DISMANTLE);
+            Key(EKeys::LeftControl, true); break;
         case 12:
             Key(EKeys::LeftControl, false);
             Check(TEXT("Group and single can be selected together"), Edit->Selection.Groups.Num() == 1 && Edit->Selection.Buildings.Num() == 1);
@@ -244,6 +336,7 @@ public:
                     FRuntimeBuildableInstanceData Data;
                     Data.Transform = FTransform(Player->GetActorLocation() + FVector(2000 + (Index % 16) * 800, (Index / 16) * 800, -600));
                     Data.BuiltWithRecipe = Recipe;
+                    Data.CustomizationData.SwatchDesc = Class->GetDefaultObject<AFGBuildable>()->GetDefaultSwatchCustomizationOverride(World);
                     const int32 RuntimeIndex = LW->AddFromBuildableInstanceData(Class, Data);
                     StressBuildings.Add(FBSBuildingRef::FromLightweight(World, Class, RuntimeIndex));
                 }
@@ -303,6 +396,8 @@ public:
             Gun->SetCurrentBuildGunMode(UBSGroupModeDescriptor::StaticClass()); break;
         case 51:
             Check(TEXT("Vanilla group hover expands actor and lightweight members"), Dismantle && Dismantle->GetPendingDismantleActors().Num() == 129);
+            Check(TEXT("Dismantle restores the native outline style and palette"),
+                !Edit->bEditColorsApplied && Player->GetOutline()->GetOutlineStateColorForActor(Buildings[1].Get()) == EOutlineColor::OC_DISMANTLE);
             RebuildBaseline = Edit->SelectionRebuilds;
             RefundBaseline = Edit->RefundRefreshes;
             ObjectBaseline = GUObjectArray.GetObjectArrayNum();
@@ -323,6 +418,7 @@ public:
             FRuntimeBuildableInstanceData Data;
             Data.Transform = Original.Transform;
             Data.BuiltWithRecipe = Original.Recipe;
+            Data.CustomizationData.SwatchDesc = Original.LightweightClass->GetDefaultObject<AFGBuildable>()->GetDefaultSwatchCustomizationOverride(World);
             const int32 OverlapIndex = LW->AddFromBuildableInstanceData(Original.LightweightClass, Data);
             Check(TEXT("Cached lightweight lookup rejects an added coincident instance"), !Original.IsAlive(World));
             LW->RemoveByInstanceIndex(Original.LightweightClass, OverlapIndex);
@@ -331,6 +427,7 @@ public:
             Data = FRuntimeBuildableInstanceData();
             Data.Transform = FTransform(Original.Transform.GetLocation() + FVector(0, 0, -1200));
             Data.BuiltWithRecipe = Original.Recipe;
+            Data.CustomizationData.SwatchDesc = Original.LightweightClass->GetDefaultObject<AFGBuildable>()->GetDefaultSwatchCustomizationOverride(World);
             LW->AddFromBuildableInstanceData(Original.LightweightClass, Data);
             Check(TEXT("Cached lightweight lookup never adopts a reused slot elsewhere"), !Original.IsAlive(World));
             break;
@@ -351,6 +448,12 @@ public:
             Check(TEXT("Transform replaces normal edit hints"), Edit->GetControlsText().ToString().Contains(TEXT("Return to Edit")) && !Edit->GetControlsText().ToString().Contains(TEXT("Multi-select")) && !Edit->GetControlsText().ToString().Contains(TEXT("Merge")));
             for (const TCHAR* Name : {TEXT("InfiniteNudge.TinyNudge"), TEXT("InfiniteNudge.SmallNudge"), TEXT("InfiniteNudge.LargeNudge")})
                 UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME NUDGE REFERENCE: %s=%s"), Name, *UFGInputLibrary::GetInputActionNameAsText_Keyboard(PC,FName(Name)).ToString());
+            {
+                FBox Bounds(ForceInit);
+                for (const auto& Ref : TransformBuildings) Bounds += FBSTransformNative::Bounds(World, Ref);
+                WheelPivot = Bounds.GetCenter();
+                Check(TEXT("Default transform pivot is the combined selection bounds center"), Edit->GetTransformPivot().Equals(WheelPivot, .01));
+            }
             Key(EKeys::R, true); break;
         case 62:
             Key(EKeys::R, false);
@@ -362,9 +465,7 @@ public:
             Key(EKeys::MouseScrollUp, false);
             const auto Members = Edit->ResolveSelection(Edit->Selection);
             bool Moved = Members.Num() == 3;
-            FVector Pivot = FVector::ZeroVector;
-            for (const auto& Ref : TransformBuildings) Pivot += Ref.Transform.GetLocation();
-            Pivot /= 3;
+            const FVector Pivot = WheelPivot;
             for (int32 I=0; I<Members.Num() && I<3; ++I)
             {
                 const auto Expected = FBSTransformMath::Apply(TransformBuildings[I].Transform, Pivot, EBSTransformMode::RotateY, 15, FVector::ZeroVector);
@@ -439,6 +540,7 @@ public:
         case 71:
             Key(EKeys::E,false); Key(EKeys::LeftAlt,false);
             ChecksPassed &= FBSTransformNative::RunNetworkChecks(Player);
+            ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,0);
             break;
         case 72:
             TestBuilding.Reset();
@@ -449,9 +551,12 @@ public:
             break;
         case 74:
             ChecksPassed &= FBSTransformNative::RunSettledNetworkChecks(Player,0);
+            ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,1);
             break;
         case 78:
             ChecksPassed &= FBSTransformNative::RunSettledNetworkChecks(Player,1);
+            ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,2);
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) Samples=209;
             break;
         case 79:
             if(FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest")))
@@ -466,8 +571,11 @@ public:
                 if(LW && Class && Recipe) for(int32 I=0;I<3;++I)
                 {
                     FRuntimeBuildableInstanceData Data;
-                    Data.Transform=FTransform(Player->GetActorLocation()+FVector(1600,I*800,-600));
+                    const FTransform GroupFrame(FRotator(0,30,0), Player->GetActorLocation()+FVector(1600,0,-600));
+                    Data.Transform=FTransform(FQuat::Identity, FVector(0,I*800,0),
+                        I == 1 ? FVector(.5,.75,.5) : FVector::OneVector) * GroupFrame;
                     Data.BuiltWithRecipe=Recipe;
+                    Data.CustomizationData.SwatchDesc = Class->GetDefaultObject<AFGBuildable>()->GetDefaultSwatchCustomizationOverride(World);
                     const int32 Index=LW->AddFromBuildableInstanceData(Class,Data);
                     Edit->Selection.Buildings.Add(FBSBuildingRef::FromLightweight(World,Class,Index));
                 }
@@ -476,17 +584,29 @@ public:
             break;
         case 80:
             Check(TEXT("Single group offers Save in native gun hints"), Edit->GetControlsText().ToString().Contains(TEXT("Save")));
-            Key(EKeys::S,true);
+            Key(EKeys::LeftAlt,true); Key(EKeys::S,true);
             break;
         case 81:
         {
-            Key(EKeys::S,false);
-            Check(TEXT("S opens the native blueprint designer window"), IsValid(Edit->BlueprintSession) && IsValid(Edit->BlueprintWindow));
+            Key(EKeys::S,false); Key(EKeys::LeftAlt,false);
+            Check(TEXT("Alt+S opens the native blueprint designer window"), IsValid(Edit->BlueprintSession) && IsValid(Edit->BlueprintWindow));
             auto* Window=Edit->BlueprintWindow.Get();
             if(!Window) break;
             if(FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintTest")))
+            {
                 Check(TEXT("Foundation-only blueprint bounds cover all three foundations"),
                     Edit->BlueprintSession->GetBlueprintDimensions()==FIntVector(1,3,1));
+                Check(TEXT("Group blueprint aligns to the rotated foundations while remaining upright"),
+                    Edit->BlueprintSession->BlueprintOrigin.GetRotation().Equals(FRotator(0,30,0).Quaternion(), .001));
+                FBox LocalBounds(ForceInit);
+                const auto Origin = Edit->BlueprintSession->BlueprintOrigin;
+                auto* LW = AFGLightweightBuildableSubsystem::Get(World);
+                for (const auto& Member : Edit->BlueprintSession->Members)
+                    if (const auto* Data = LW->GetRuntimeDataForBuildableClassAndIndex(Member.LightweightClass, Member.ResolveIndex(World)))
+                        LocalBounds += Data->BoundingBox.TransformBy(Data->Transform.GetRelativeTransform(Origin));
+                Check(TEXT("Group blueprint origin centers X/Y with its lowest geometry at Z zero"),
+                    LocalBounds.IsValid && FMath::IsNearlyZero(LocalBounds.GetCenter().X, .02) && FMath::IsNearlyZero(LocalBounds.GetCenter().Y, .02) && FMath::IsNearlyZero(LocalBounds.Min.Z, .02));
+            }
             bool SaveOnly=true;
             for(const auto* Name:{TEXT("mClearDesingerButton"),TEXT("mLoadButton")})
             {
@@ -532,7 +652,16 @@ public:
                     Record.SubCategory=Blueprints->GetSubCategoryForUndefined();
                     FBlueprintCategoryRecord Category;
                     Blueprints->GetGeneratedUndefinedCategoryRecord(Category);
-                    RCO->Server_SaveBlueprintInDesigner(Edit->BlueprintSession,Controller,Record,Category,Category.SubCategoryRecords[0]);
+                    // Exercise the previously blocked non-authority entry point.
+                    // Intercept transport, then restore authority and run the actual writer.
+                    ProbeClientForwarding = true; ObservedClientForwarding = false;
+                    Edit->BlueprintSession->SetRole(ROLE_SimulatedProxy);
+                    Edit->BlueprintSession->SaveBlueprint(Record, Controller);
+                    Edit->BlueprintSession->SetRole(ROLE_Authority);
+                    ProbeClientForwarding = false;
+                    Check(TEXT("Client Save reaches the native server RPC before authority validation"), ObservedClientForwarding);
+                    Edit->BlueprintSession->SaveBlueprint(Record, Controller);
+                    Check(TEXT("Native Save reports the actual disk-write result"), Edit->Feedback.Contains(TEXT("Blueprint saved:")));
                 }
             break;
         case 86:
@@ -547,14 +676,24 @@ public:
                 TArray<AFGBuildable*> Loaded;
                 if(Read) Blueprints->LoadStoredBlueprint(Descriptor,FTransform::Identity,Loaded,true);
                 Check(TEXT("Blueprint loads exactly the three selected members"),Loaded.Num()==BlueprintMembers.Num() && Loaded.Num()==3);
+                bool CorrectOrigin = Loaded.Num() == BlueprintMembers.Num();
+                const FTransform Origin = Edit->BlueprintSession->BlueprintOrigin;
+                for (const auto& Member : BlueprintMembers)
+                {
+                    const FTransform Expected = Member.Transform.GetRelativeTransform(Origin);
+                    CorrectOrigin &= Loaded.ContainsByPredicate([&](AFGBuildable* Actor)
+                    { return IsValid(Actor) && Actor->GetActorTransform().Equals(Expected, .02); });
+                }
+                Check(TEXT("Group blueprint uses selection bounds instead of player position and facing"), CorrectOrigin);
                 bool Unchanged=true;
                 for(const auto& Member:BlueprintMembers)
                 {
                     Unchanged &= Member.IsAlive(World);
-                    if(auto* Actor=Member.ResolveActor(World)) Unchanged &= Actor->GetActorTransform().Equals(Member.Transform,.01);
+                    if(auto* Actor=Member.ResolveActor(World)) Unchanged &= Actor->GetActorTransform().Equals(Member.Transform,.01) && Actor->GetBlueprintDesigner() != Edit->BlueprintSession;
                 }
                 Check(TEXT("Saving a blueprint leaves original buildings and transforms intact"),Unchanged);
-                Blueprints->DeleteBlueprintDescriptor(Descriptor);
+                // Retain only this generated fixture for the saved-blueprint HUD
+                // check below; remove it after leaving placement.
             }
             Edit->CloseBlueprintSave();
             break;
@@ -568,13 +707,13 @@ public:
             Edit->OnSave();
             Edit->BlueprintNextSessionCheck=Now+2.5;
             Check(TEXT("Save waits for session discovery instead of consuming an RPC actor pointer"),Edit->bOpeningBlueprint && !Edit->BlueprintWindow);
-            Key(EKeys::S,true);
+            Key(EKeys::LeftAlt,true); Key(EKeys::S,true);
             break;
         case 89:
         {
             bool SaveActive=false, MovementActive=false;
             if(Input) for(const auto& Mapping:Input->GetEnhancedActionMappings())
-                if(Mapping.Key==EKeys::S && Input->GetActionValue(Mapping.Action).GetMagnitude()>0)
+                if(Mapping.Key==EKeys::S && Input->FindActionInstanceData(Mapping.Action) && Input->FindActionInstanceData(Mapping.Action)->GetTriggerEvent()==ETriggerEvent::Triggered)
                 {
                     if(Mapping.GetMappingName()==TEXT("BuildingSkills.Save")) SaveActive=true;
                     else MovementActive=true;
@@ -586,7 +725,7 @@ public:
         }
         case 92:
         {
-            Key(EKeys::S,false);
+            Key(EKeys::S,false); Key(EKeys::LeftAlt,false);
             Check(TEXT("Delayed session discovery opens the native window"),Edit->BlueprintWindow && Edit->BlueprintSession && !Edit->bOpeningBlueprint);
             Check(TEXT("Dynamic save session is awake and identified for replication"),Edit->BlueprintSession && Edit->BlueprintSession->NetDormancy==DORM_Awake && Edit->BlueprintSession->RequestId==Edit->BlueprintRequestId);
             const FGuid ClosedRequest=Edit->BlueprintRequestId;
@@ -604,8 +743,253 @@ public:
             bool SessionLeft=false;
             for(TActorIterator<ABSBlueprintSaveSession> It(World);It;++It) SessionLeft|=It->RequestId==TimedOut;
             Check(TEXT("Timed-out save requests release their server session and preserve selection"),TimedOut.IsValid() && !SessionLeft && !Edit->bOpeningBlueprint && Edit->Selection.Groups.Num()==1);
+            ChecksPassed &= RunBuildingSkillsClipboardChecks(Player, Edit->Selection);
+            ChecksPassed &= RunBuildingSkillsBlueprintScaleChecks(Player);
+            auto KeptMembers = Edit->ResolveSelection(Edit->Selection);
+            for (auto& Ref : KeptMembers) if (Ref.Actor) Ref.Transform = Ref.Actor->GetActorTransform();
+            Edit->OnTransform();
+            Edit->OnTransformResult(true, Edit->Selection, TEXT("test delayed transform"), Groups->Revision);
+            Edit->TransformReplicationDeadline = World->GetRealTimeSeconds() - 1;
+            if (Dismantle) Edit->UpdateSelection(Dismantle);
+            bool WorldUnchanged = true;
+            for (const auto& Ref : KeptMembers)
+                WorldUnchanged &= Ref.IsAlive(World) && (!Ref.Actor || Ref.Actor->GetActorTransform().Equals(Ref.Transform, .01));
+            Check(TEXT("Superseded transform replies release selection without reverting world changes"),
+                !Edit->bRequestPending && !Edit->IsTransforming() && Edit->Selection.IsEmpty() && WorldUnchanged);
+
             break;
         }
+        case 94:
+            if (auto* Proxy = RunBuildingSkillsFoundationPlacementChecks(Player, ChecksPassed))
+            {
+                Edit->ClearSelection();
+                Gun->SetCurrentBuildGunMode(UBSEditBlueprintModeDescriptor::StaticClass());
+                {
+                    TGuardValue<TObjectPtr<AActor>> Target(Dismantle->mCurrentlySelectedActor, Proxy);
+                    Check(TEXT("Blueprint selection also accepts the native proxy target"), Edit->HoverSelection(Dismantle).Buildings.Num() == 2);
+                }
+                const auto& Bundles = Proxy->GetLightweightClassAndIndices();
+                if (!Bundles.IsEmpty() && !Bundles[0].Indices.IsEmpty())
+                {
+                    auto Ref = FBSBuildingRef::FromLightweight(World, Bundles[0].BuildableClass, Bundles[0].Indices[0]);
+                    TestBuilding = Ref.ResolveActor(World);
+                    if (TestBuilding.IsValid()) TestBuilding->SetBlockCleanupOfTemporary(true);
+                }
+            }
+            break;
+        case 95:
+            Check(TEXT("Blueprint selection expands a newly placed foundation to both pieces"), Edit->Hover.Buildings.Num() == 2);
+            if (TestBuilding.IsValid()) TestBuilding->SetBlockCleanupOfTemporary(false);
+            break;
+        case 96:
+        {
+            // The earlier dismantle check destroyed fixtures 0 and 2. Create
+            // fresh actors before testing native Ctrl-hover highlighting.
+            auto* Subsystem = AFGBuildableSubsystem::Get(World);
+            auto* Class = LoadClass<AFGBuildable>(nullptr, TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"));
+            if (Subsystem && Class)
+                for (int32 Index : {0, 2})
+                {
+                    const FTransform Pose(Player->GetActorLocation() + FVector(Index == 0 ? 1400 : -1400, 0, 1000));
+                    auto* Building = Subsystem->BeginSpawnBuildable(Class, Pose);
+                    if (!Building) continue;
+                    Building->SetBuiltWithRecipe(LoadClass<UFGRecipe>(nullptr, TEXT("/Game/FactoryGame/Recipes/Buildings/Recipe_StorageContainerMk1.Recipe_StorageContainerMk1_C")));
+                    Building->FinishSpawning(Pose);
+                    Buildings[Index] = Building;
+                }
+            Check(TEXT("Fresh dismantle highlight fixtures exist"), Buildings[0].IsValid() && Buildings[2].IsValid());
+            TestBuilding = Buildings[0];
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        }
+        case 97:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Key(EKeys::F, true); break;
+        case 98:
+            Key(EKeys::F, false);
+            Edit->ClearSelection();
+            if (Dismantle) Gun->SetCurrentBuildGunMode(Dismantle->mDefaultDismantleMode);
+            break;
+        case 99:
+            Check(TEXT("Dismantle first target retains the native selection style"),
+                !Edit->IsEditing() && !Edit->bEditColorsApplied &&
+                Player->GetOutline()->GetOutlineStateColorForActor(Buildings[0].Get()) == EOutlineColor::OC_DISMANTLE);
+            Key(EKeys::LeftControl, true); break;
+        case 100:
+            Key(EKeys::LeftControl, false);
+            Check(TEXT("Dismantle Ctrl pins the first target"), Edit->Selection.Buildings.Num() == 1);
+            TestBuilding = Buildings[2]; break;
+        case 101:
+            Check(TEXT("Dismantle subsequent hover uses the same native style as the pinned selection"),
+                Edit->Selection.Buildings.Num() == 1 && Edit->HoverHighlighted.Contains(Buildings[2]) &&
+                !Edit->Highlighted.Contains(Buildings[2]) && Edit->HoverOutline &&
+                Edit->HoverOutline->GetOutlineStateColorForActor(Buildings[2].Get()) == EOutlineColor::OC_DISMANTLE &&
+                Player->GetOutline()->GetOutlineStateColorForActor(Buildings[0].Get()) == EOutlineColor::OC_DISMANTLE &&
+                !Edit->bEditColorsApplied);
+            if (!FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsDismantleTest.png"), true, false);
+            break;
+        case 102:
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 103:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Edit->Selection = {};
+            Edit->Selection.Buildings.Add(FBSBuildingRef::FromActor(Buildings[0].Get()));
+            if (auto* Recipes = AFGRecipeManager::Get(World)) Recipes->AddAvailableRecipe(Buildings[0]->GetBuiltWithRecipe());
+            Edit->bSelectionDirty = true;
+            Edit->TickBlueprintSave();
+            Key(EKeys::LeftAlt, true); Key(EKeys::A, true);
+            break;
+        case 104:
+            Key(EKeys::A, false); Key(EKeys::LeftAlt, false);
+            Check(TEXT("Alt+A anchors the pointed object without selecting it"), Edit->BlueprintAnchorActor.Get() == Buildings[2].Get() && !Edit->bAnchorIncluded && Edit->Selection.Buildings.Num() == 1);
+            if (!FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsAnchorBlueTest.png"), true, false);
+            Key(EKeys::LeftControl, true);
+            break;
+        case 105:
+            Key(EKeys::LeftControl, false);
+            Check(TEXT("Ctrl includes the anchor and changes it to the selected-anchor palette"), Edit->bAnchorIncluded && Edit->Selection.Buildings.Num() == 2);
+            if (!FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsAnchorTest.png"), true, false);
+            break;
+        case 106:
+            Key(EKeys::LeftAlt, true); Key(EKeys::A, true);
+            break;
+        case 107:
+            Key(EKeys::A, false); Key(EKeys::LeftAlt, false);
+            Check(TEXT("Alt+A on the anchor clears it without changing selection"), !Edit->BlueprintAnchorActor && !(Edit->BlueprintAnchor.Actor || Edit->BlueprintAnchor.LightweightClass) && Edit->Selection.Buildings.Num() == 2);
+            Edit->Selection.Buildings.SetNum(1); Edit->bSelectionDirty = true;
+            break;
+        case 108:
+            Check(TEXT("Copy key is available for a single selected building"), Edit->IsEditing() && Edit->SaveContext);
+            Key(EKeys::LeftAlt,true); Key(EKeys::C, true); break;
+        case 109:
+        {
+            Key(EKeys::C, false); Key(EKeys::LeftAlt,false);
+            auto* Build = Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState());
+            auto* Hologram = Build ? Cast<AFGBlueprintHologram>(Build->GetHologram()) : nullptr;
+            Check(TEXT("Configured Alt+C opens Build Gun with the copied selection hologram"),
+                !Edit->IsEditing() && !Edit->bCopyPending && Hologram && Hologram->mBuildableToNewRoot.Num() == 1);
+            Check(TEXT("Copy key leaves the source building in place"), Buildings[0].IsValid());
+            Check(TEXT("Blueprint deduplication starts Off with a scoped input context"),Edit->Deduplication==EBSDeduplication::Off && Edit->DeduplicationContext);
+            Check(TEXT("Copy placement displays Toggle deduplication in native hints"), NativeDedupHintVisible());
+            if (!FParse::Param(FCommandLine::Get(),TEXT("nullrhi"))) FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsCopyHints.png"),true,false);
+            Key(EKeys::LeftAlt,true); Key(EKeys::D,true);
+            break;
+        }
+        case 110:
+            Key(EKeys::D,false);
+            Check(TEXT("Configured Alt+D toggles blueprint deduplication to Replace"),Edit->Deduplication==EBSDeduplication::Replace);
+            Edit->OnDeduplication();
+            Check(TEXT("Deduplication next mode is Skip"),Edit->Deduplication==EBSDeduplication::Skip);
+            Edit->OnDeduplication();
+            Check(TEXT("Deduplication cycles back to Off"),Edit->Deduplication==EBSDeduplication::Off);
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 111:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Check(TEXT("Leaving blueprint placement removes its deduplication context"),!Edit->DeduplicationContext);
+            Edit->Selection = {};
+            Edit->Selection.Buildings.Add(FBSBuildingRef::FromActor(Buildings[0].Get()));
+            Edit->bSelectionDirty = true;
+            Key(EKeys::T, true); break;
+        case 112:
+            Key(EKeys::T, false); Key(EKeys::K, true); break;
+        case 113:
+        {
+            Key(EKeys::K, false);
+            Check(TEXT("K opens the temporary step menu while retaining Transform"), Edit->TransformSettingsWindow && Edit->IsTransforming() && !Edit->InputAllowed());
+            Check(TEXT("Step menu shows the cursor and releases permanent game mouse capture"), PC->bShowMouseCursor &&
+                GEngine->GameViewport->GetMouseCaptureMode() == EMouseCaptureMode::CaptureDuringMouseDown && !FSlateApplication::Get().HasAnyMouseCaptor());
+            Check(TEXT("Step menu suspends camera look and movement"), PC->IsLookInputIgnored() && PC->IsMoveInputIgnored());
+            auto* Window = Edit->TransformSettingsWindow.Get();
+            TSharedPtr<SEditableText> Field;
+            TFunction<void(TSharedRef<SWidget>)> FindField = [&](TSharedRef<SWidget> Widget)
+            {
+                if (Field) return;
+                if (Widget->GetTypeAsString() == TEXT("SEditableText")) { Field = StaticCastSharedRef<SEditableText>(Widget); return; }
+                auto* Children = Widget->GetChildren();
+                for (int32 I=0; I<Children->Num(); ++I) FindField(Children->GetChildAt(I));
+            };
+            if (Window) FindField(Window->TakeWidget());
+            Check(TEXT("Temporary step menu contains a typed numeric field"), Field.IsValid());
+            if (Field)
+            {
+                const bool Clicked = ClickWidget(Field.ToSharedRef());
+                Check(TEXT("Mouse click focuses a step field without forced keyboard focus"), Clicked && Field->HasKeyboardFocus());
+                Field->SelectAllText();
+                for (TCHAR Ch : FString(TEXT("37.5")))
+                    FSlateApplication::Get().ProcessKeyCharEvent(FCharacterEvent(Ch, FModifierKeysState(), 0, false));
+                FSlateApplication::Get().ProcessKeyDownEvent(FKeyEvent(EKeys::Enter, FModifierKeysState(), 0, false, 0, 0));
+            }
+            break;
+        }
+        case 114:
+            Check(TEXT("Typed centimeters become the active temporary movement step"), FMath::IsNearlyEqual(Edit->TransformSteps().X, 37.5, .0001));
+            if (!FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsStepSettingsTest.png"), true, false);
+            break;
+        case 115:
+            if (Edit->TransformSettingsWindow)
+            {
+                TSharedPtr<SWidget> Button;
+                TFunction<void(TSharedRef<SWidget>)> FindButton = [&](TSharedRef<SWidget> Widget)
+                {
+                    if (Button) return;
+                    if (Widget->GetTypeAsString() == TEXT("SButton")) { Button = Widget; return; }
+                    auto* Children = Widget->GetChildren();
+                    for (int32 I=0; I<Children->Num(); ++I) FindButton(Children->GetChildAt(I));
+                };
+                FindButton(Edit->TransformSettingsWindow->TakeWidget());
+                Check(TEXT("Mouse click activates the step window Close button"), Button && ClickWidget(Button.ToSharedRef()));
+            }
+            break;
+        case 116:
+            Check(TEXT("Closing step menu restores gun input and retains temporary values"), !Edit->TransformSettingsWindow && Edit->IsTransforming() && Edit->InputAllowed() && FMath::IsNearlyEqual(Edit->TransformSteps().X, 37.5, .0001));
+            Check(TEXT("Closing step menu restores camera input and hides its cursor"), !PC->bShowMouseCursor && !PC->IsLookInputIgnored() && !PC->IsMoveInputIgnored());
+            MoveStart = Buildings[0]->GetActorLocation();
+            Edit->OnMove(4);
+            break;
+        case 117:
+            Check(TEXT("Transform applies the typed movement distance to a placed building"), FMath::IsNearlyEqual(Buildings[0]->GetActorLocation().Z - MoveStart.Z, 37.5, .01));
+            Key(EKeys::K, true); break;
+        case 118:
+            Key(EKeys::K, false);
+            Check(TEXT("Reopening step settings restores a usable mouse cursor"), Edit->TransformSettingsWindow && PC->bShowMouseCursor);
+            if (Edit->TransformSettingsWindow)
+                FSlateApplication::Get().ProcessKeyDownEvent(FKeyEvent(EKeys::Escape, FModifierKeysState(), 0, false, 0, 0));
+            break;
+        case 119:
+            Check(TEXT("Escape closes the step menu and restores camera input without ending Transform"), !Edit->TransformSettingsWindow && Edit->IsTransforming() && !PC->bShowMouseCursor && !PC->IsLookInputIgnored());
+            Edit->EndTransform();
+            Check(TEXT("Leaving Transform for Edit retains temporary step values"), Edit->IsEditing() && FMath::IsNearlyEqual(Edit->GetTransformStepValues()[0].X, 37.5, .0001));
+            Key(EKeys::LeftAlt, true); Key(EKeys::E, true); break;
+        case 120:
+            Key(EKeys::E, false); Key(EKeys::LeftAlt, false);
+            Check(TEXT("Closing Edit discards temporary steps and restores configuration"), !Edit->IsEditing() && Edit->TemporaryTransformSteps.IsEmpty() && FMath::IsNearlyEqual(Edit->GetTransformStepValues()[0].X, double(FBSTransformSettings::Get(World).Move), .0001));
+            break;
+        case 121:
+        {
+            auto* System = AFGBlueprintSubsystem::Get(World);
+            auto* Descriptor = System ? System->GetBlueprintDescriptorByNameString(BlueprintTestName) : nullptr;
+            auto* BuildState = Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD));
+            Check(TEXT("Saved blueprint fixture remains available for HUD check"), Descriptor && BuildState);
+            if (Descriptor && BuildState)
+            {
+                BuildState->SetActiveBlueprintDescriptor(Descriptor);
+                System->SetActiveBlueprintHologramDescriptor(Descriptor);
+                Player->HotKeyRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+            }
+            break;
+        }
+        case 122:
+            Check(TEXT("Saved blueprint placement displays Toggle deduplication in native hints"), Edit->IsBlueprintBuilding() && NativeDedupHintVisible());
+            if (!FParse::Param(FCommandLine::Get(),TEXT("nullrhi"))) FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsBlueprintHints.png"),true,false);
+            break;
+        case 123:
+            Player->UnequipBuildGun();
+            if (auto* System = AFGBlueprintSubsystem::Get(World))
+                if (auto* Descriptor = System->GetBlueprintDescriptorByNameString(BlueprintTestName)) System->DeleteBlueprintDescriptor(Descriptor);
+            break;
         }
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TARGET: expected=%s hit=%s selected=%s pending=%d hover=%d multi=%d paused=%d interact=%d geometry=%s"),
             *GetNameSafe(TestBuilding.Get()), *GetNameSafe(Gun->GetHitResult().GetActor()), *GetNameSafe(Dismantle ? Dismantle->GetSelectedActor() : nullptr),
@@ -621,7 +1005,17 @@ public:
                         *It->GetCachedGeometry().GetLocalSize().ToString(), It->GetBlurStrength());
             FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("BuildingSkillsRuntimeTest.png"), true, false);
         }
-        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 80 : 94)) return true;
+        if (Samples >= 130 && Samples <= 144 && Samples % 2 == 0)
+            ChecksPassed &= FBSTransformNative::RunPooledVisualChecks(Player, (Samples-130)/2);
+        if (Samples >= 150 && Samples <= 203) ChecksPassed &= RunBuildingSkillsConnectedChecks(Player, Samples - 150);
+        if (Samples >= 250 && Samples <= 278) ChecksPassed &= RunBuildingSkillsVolumeChecks(Player, Samples - 250);
+        if (Samples >= 450 && Samples <= 476) ChecksPassed &= RunBuildingSkillsTransformerChecks(Player, Samples - 450);
+        if (Samples >= 400 && Samples <= 439) ChecksPassed &= RunBuildingSkillsPolishChecks(Player, Samples - 400);
+        if (Samples >= 300 && Samples <= 374) ChecksPassed &= FBSStick::RunChecks(Player, Samples - 300);
+        if (Samples >= 500 && Samples <= 535) ChecksPassed &= RunBuildingSkillsBlueprintNetworkChecks(Player, Samples - 500);
+        if (Samples == 239 && FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,3);
+        if (Samples == 153) Next += 3; // Allow modal/HUD animations to settle for visual inspection.
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 376 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 280 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;
@@ -656,6 +1050,15 @@ public:
 void InstallBuildingSkillsRuntimeSmoke()
 {
     if (WITH_EDITOR || !FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsRuntimeTest"))) return;
+    InstallBuildingSkillsBlueprintNetworkSmoke();
+    SUBSCRIBE_METHOD(UFGBlueprintRemoteCallObject::Server_SaveBlueprintInDesigner,
+        [](auto& Scope, UFGBlueprintRemoteCallObject*, AFGBuildableBlueprintDesigner* Designer, AFGPlayerController* Controller,
+            FBlueprintRecord Record, FBlueprintCategoryRecord, FBlueprintSubCategoryRecord)
+        {
+            if (!FBSRuntimeSmoke::ProbeClientForwarding) return;
+            FBSRuntimeSmoke::ObservedClientForwarding = Cast<ABSBlueprintSaveSession>(Designer) && Controller == Designer->GetOwner() && !Record.BlueprintName.IsEmpty();
+            Scope.Cancel();
+        });
     SUBSCRIBE_METHOD(UFGSaveSession::SaveGame,
         [](auto& Scope, UFGSaveSession*, const FString&, FOnSaveGameComplete, void*)
         { Scope.Cancel(); UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TEST: blocked save request.")); });

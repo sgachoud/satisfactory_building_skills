@@ -3,6 +3,13 @@
 #include "EnhancedInputComponent.h"
 #include "FGCharacterPlayer.h"
 #include "BSBlueprintSave.h"
+#include "BSClipboard.h"
+#include "BSBlueprintScale.h"
+#include "BSBlueprintBounds.h"
+#include "BSConnected.h"
+#include "BSDeduplication.h"
+#include "BSActionHistory.h"
+#include "BSTransformers.h"
 
 DEFINE_LOG_CATEGORY(LogBuildingSkills);
 void InstallBuildingSkillsRuntimeSmoke();
@@ -12,8 +19,16 @@ void FBuildingSkillsModule::StartupModule()
 {
     UE_LOG(LogBuildingSkills, Display, TEXT("Building Skills module loaded."));
     UBSEditModeComponent::InstallHooks();
+    FBSConnectedPaint::Install();
     InstallBuildingSkillsNetworkHooks();
     ABSBlueprintSaveSession::InstallHooks();
+    InstallBuildingSkillsBlueprintScale();
+    FBSBlueprintPlacement::Install();
+    UBSClipboard::InstallHooks();
+    FBSDeduplication::Install();
+    FBSStick::Install();
+    FBSActionHistory::Install();
+    FBSTransformers::Install();
     InstallBuildingSkillsRuntimeSmoke();
 #if !UE_SERVER
     InputInitializedHandle = AFGCharacterPlayer::OnPlayerInputInitialized.AddLambda(

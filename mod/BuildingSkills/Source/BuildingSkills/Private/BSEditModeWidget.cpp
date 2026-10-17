@@ -16,6 +16,18 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Rendering/DrawElements.h"
 #include "GameFramework/PlayerController.h"
+#include "FGCharacterPlayer.h"
+#include "UI/FGGameUI.h"
+#include "UI/FGInteractWidget.h"
+#include "Components/TextBlock.h"
+#include "Patching/NativeHookManager.h"
+
+namespace
+{
+    // Only the active local Customizer mode labels are registered. Other native
+    // and mod widgets keep their normal SetText behavior.
+    TMap<TWeakObjectPtr<UTextBlock>, TWeakObjectPtr<UBSEditModeWidget>> SpreadTextOwners;
+}
 
 void UBSEditShortcutWidget::NativeConstruct()
 {
@@ -43,6 +55,7 @@ void UBSEditShortcutWidget::NativeConstruct()
 
 TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
 {
+    auto Card=[this](FName Action,FText Label) -> TSharedRef<SWidget> {
     return SNew(SBox).WidthOverride(64).HeightOverride(58)
     [
         SNew(SBorder).Padding(FMargin(4, 2))
@@ -53,10 +66,10 @@ TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
             + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)
             [
                 SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
-                .Text_Lambda([this]()
+                .Text_Lambda([this,Action]()
                 {
                     // Both Alt keys activate vanilla's Alt chord action.
-                    FString Key = UFGInputLibrary::GetInputActionNameAsText(GetOwningPlayer(), TEXT("BuildingSkills.ToggleEditMode")).ToString();
+                    FString Key = UFGInputLibrary::GetInputActionNameAsText(GetOwningPlayer(), Action).ToString();
                     Key.ReplaceInline(TEXT("Right Alt"), TEXT("Alt"));
                     Key.ReplaceInline(TEXT("Left Alt"), TEXT("Alt"));
                     return FText::FromString(Key);
@@ -65,9 +78,20 @@ TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
             + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
             [SNew(SBox).HeightOverride(1)[SNew(SImage).Image(FCoreStyle::Get().GetBrush("WhiteBrush"))]]
             + SVerticalBox::Slot().FillHeight(1).HAlign(HAlign_Center).VAlign(VAlign_Center)
-            [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)).Text(NSLOCTEXT("BuildingSkills", "EditShortcutLabel", "Edit"))]
+            [SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16)).Text(Label)]
         ]
     ];
+    };
+    // The native helper has a free cell above our Edit card. Keep its original
+    // grid dimensions, and show Stick there only while a spline is equipped.
+    return SNew(SOverlay)
+        +SOverlay::Slot()[Card(TEXT("BuildingSkills.ToggleEditMode"),NSLOCTEXT("BuildingSkills","EditShortcutLabel","Edit"))]
+        +SOverlay::Slot()[SNew(SBox).WidthOverride(64).HeightOverride(58)
+            .RenderTransform(FSlateRenderTransform(FVector2D(0,-62)))
+            .Visibility_Lambda([this]() {
+                auto* P=GetOwningPlayerPawn(); auto* E=P ? P->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                return FBSStick::Active(E) ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+            })[Card(TEXT("BuildingSkills.StickToggle"),NSLOCTEXT("BuildingSkills","StickShortcutLabel","Stick"))]];
 }
 
 #define LOCTEXT_NAMESPACE "BuildingSkills"
@@ -79,6 +103,13 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
         [
             SNew(SBorder).Padding(FMargin(16, 12))
             .BorderBackgroundColor(FLinearColor(0.03f, 0.03f, 0.03f, 0.9f))
+            .Visibility_Lambda([this]()
+            {
+                auto* Pawn = GetOwningPlayerPawn();
+                auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                // Painting uses the native below-cursor build-mode row.
+                return Edit && Edit->IsPainting() ? EVisibility::Collapsed : EVisibility::SelfHitTestInvisible;
+            })
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Left)
@@ -89,24 +120,135 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
                         auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
                         return Edit ? Edit->GetStatusText() : FText::GetEmpty();
                     })
-                    .ColorAndOpacity(FLinearColor(1.0f, 0.45f, 0.08f))
+                    .ColorAndOpacity_Lambda([this]()
+                    {
+                        auto* Pawn = GetOwningPlayerPawn();
+                        auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                        return FSlateColor(Edit && Edit->IsEditing() ? FLinearColor(.1f, 1.f, .2f) : FLinearColor(1.f, .45f, .08f));
+                    })
                 ]
 
             ]
         ]
-        + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(0, 0, 0, 120)
-        [SAssignNew(HintHost, SBox).WidthOverride(1100).HeightOverride(64)];
+        + SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom)
+        .Padding(TAttribute<FMargin>::CreateLambda([this]()
+        {
+            auto* Pawn = GetOwningPlayerPawn();
+            auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+            // Edit replaces the native hints. Connected Dismantle and Paint
+            // supplement them, so reserve a separate row immediately above.
+            return FMargin(0, 0, 0, Edit && Edit->IsEditing() ? 120.f : Edit && FBSStick::Active(Edit) ? 155.f : 240.f);
+        }))
+        [SAssignNew(HintHost, SBox).WidthOverride(1100).HeightOverride(110)];
 }
 
 void UBSEditModeWidget::SetHints(UUserWidget* Hints)
 {
-    if (HintHost) HintHost->SetContent(Hints ? Hints->TakeWidget() : SNullWidget::NullWidget);
+    if (!HintHost) return;
+    TSharedRef<SWidget> Content = Hints ? Hints->TakeWidget() : SNullWidget::NullWidget;
+    if (HintHost->GetChildren()->GetChildAt(0) != Content) HintHost->SetContent(Content);
 }
 
 void UBSEditModeWidget::ReleaseSlateResources(bool ReleaseChildren)
 {
     Super::ReleaseSlateResources(ReleaseChildren);
     HintHost.Reset();
+}
+
+void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
+{
+    if (!WITH_EDITOR)
+    {
+        static bool HookInstalled = false;
+        if (!HookInstalled)
+        {
+            HookInstalled = true;
+            SUBSCRIBE_UOBJECT_METHOD(UTextBlock, SetText, [](auto& Scope, UTextBlock* Target, FText Incoming)
+            {
+                if (SpreadTextOwners.IsEmpty()) return;
+                const auto* Found = SpreadTextOwners.Find(Target);
+                auto* Owner = Found ? Found->Get() : nullptr;
+                if (!Owner || Owner->NativeSpreadText.Get() != Target) return;
+                auto* Pawn = Owner->GetOwningPlayerPawn();
+                auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                if (!Edit || !Edit->IsSpreadPainting())
+                {
+                    Owner->RestoreSpreadMode();
+                    return;
+                }
+                // The native Blueprint also refreshes this label after the pawn
+                // tick. Change that write itself instead of racing it each frame.
+                // Remember its latest intended label for exact restoration.
+                if (!Incoming.EqualTo(Owner->LastSpreadText)) Owner->PreviousSpreadText = Incoming;
+                Scope(Target, Owner->LastSpreadText);
+            });
+        }
+    }
+    auto* Player = Cast<AFGCharacterPlayer>(GetOwningPlayerPawn());
+    auto* UI = Player ? Player->GetGameUI() : nullptr;
+    UTextBlock* NativeText = nullptr;
+    UWidget* NativeContainer = nullptr;
+    UWidget* NativeIcon = nullptr;
+    if (Enabled && UI)
+    {
+        // Paint and Build share the native build-mode widget. Use its existing
+        // below-cursor row, so font, backdrop, positioning and UI scale stay native.
+        TFunction<void(UUserWidget*)> FindModeRow = [&](UUserWidget* Widget)
+        {
+            if (!Widget || !Widget->WidgetTree || NativeText) return;
+            if (Widget->GetClass()->GetFName() == TEXT("Widget_BuildMode_C"))
+            {
+                NativeText = Cast<UTextBlock>(Widget->WidgetTree->FindWidget(TEXT("mBuildModeText")));
+                NativeContainer = Widget->WidgetTree->FindWidget(TEXT("mBuildModeContainer"));
+                NativeIcon = Widget->WidgetTree->FindWidget(TEXT("mBuildModeIcon"));
+                if (NativeText && NativeContainer) return;
+                NativeText = nullptr;
+            }
+            Widget->WidgetTree->ForEachWidget([&](UWidget* Child)
+            { if (auto* Nested = Cast<UUserWidget>(Child)) FindModeRow(Nested); });
+        };
+        const auto Stack = UI->GetInteractWidgetStack();
+        for (int32 I = Stack.Num() - 1; I >= 0 && !NativeText; --I) FindModeRow(Stack[I]);
+    }
+    if (NativeText != NativeSpreadText.Get()) RestoreSpreadMode();
+    if (!NativeText) return;
+    if (!NativeSpreadText.IsValid())
+    {
+        NativeSpreadText = NativeText;
+        NativeSpreadContainer = NativeContainer;
+        NativeSpreadIcon = NativeIcon;
+        PreviousSpreadText = NativeText->GetText();
+        PreviousSpreadVisibility = NativeContainer->GetVisibility();
+        if (NativeIcon) PreviousSpreadIconVisibility = NativeIcon->GetVisibility();
+    }
+    LastSpreadText = Text;
+    SpreadTextOwners.Add(NativeText, this);
+    if (!NativeText->GetText().EqualTo(Text)) NativeText->SetText(Text);
+    NativeContainer->SetVisibility(ESlateVisibility::HitTestInvisible);
+    // A retained Build/Dismantle mode icon would describe the previous gun state.
+    if (NativeIcon) NativeIcon->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UBSEditModeWidget::RestoreSpreadMode()
+{
+    // Unregister before SetText: restoration must pass through to native UMG.
+    SpreadTextOwners.Remove(NativeSpreadText);
+    if (NativeSpreadText.IsValid() && NativeSpreadText->GetText().EqualTo(LastSpreadText))
+    {
+        // If the native widget has already changed to a Build-mode label, it
+        // owns the row again; never overwrite its newer text or visibility.
+        NativeSpreadText->SetText(PreviousSpreadText);
+        if (NativeSpreadContainer.IsValid()) NativeSpreadContainer->SetVisibility(PreviousSpreadVisibility);
+        if (NativeSpreadIcon.IsValid()) NativeSpreadIcon->SetVisibility(PreviousSpreadIconVisibility);
+    }
+    NativeSpreadText.Reset(); NativeSpreadContainer.Reset(); NativeSpreadIcon.Reset();
+    PreviousSpreadText = FText::GetEmpty(); LastSpreadText = FText::GetEmpty();
+}
+
+void UBSEditModeWidget::NativeDestruct()
+{
+    RestoreSpreadMode();
+    Super::NativeDestruct();
 }
 
 #undef LOCTEXT_NAMESPACE
@@ -126,7 +268,8 @@ int32 UBSEditModeWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Ge
     FVector Eye; FRotator Rotation;
     PC->GetPlayerViewPoint(Eye, Rotation);
     const double Radius = FMath::Clamp(FVector::Distance(Eye, Center) * 0.075, 65.0, 1500.0);
-    const FVector Axes[] = {FVector::ForwardVector, FVector::RightVector, FVector::UpVector};
+    const FQuat Frame = Edit->GetTransformFrame();
+    const FVector Axes[] = {Frame.GetAxisX(), Frame.GetAxisY(), Frame.GetAxisZ()};
     const FLinearColor Colors[] = {FLinearColor(1, .15f, .1f), FLinearColor(.15f, 1, .2f), FLinearColor(.2f, .5f, 1)};
     auto Project = [&](const FVector& World, FVector2D& Screen)
     { return UWidgetLayoutLibrary::ProjectWorldLocationToWidgetPosition(PC, World, Screen, true); };
@@ -136,6 +279,23 @@ int32 UBSEditModeWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Ge
         if (Project(A, P) && Project(B, Q))
             FSlateDrawElement::MakeLines(Out, Base + 1, Geometry.ToPaintGeometry(), {P,Q}, ESlateDrawEffect::None, Color, true, Thickness);
     };
+    // Pending input is previewed without moving native actors or factory simulation.
+    TArray<FBox> DisplayBoxes;
+    if (Edit->GetTransformPreview().Num() > 256)
+    {
+        FBox Combined(ForceInit);
+        for (const auto& Box : Edit->GetTransformPreview()) Combined += Box;
+        DisplayBoxes.Add(Combined);
+    }
+    const auto& Boxes = DisplayBoxes.IsEmpty() ? Edit->GetTransformPreview() : DisplayBoxes;
+    for (const FBox& Box : Boxes)
+    {
+        FVector Corners[8];
+        for (int32 I = 0; I < 8; ++I) Corners[I] = FVector(I & 1 ? Box.Max.X : Box.Min.X, I & 2 ? Box.Max.Y : Box.Min.Y, I & 4 ? Box.Max.Z : Box.Min.Z);
+        for (int32 I = 0; I < 8; ++I)
+            for (int32 Bit = 1; Bit <= 4; Bit <<= 1)
+                if (!(I & Bit)) Line(Corners[I], Corners[I | Bit], FLinearColor(.1f, 1.f, .2f, .7f), 1);
+    }
     for (int32 Axis = 0; Axis < 3; ++Axis)
     {
         const bool Selected = Active[Axis] > 0;

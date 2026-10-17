@@ -1,5 +1,6 @@
 #include "BSGroups.h"
 #include "BSEditModeComponent.h"
+#include "BuildingSkills.h"
 #include "Buildables/FGBuildable.h"
 #include "Equipment/FGBuildGun.h"
 #include "FGBlueprintProxy.h"
@@ -7,6 +8,8 @@
 #include "FGHealthComponent.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "Net/UnrealNetwork.h"
+#include "Engine/NetDriver.h"
+#include "Engine/PackageMapClient.h"
 #include "Subsystem/SubsystemActorManager.h"
 
 FBSBuildingRef FBSBuildingRef::FromActor(AFGBuildable* Building)
@@ -19,7 +22,11 @@ FBSBuildingRef FBSBuildingRef::FromActor(AFGBuildable* Building)
     }
     FBSBuildingRef Ref;
     Ref.Actor = Building;
+    if (auto* Driver = Building->GetWorld()->GetNetDriver(); Driver && Driver->GuidCache.IsValid())
+        Ref.NetActorId = Driver->GuidCache->GetNetGUID(Building).ObjectId;
     Ref.Transform = Building->GetActorTransform();
+    if (const auto* Groups = ABSGroupSubsystem::Get(Building->GetWorld()))
+        Ref.TransformVersion = (Groups->HasAuthority() ? Groups->BuildingVersions : Groups->ReceivedVersions).FindRef(FBSTransformNative::Key(Ref));
     return Ref;
 }
 
@@ -33,6 +40,8 @@ FBSBuildingRef FBSBuildingRef::FromLightweight(UWorld* World, TSubclassOf<AFGBui
     Ref.Recipe = Data->BuiltWithRecipe;
     Ref.Transform = Data->Transform;
     Ref.RuntimeIndex = Index;
+    if (const auto* Groups = ABSGroupSubsystem::Get(World))
+        Ref.TransformVersion = (Groups->HasAuthority() ? Groups->BuildingVersions : Groups->ReceivedVersions).FindRef(FBSTransformNative::Key(Ref));
     return Ref;
 }
 
@@ -57,15 +66,25 @@ int32 FBSBuildingRef::ResolveIndex(UWorld* World) const
     return Match;
 }
 
+AFGBuildable* FBSBuildingRef::ResolveNetworkActor(UWorld* World) const
+{
+    if (IsValid(Actor)) return Actor;
+    if (NetActorId && World && World->GetNetMode() == NM_Client)
+        if (auto* Driver = World->GetNetDriver(); Driver && Driver->GuidCache.IsValid())
+            { FNetworkGUID Id; Id.ObjectId = NetActorId; return Cast<AFGBuildable>(Driver->GuidCache->GetObjectFromNetGUID(Id, true)); }
+    return nullptr;
+}
+
 bool FBSBuildingRef::IsAlive(UWorld* World) const
 {
-    return LightweightClass ? ResolveIndex(World) != INDEX_NONE :
-        IsValid(Actor) && Actor->GetWorld() == World && !Actor->GetIsDismantled() && !Actor->GetIsLightweightTemporary();
+    if (LightweightClass) return ResolveIndex(World) != INDEX_NONE;
+    auto* Building = ResolveNetworkActor(World);
+    return IsValid(Building) && Building->GetWorld() == World && !Building->GetIsDismantled() && !Building->GetIsLightweightTemporary();
 }
 
 AFGBuildable* FBSBuildingRef::ResolveActor(UWorld* World) const
 {
-    if (!LightweightClass) return IsAlive(World) ? Actor.Get() : nullptr;
+    if (!LightweightClass) return IsAlive(World) ? ResolveNetworkActor(World) : nullptr;
     int32 Index = ResolveIndex(World);
     if (Index == INDEX_NONE) return nullptr;
     FLightweightBuildableInstanceRef Native;
@@ -75,7 +94,7 @@ AFGBuildable* FBSBuildingRef::ResolveActor(UWorld* World) const
 
 AFGBlueprintProxy* FBSBuildingRef::Blueprint(UWorld* World) const
 {
-    if (!LightweightClass) return IsValid(Actor) ? Actor->GetBlueprintProxy() : nullptr;
+    if (!LightweightClass) { auto* Building = ResolveNetworkActor(World); return IsValid(Building) ? Building->GetBlueprintProxy() : nullptr; }
     auto* LW = AFGLightweightBuildableSubsystem::Get(World);
     int32 Index = ResolveIndex(World);
     auto* Data = LW && Index != INDEX_NONE ? LW->GetRuntimeDataForBuildableClassAndIndex(LightweightClass, Index) : nullptr;
@@ -88,6 +107,8 @@ bool FBSBuildingRef::operator==(const FBSBuildingRef& Other) const
 {
     if (LightweightClass || Other.LightweightClass)
         return LightweightClass == Other.LightweightClass && Recipe == Other.Recipe && Transform.Equals(Other.Transform, 0.01);
+    if (IsValid(Actor) && IsValid(Other.Actor)) return Actor == Other.Actor;
+    if (NetActorId || Other.NetActorId) return NetActorId && NetActorId == Other.NetActorId;
     return Actor == Other.Actor;
 }
 
@@ -129,8 +150,23 @@ FGuid FBSGroupTree::Root(const TArray<FBSGroup>& Tree, FGuid Id)
 
 void FBSGroupTree::Collect(const TArray<FBSGroup>& Tree, FGuid Id, TArray<FBSBuildingRef>& Out)
 {
+    if (!Id.IsValid()) return;
+    // Walk descendants once instead of following every node's ancestry with a
+    // linear lookup at each level. Keep the final emission in stored tree order:
+    // selection order determines the transform anchor and merge destination.
+    TMultiMap<FGuid, FGuid> Children;
+    for (const auto& G : Tree) Children.Add(G.Parent, G.Id);
+    TSet<FGuid> Descendants;
+    TArray<FGuid> Pending = {Id};
+    while (!Pending.IsEmpty())
+    {
+        const FGuid Next = Pending.Pop(EAllowShrinking::No);
+        if (Descendants.Contains(Next)) continue;
+        Descendants.Add(Next);
+        for (auto It = Children.CreateConstKeyIterator(Next); It; ++It) Pending.Add(It.Value());
+    }
     for (const auto& G : Tree)
-        if (IsWithin(Tree, G.Id, Id))
+        if (Descendants.Contains(G.Id))
             for (const auto& B : G.Buildings) Out.AddUnique(B);
 }
 
@@ -175,13 +211,35 @@ void FBSGroupTree::PruneEmpty(TArray<FBSGroup>& Tree)
 
 bool FBSGroupTree::Validate(const TArray<FBSGroup>& Tree)
 {
-    TSet<FGuid> Ids;
+    TMap<FGuid, int32> Indices;
+    for (int32 I = 0; I < Tree.Num(); ++I)
+    {
+        if (!Tree[I].Id.IsValid() || Indices.Contains(Tree[I].Id)) return false;
+        Indices.Add(Tree[I].Id, I);
+    }
+    // Each parent edge is checked once. No recursion or repeated linear ancestor
+    // searches, even for thousands of nested containers.
+    TArray<uint8> State;
+    State.Init(0, Tree.Num());
+    for (int32 I = 0; I < Tree.Num(); ++I)
+    {
+        TArray<int32> Path;
+        int32 Current = I;
+        while (Current != INDEX_NONE && State[Current] == 0)
+        {
+            State[Current] = 1;
+            Path.Add(Current);
+            const FGuid Parent = Tree[Current].Parent;
+            const int32* ParentIndex = Indices.Find(Parent);
+            if (Parent.IsValid() && !ParentIndex) return false;
+            Current = ParentIndex ? *ParentIndex : INDEX_NONE;
+        }
+        if (Current != INDEX_NONE && State[Current] == 1) return false;
+        for (int32 Index : Path) State[Index] = 2;
+    }
     TArray<FBSBuildingRef> Buildings;
     for (const auto& G : Tree)
     {
-        if (!G.Id.IsValid() || Ids.Contains(G.Id)) return false;
-        Ids.Add(G.Id);
-        if (G.Parent.IsValid() && (!Find(Tree, G.Parent) || IsWithin(Tree, G.Parent, G.Id))) return false;
         for (const auto& B : G.Buildings)
         {
             if (Buildings.Contains(B)) return false;
@@ -321,9 +379,8 @@ int32 ABSGroupSubsystem::FindLightweightIndex(const FBSBuildingRef& Ref) const
 void ABSGroupSubsystem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-    DOREPLIFETIME(ABSGroupSubsystem, Groups);
-    DOREPLIFETIME(ABSGroupSubsystem, Revision);
-    DOREPLIFETIME_CONDITION(ABSGroupSubsystem, TransformSnapshot, COND_InitialOnly);
+    DOREPLIFETIME(ABSGroupSubsystem, PublishedGroupRevision);
+
 }
 
 void ABSGroupSubsystem::GatherDependencies_Implementation(TArray<UObject*>& Out)
@@ -335,11 +392,12 @@ void ABSGroupSubsystem::GatherDependencies_Implementation(TArray<UObject*>& Out)
 void ABSGroupSubsystem::PreSaveGame_Implementation(int32, int32)
 {
     if (!HasAuthority() || SchemaVersion != 1) return;
+    bool Changed = false;
+    const int32 PreviousCount = Groups.Num();
     for (auto& G : Groups)
-        G.Buildings.RemoveAll([&](const FBSBuildingRef& B) { return !B.IsAlive(GetWorld()); });
+        Changed |= G.Buildings.RemoveAll([&](const FBSBuildingRef& B) { return !B.IsAlive(GetWorld()); }) > 0;
     FBSGroupTree::PruneEmpty(Groups);
-    ++Revision;
-    ForceNetUpdate();
+    if (Changed || Groups.Num() != PreviousCount) { PublishGroups(); }
 }
 
 void ABSGroupSubsystem::PostLoadGame_Implementation(int32, int32)
@@ -352,24 +410,31 @@ void ABSGroupSubsystem::PostLoadGame_Implementation(int32, int32)
 void ABSGroupSubsystem::RemoveLightweight(TSubclassOf<AFGBuildable> Class, int32 Index)
 {
     TransformSnapshot.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.LightweightClass == Class && C.InstanceIndex == Index; });
+    FBSBuildingRef RemovedKey; RemovedKey.LightweightClass = Class; RemovedKey.RuntimeIndex = Index;
+    BuildingVersions.Add(FBSTransformNative::Key(RemovedKey), ++TransformSerial);
+    SnapshotIndices.Reset();
+    for (int32 I = 0; I < TransformSnapshot.Num(); ++I) SnapshotIndices.Add(FBSTransformNative::Key(TransformSnapshot[I].Building, TransformSnapshot[I].InstanceIndex), I);
     PendingTransforms.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.LightweightClass == Class && C.InstanceIndex == Index; });
     if (!HasAuthority()) return;
     const FBSBuildingRef Removed = FBSBuildingRef::FromLightweight(GetWorld(), Class, Index);
     if (!Removed.LightweightClass) return;
     bool Changed = false;
     for (auto& G : Groups) Changed |= G.Buildings.Remove(Removed) > 0;
-    if (Changed) { FBSGroupTree::PruneEmpty(Groups); ++Revision; ForceNetUpdate(); }
+    if (Changed) { FBSGroupTree::PruneEmpty(Groups); PublishGroups(); }
 }
 
 void ABSGroupSubsystem::RemoveBuilding(AFGBuildable* Building)
 {
     TransformSnapshot.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });
+    BuildingVersions.Add(FBSTransformNative::Key(FBSBuildingRef::FromActor(Building)), ++TransformSerial);
+    SnapshotIndices.Reset();
+    for (int32 I = 0; I < TransformSnapshot.Num(); ++I) SnapshotIndices.Add(FBSTransformNative::Key(TransformSnapshot[I].Building, TransformSnapshot[I].InstanceIndex), I);
     PendingTransforms.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });
     if (!HasAuthority() || !IsValid(Building) || Building->GetIsLightweightTemporary()) return;
     bool Changed = false;
     for (auto& G : Groups)
         Changed |= G.Buildings.RemoveAll([&](const FBSBuildingRef& B) { return B.Actor == Building; }) > 0;
-    if (Changed) { FBSGroupTree::PruneEmpty(Groups); ++Revision; ForceNetUpdate(); }
+    if (Changed) { FBSGroupTree::PruneEmpty(Groups); PublishGroups(); }
 }
 
 bool ABSGroupSubsystem::Execute(AFGCharacterPlayer* Player, EBSGroupOperation Operation,
@@ -379,7 +444,10 @@ bool ABSGroupSubsystem::Execute(AFGCharacterPlayer* Player, EBSGroupOperation Op
         !Player->GetBuildGun() || !UBSEditModeComponent::IsEditDescriptor(Player->GetBuildGun()->GetCurrentBuildGunMode()) ||
         Player->IsDrivingVehicle() || !Player->GetHealthComponent() || Player->GetHealthComponent()->IsDead())
     { Error = TEXT("Open Edit mode to change groups."); return false; }
-    if (Revision != ExpectedRevision) { Error = TEXT("Groups changed. Review the selection and try again."); return false; }
+    // Explicit buildings are validated below against current server identities.
+    // Only selected containers depend on the client's snapshot of the hierarchy.
+    if (!Selection.Groups.IsEmpty() && Revision != ExpectedRevision)
+    { Error = TEXT("Groups changed. Review the selection and try again."); ForceNetUpdate(); return false; }
     constexpr int32 MaxSelection = 2048;
     if (Selection.Groups.Num() + Selection.Buildings.Num() > MaxSelection)
     { Error = TEXT("The selection exceeds the 2048-item limit."); return false; }
@@ -396,8 +464,7 @@ bool ABSGroupSubsystem::Execute(AFGCharacterPlayer* Player, EBSGroupOperation Op
     }
     if (!InReach) { Error = TEXT("Move within Build Gun range of the selection."); return false; }
     if (!FBSGroupTree::Apply(Groups, Operation, Selection, Result, Error)) return false;
-    ++Revision;
-    ForceNetUpdate();
+    PublishGroups();
     return true;
 }
 
@@ -414,7 +481,9 @@ void UBSGroupRemoteCallObject::Server_Apply_Implementation(EBSGroupOperation Ope
     FString Message;
     bool Success = System && System->Execute(GetOwnerPlayerCharacter(), Operation, Selection, ExpectedRevision, Result, Message);
     if (!System) Message = TEXT("Grouping is not ready yet.");
-    Client_Result(Success, Result, Message, System ? System->Revision : 0);
+    UE_LOG(LogBuildingSkills, Display, TEXT("Group operation: op=%d buildings=%d groups=%d expected=%d current=%d success=%d message=%s"),
+        int32(Operation), Selection.Buildings.Num(), Selection.Groups.Num(), ExpectedRevision, System ? System->Revision : -1, Success, *Message);
+    SendGroupResult(Success, Result, Message, System ? System->Revision : 0);
 }
 
 void UBSGroupRemoteCallObject::Client_Result_Implementation(bool Success, const FBSSelection& Selection, const FString& Message, int32 Revision)

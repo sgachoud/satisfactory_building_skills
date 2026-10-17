@@ -3,7 +3,8 @@ param(
     [ValidateSet('FactoryEditor','FactoryGameSteam')][string]$Target = 'FactoryEditor',
     [string]$SmlRoot = 'F:/dev/satisfactory_mods/SatisfactoryModLoader',
     [string]$EngineRoot = 'C:/Program Files/Unreal Engine - CSS',
-    [string]$CompilerRoot = 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.38.33130'
+    [string]$CompilerRoot = 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.38.33130',
+    [ValidateRange(1, 4)][int]$CompilerWorkers = 2
 )
 # Use the existing SDK binaries. Access-friend declarations do not change their
 # ABI. UBT prepares reflection and response files without executing or deleting
@@ -49,15 +50,14 @@ foreach ($entry in @(@('FactoryGame','Intermediate'), @('SML','Mods/SML/Intermed
     $linkText = $linkText.Replace($source, $localLib).Replace($source.Replace('\','/'),$localLib)
 }
 $pluginPrefix = [IO.Path]::GetFullPath($plugin).Replace('\','/').TrimEnd('/') + '/'
-$compiledCount = 0
-foreach ($match in [regex]::Matches($linkText, '(?m)^"([^"]+\.cpp\.obj)"')) {
-    $object = $match.Groups[1].Value
-    if (-not $object.Replace('\','/').StartsWith($pluginPrefix,[StringComparison]::OrdinalIgnoreCase)) { continue }
-    & $compiler "@$object.rsp"
-    if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $object" }
-    ++$compiledCount
-}
-if ($compiledCount -eq 0) { throw 'No plugin translation units found; refusing to link stale objects.' }
+# Each prepared response file owns distinct .obj/.dep outputs. Compile the
+# whole batch before reporting failures; never link a mixture of old/new objects.
+$objects = @([regex]::Matches($linkText, '(?m)^"([^"]+\.cpp\.obj)"') | ForEach-Object {
+    $path = $_.Groups[1].Value
+    if ($path.Replace('\','/').StartsWith($pluginPrefix,[StringComparison]::OrdinalIgnoreCase)) { $path }
+})
+if ($objects.Count -eq 0) { throw 'No plugin translation units found; refusing to link stale objects.' }
+& (Join-Path $PSScriptRoot 'CompileUnits.ps1') -Compiler $compiler -ResponseFiles @($objects | ForEach-Object { $_ + '.rsp' }) -WorkingDirectory (Get-Location).Path -OutputDirectory $saved -Workers $CompilerWorkers
 & $linker /LIB "@$intermediate/$binary-BuildingSkills$suffix.lib.rsp"
 if ($LASTEXITCODE -ne 0) { throw 'Plugin import library failed.' }
 $localLink = Join-Path $saved 'PluginLink.rsp'

@@ -94,6 +94,12 @@ Unreal cross-compilation toolchain. Alpakit writes archives under
 `BuildingSkills/BuildingSkills.zip` beneath `ArchivedPlugins`.
 
 Install also runs the SHA-256 check and writes `Saved/InstallationVerification.json`.
+Packaging first checks that the shared editor build receipt includes Building
+Skills. A receipt produced for a different isolated mod can disable it, causing
+the cooker to succeed with an empty asset container. In that case, prepare the
+editor target again before packaging. Installation verification also requires
+the cooked root-module and input assets, so matching hashes alone cannot accept
+an empty container.
 The runtime check requires Satisfactory to be closed. It exits automatically and
 writes `Saved/RuntimeTest.log`; `-Render` also retains `Saved/RuntimeTest.png`.
 It does not load an existing save and only installs its save-blocking hook when the
@@ -141,3 +147,10 @@ for the Transform feature.
 the existing Linux SDK binaries, then cooks and archives the Linux server plugin.
 Install its archive contents under the server's `FactoryGame/Mods/GameFeatures/BuildingSkills`
 directory, beside the matching SML installation. Use the same mod version on clients.
+
+The isolated Windows/editor and Linux helpers compile the current linker's C++
+units with two workers by default (`-CompilerWorkers 1` through `4`). All units
+finish before a compilation failure is reported, and linking is skipped if any
+failed. Linux ignores stale response files from previous unity layouts. Compiler
+logs are retained under `Saved/NativeBuild/<target>`. The shared SDK and engine
+are unchanged.

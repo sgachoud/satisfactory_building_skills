@@ -139,7 +139,16 @@ switch ($Action) {
         foreach ($asset in @('IA_Group', 'IA_Merge', 'IA_Ungroup', 'IA_Transform', 'MC_EditRoot', 'MC_EditOperations', 'MC_Transform', 'IA_MoveForward', 'IA_MoveBackward', 'IA_MoveLeft', 'IA_MoveRight', 'IA_MoveUp', 'IA_MoveDown', 'IA_Tiny', 'IA_Small', 'IA_Large', 'IA_ScrollUp', 'IA_ScrollDown')) {
             Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset")
         }
-        foreach ($asset in @('IA_Save','MC_Save')) { Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset") }
+        foreach ($asset in @('IA_Save', 'MC_Save', 'IA_Pivot', 'IA_AxisSpace', 'IA_Anchor', 'IA_Undo', 'IA_Redo', 'IA_ConnectedSettings', 'MC_Connected')) { Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset") }
+        # Alpakit can report success with an empty asset container if another
+        # project's editor build receipt disabled this game-feature plugin.
+        # Check before cooking/deployment; never silently ship only the DLL.
+        $editorReceiptPath = Join-Path $SmlRoot 'Binaries/Win64/FactoryEditor.target'
+        Require-Path $editorReceiptPath
+        $editorReceipt = Get-Content -LiteralPath $editorReceiptPath -Raw | ConvertFrom-Json
+        if ($editorReceipt.BuildPlugins -notcontains 'BuildingSkills') {
+            throw 'The editor build receipt disables Building Skills. Run Mod.ps1 BuildEditor before packaging so its content is mounted by the cooker.'
+        }
         if ($Action -eq 'PackageLinux' -and -not $SkipNativeBuild) {
             & (Join-Path $PSScriptRoot 'BuildLinux.ps1') -SmlRoot $SmlRoot -EngineRoot $EngineRoot
         } elseif ($Action -ne 'Release' -and -not $SkipNativeBuild) {

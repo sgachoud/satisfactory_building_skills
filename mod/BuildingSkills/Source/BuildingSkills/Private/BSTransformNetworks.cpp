@@ -1,4 +1,5 @@
 #include "BSGroups.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "Buildables/FGBuildableConveyorBelt.h"
 #include "Buildables/FGBuildableConveyorLift.h"
 #include "Buildables/FGBuildablePipeBase.h"
@@ -109,6 +110,14 @@ FBSNativeTransform FBSTransformNative::Capture(AFGBuildable* Actor)
 
 bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FString& Error)
 {
+    // Index this immutable input/topology once for the whole combined operation.
+    TMap<AActor*, int32> Indices;
+    for (int32 I = 0; I < Changes.Num(); ++I) if (Changes[I].Building.Actor) Indices.Add(Changes[I].Building.Actor, I);
+    auto FindChange = [&](AActor* Actor) -> FBSNativeTransform* { const auto* Index = Indices.Find(Actor); return Index ? &Changes[*Index] : nullptr; };
+    auto AddChange = [&](const FBSNativeTransform& C) { const int32 Index = Changes.Add(C); if (C.Building.Actor) Indices.Add(C.Building.Actor, Index); };
+    TMap<UFGConnectionComponent*, TArray<UFGConnectionComponent*>> Neighbours;
+    auto Linked = [&](UFGConnectionComponent* C) -> const TArray<UFGConnectionComponent*>&
+    { if (auto* Found = Neighbours.Find(C)) return *Found; return Neighbours.Add(C, Opposite(C)); };
     TSet<AActor*> ExplicitSelection;
     for(const auto& C:Changes) if(C.Building.Actor) ExplicitSelection.Add(C.Building.Actor);
     // Own child buildables travel with their parent, even when the gun exposes
@@ -128,11 +137,11 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
         if (auto* Platform = Cast<AFGBuildableTrainPlatform>(Actor)) Children.Add(Platform->GetTrackPosition().Track.Get());
         if (auto* Pipe = Cast<AFGBuildablePipeline>(Actor)) Children.Add(Pipe->GetFlowIndicator());
         for (auto* Child : Children)
-            if (IsValid(Child) && !Find(Changes, Child))
+            if (IsValid(Child) && !FindChange(Child))
             {
                 auto C = Capture(Child);
                 C.Target = C.Target.GetRelativeTransform(Parent.Building.Transform) * Parent.Target;
-                Changes.Add(C);
+                AddChange(C);
             }
     }
     const int32 MovingCount = Changes.Num();
@@ -141,24 +150,28 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
     // Expand one edge at the boundary, never the whole connected factory.
     for (int32 I = 0; I < MovingCount; ++I)
     {
+        if (Changes.Num() > 8192) { Error = TEXT("Too many connected buildings in this transform."); return false; }
         auto* Actor = Changes[I].Building.Actor.Get();
         if (!Actor) continue;
         TInlineComponentArray<UFGConnectionComponent*> Connections(Actor);
         for (auto* Connection : Connections)
         {
-            for (auto* Other : Opposite(Connection))
-                if (auto* Edge = Cast<AFGBuildable>(Other->GetOwner()); IsFlexible(Edge) && !Find(Changes, Edge)) Changes.Add(Capture(Edge));
+            for (auto* Other : Linked(Connection))
+                if (auto* Edge = Cast<AFGBuildable>(Other->GetOwner()); IsFlexible(Edge) && !FindChange(Edge)) AddChange(Capture(Edge));
             if (auto* Circuit = Cast<UFGCircuitConnectionComponent>(Connection))
             {
                 TArray<AFGBuildableWire*> Wires;
                 Circuit->GetWires(Wires);
-                for (auto* Wire : Wires) if (IsValid(Wire) && !Find(Changes, Wire)) Changes.Add(Capture(Wire));
+                for (auto* Wire : Wires) if (IsValid(Wire) && !FindChange(Wire)) AddChange(Capture(Wire));
             }
         }
     }
     // Resolve endpoint targets against the immutable rigid-motion plan. A
     // selected edge drives an unselected edge; a fixed machine anchors an end.
     const auto RigidPlan = Changes;
+    TMap<AActor*, const FBSNativeTransform*> RigidIndex;
+    for (const auto& C : RigidPlan) if (C.Building.Actor) RigidIndex.Add(C.Building.Actor, &C);
+    auto Rigid = [&](AActor* Actor) -> const FBSNativeTransform* { const auto* Found = RigidIndex.Find(Actor); return Found ? *Found : nullptr; };
     auto Endpoint = [&](UFGConnectionComponent* C, const FBSNativeTransform& Owner, FVector& Position, FVector& Normal)
     {
         Position = MovedPoint(Owner, C->GetComponentLocation());
@@ -166,7 +179,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
         TArray<UFGConnectionComponent*> Junction{C};
         TArray<int32> Depth{0};
         for(int32 I=0;I<Junction.Num() && I<64;++I)
-            for(auto* Other:Opposite(Junction[I]))
+            for(auto* Other:Linked(Junction[I]))
                 if(!Junction.Contains(Other)) { Junction.Add(Other); Depth.Add(Depth[I]+1); }
         int32 BestPriority=MAX_int32;
         uint32 BestId=MAX_uint32;
@@ -174,7 +187,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
         {
             auto* Other=Junction[I];
             auto* OtherOwner = Cast<AFGBuildable>(Other->GetOwner());
-            const auto* Target = RigidPlan.FindByPredicate([&](const FBSNativeTransform& X) { return X.Building.Actor == OtherOwner; });
+            const auto* Target = Rigid(OtherOwner);
             const bool Moves=Moving.Contains(OtherOwner) && Target;
             const int32 Priority=IsFlexible(OtherOwner) ? (Moves?2:3) : (Moves?1:0);
             // Every branch resolves the SAME junction anchor, including selected
@@ -213,10 +226,11 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
                 A.ArriveTangent*=.5; A.LeaveTangent*=.5; B.ArriveTangent*=.5; B.LeaveTangent*=.5;
                 C.Spline={A,Mid,B};
             }
+            const auto Fractions = SplineFractions(C.Spline, C.Target);
             for (int32 I = 0; I < C.Spline.Num(); ++I)
             {
                 auto& Point = C.Spline[I];
-                const double Alpha = double(I) / (C.Spline.Num() - 1);
+                const double Alpha = Fractions[I];
                 const FVector Correction = PinnedBody ? (I==0 ? Delta0 : I==C.Spline.Num()-1 ? Delta1 : FVector::ZeroVector) : FMath::Lerp(Delta0, Delta1, Alpha);
                 Point.Location += C.Target.InverseTransformVector(Correction);
             }
@@ -230,6 +244,26 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
                 P.LeaveTangent = C.Target.InverseTransformVector(Direction * L);
             };
             SetEnd(C.Spline[0], -N0); SetEnd(C.Spline.Last(), N1);
+            double TotalLength = 0;
+            bool Tight = false;
+            for (int32 Segment = 1; Segment < C.Spline.Num(); ++Segment)
+            {
+                const auto& A = C.Spline[Segment - 1]; const auto& B = C.Spline[Segment];
+                FVector Previous = C.Target.TransformPosition(A.Location), PreviousDirection = FVector::ZeroVector;
+                for (int32 Sample = 1; Sample <= 16; ++Sample)
+                {
+                    const FVector Point = C.Target.TransformPosition(FMath::CubicInterp(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, double(Sample) / 16));
+                    const FVector Delta = Point - Previous;
+                    TotalLength += Delta.Size();
+                    const FVector Direction = Delta.GetSafeNormal();
+                    if (!PreviousDirection.IsNearlyZero() && FVector::DotProduct(PreviousDirection, Direction) < .5) Tight = true;
+                    if (Actor->IsA<AFGBuildableRailroadTrack>() && FMath::Abs(Direction.Z) > .8) Tight = true;
+                    Previous = Point; PreviousDirection = Direction;
+                }
+            }
+            if (!FMath::IsFinite(TotalLength) || TotalLength < 1)
+            { Error = TEXT("A connection would collapse below 1 cm. No buildings changed."); return false; }
+            if (Tight) Error = TEXT("Transform applied. Inspect the tight bend or steep slope on a stretched connection.");
             for (const auto& P : C.Spline)
                 if (P.Location.ContainsNaN() || P.ArriveTangent.ContainsNaN() || P.LeaveTangent.ContainsNaN() ||
                     C.Target.TransformPosition(P.Location).GetAbsMax() > 2000000)
@@ -259,7 +293,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
                 auto* Connection = Wire->GetConnection(I);
                 *Ends[I] = Connection ? Connection->GetComponentLocation() : MovedPoint(C, Wire->GetConnectionLocation(I));
                 if (Connection)
-                    if (const auto* Target = RigidPlan.FindByPredicate([&](const FBSNativeTransform& X) { return X.Building.Actor == Connection->GetOwner(); }))
+                    if (const auto* Target = Rigid(Connection->GetOwner()))
                         *Ends[I] = MovedPoint(*Target, *Ends[I]);
             }
             for(const auto& Instance:Wire->GetWireInstances())
@@ -267,7 +301,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
                 {
                     FVector Position=Instance.Locations[I];
                     if(auto* Connection=Wire->GetConnection(I))
-                        if(const auto* Target=RigidPlan.FindByPredicate([&](const FBSNativeTransform& X){return X.Building.Actor==Connection->GetOwner();}))
+                        if(const auto* Target=Rigid(Connection->GetOwner()))
                             Position=MovedPoint(*Target,Position);
                     C.WirePoints.Add(Position);
                 }
@@ -298,7 +332,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
             const FTransform NewFrame(FRotationMatrix::MakeFromXZ(Parent.Target.TransformVector(Direction),Parent.Target.GetUnitAxis(EAxis::Z)).ToQuat(),Parent.Target.TransformPosition(Position),Parent.Target.GetScale3D());
             auto C=Capture(Building);
             C.Target=C.Target.GetRelativeTransform(OldFrame)*NewFrame;
-            if(auto* Existing=Find(Changes,Building)) *Existing=C; else Changes.Add(C);
+            if(auto* Existing=Find(Changes,Building)) *Existing=C; else AddChange(C);
         }
     }
     if (Changes.Num()>8192) { Error=TEXT("This transform would affect more than 8192 buildings and connections."); return false; }
@@ -376,6 +410,10 @@ void FBSTransformNative::RebuildSpline(AFGBuildable* Actor)
     {
         const bool WasRegistered = Collision->IsRegistered();
         Collision->DestroyPhysics();
+        // OnRegister/CreatePhysics appends boxes to the retained body setup.
+        // Remove the old shape definitions after physics teardown so repeated
+        // transforms cannot keep obsolete collision or accumulate duplicate boxes.
+        if (Collision->mBodySetup) Collision->mBodySetup->AggGeom.BoxElems.Reset();
         Collision->mCachedCollisionInfo.Reset();
         TArray<FCachedCollisionBoxInfo> Boxes;
         UFGSplineMeshGenerationLibrary::BuildSplineCollisionInfoBoxesWithVariableSteps(Spline, Extent, Spacing, Boxes, Offset);
@@ -506,4 +544,25 @@ void FBSTransformNative::RefreshNetworks(UWorld* World, const TArray<FBSNativeTr
         }
         Actor->FlushNetDormancy(); Actor->ForceNetUpdate();
     }
+}
+
+TArray<double> FBSTransformNative::SplineFractions(const TArray<FSplinePointData>& Points, const FTransform& Transform)
+{
+    TArray<double> Distances;
+    if (Points.IsEmpty()) return Distances;
+    Distances.Add(0);
+    double Length = 0;
+    for (int32 I = 1; I < Points.Num(); ++I)
+    {
+        const auto& A = Points[I - 1]; const auto& B = Points[I];
+        FVector Previous = Transform.TransformPosition(A.Location);
+        for (int32 Sample = 1; Sample <= 32; ++Sample)
+        {
+            const FVector Point = Transform.TransformPosition(FMath::CubicInterp(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, double(Sample) / 32));
+            Length += FVector::Distance(Previous, Point); Previous = Point;
+        }
+        Distances.Add(Length);
+    }
+    for (int32 I = 0; I < Distances.Num(); ++I) Distances[I] = Length > .001 ? Distances[I] / Length : double(I) / FMath::Max(1, Distances.Num() - 1);
+    return Distances;
 }

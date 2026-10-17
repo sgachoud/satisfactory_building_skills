@@ -32,6 +32,13 @@ parent = unreal.load_asset(PARENT_PATH)
 if not isinstance(alt, unreal.InputAction) or not isinstance(parent, unreal.FGInputMappingContext):
     raise RuntimeError("The installed game's Alt chord or player-actions context is missing")
 
+def modifier_trigger(modifier, owner):
+    trigger = unreal.new_object(unreal.InputTriggerChordAction)
+    trigger.set_editor_property("chord_action", modifier)
+    if not trigger.rename(outer=owner):
+        raise RuntimeError("Could not attach modifier trigger")
+    return trigger
+
 action = get_or_create(ACTION_PATH, unreal.InputAction)
 action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
 action.set_editor_property("action_description", "Open or close the Build Gun's Edit mode.")
@@ -87,7 +94,7 @@ operations.set_editor_property("m_parent_context", edit_root)
 operations.set_editor_property("m_display_name", "Building Skills - Edit")
 operations.set_editor_property("m_menu_priority", 201.0)
 operation_mappings = []
-for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U"), ("Transform", "T")):
+for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U"), ("Transform", "T"), ("Undo", "Z"), ("Redo", "Y"), ("BlueprintAnchor", "A")):
     operation = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
     operation.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
     operation.set_editor_property("consume_input", True)
@@ -104,6 +111,9 @@ for name, default_key in (("Group", "G"), ("Merge", "M"), ("Ungroup", "U"), ("Tr
     operation_key = unreal.Key()
     operation_key.set_editor_property("key_name", default_key)
     operation_mapping = unreal.EnhancedActionKeyMapping(action=operation, key=operation_key)
+    if name == "BlueprintAnchor":
+        key_settings.set_editor_property("display_name", "Set / Clear Blueprint Anchor")
+        operation_mapping.set_editor_property("triggers", [modifier_trigger(alt, operations)])
     # Ungroup is shown conditionally by the Edit HUD only for one selected group.
     operation_mapping.set_editor_property("display_button_hint", name != "Ungroup")
     operation_mappings.append(operation_mapping)
@@ -149,7 +159,7 @@ for (path, property_name, native_class), blueprint in zip(registrations, bluepri
         raise RuntimeError(f"Failed to register grouping content in {path}")
 unreal.log("BuildingSkills grouping assets and registrations saved.")
 
-# Save is scoped to exactly one selected group, so S remains movement otherwise.
+# Save and Copy are scoped to a nonempty Edit selection.
 save_action = get_or_create(f"{ROOT}/IA_Save", unreal.InputAction)
 save_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
 save_action.set_editor_property("consume_input", True)
@@ -157,7 +167,7 @@ save_action.set_editor_property("trigger_when_paused", False)
 save_action.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=save_action)])
 save_settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=save_action)
 save_settings.set_editor_property("name", "BuildingSkills.Save")
-save_settings.set_editor_property("display_name", "Save Group as Blueprint")
+save_settings.set_editor_property("display_name", "Save Selection as Blueprint")
 save_settings.set_editor_property("display_category", "Building Skills")
 save_settings.set_editor_property("is_player_mappable", True)
 save_action.set_editor_property("player_mappable_key_settings", save_settings)
@@ -168,9 +178,26 @@ save_context.set_editor_property("m_menu_priority", 203.0)
 save_key = unreal.Key()
 save_key.set_editor_property("key_name", "S")
 save_mapping = unreal.EnhancedActionKeyMapping(action=save_action, key=save_key)
+save_mapping.set_editor_property("triggers", [modifier_trigger(alt, save_context)])
 save_mapping.set_editor_property("display_button_hint", False)
-save_context.set_editor_property("mappings", [save_mapping])
-for asset in (save_action, save_context):
+copy_action = get_or_create(f"{ROOT}/IA_Copy", unreal.InputAction)
+copy_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+copy_action.set_editor_property("consume_input", True)
+copy_action.set_editor_property("trigger_when_paused", False)
+copy_action.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=copy_action)])
+copy_settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=copy_action)
+copy_settings.set_editor_property("name", "BuildingSkills.Copy")
+copy_settings.set_editor_property("display_name", "Copy Selection")
+copy_settings.set_editor_property("display_category", "Building Skills")
+copy_settings.set_editor_property("is_player_mappable", True)
+copy_action.set_editor_property("player_mappable_key_settings", copy_settings)
+copy_key = unreal.Key()
+copy_key.set_editor_property("key_name", "C")
+copy_mapping = unreal.EnhancedActionKeyMapping(action=copy_action, key=copy_key)
+copy_mapping.set_editor_property("triggers", [modifier_trigger(alt, save_context)])
+copy_mapping.set_editor_property("display_button_hint", False)
+save_context.set_editor_property("mappings", [save_mapping, copy_mapping])
+for asset in (save_action, copy_action, save_context):
     if not unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False):
         raise RuntimeError(f"Failed to save {asset.get_path_name()}")
 
@@ -187,6 +214,9 @@ for name, label, default_key in (
     ("MoveUp", "Move Up", "PageUp"), ("MoveDown", "Move Down", "PageDown"),
     ("Tiny", "Tiny Transform Step", "LeftControl"), ("Small", "Small Transform Step", "LeftAlt"),
     ("Large", "Large Transform Step", "LeftShift"),
+    ("Pivot", "Cycle Transform Pivot", "P"), ("AxisSpace", "World / Local / Anchor Axes", "L"),
+    ("Anchor", "Next Reference Building", "B"), ("Undo", "Undo Transform", "Z"), ("Redo", "Redo Transform", "Y"),
+    ("TransformSettings", "Temporary Transform Step Settings", "K"),
 ):
     action = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
     action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
@@ -210,3 +240,167 @@ for name, label, default_key in (
 transform.set_editor_property("mappings", transform_mappings)
 unreal.EditorAssetLibrary.save_loaded_asset(transform, only_if_is_dirty=False)
 unreal.log("BuildingSkills Transform input and configuration registered.")
+
+# Shared Connected menu; activated only in Connected selection/paint modes.
+connected = get_or_create(f"{ROOT}/MC_Connected", unreal.FGChildInputMappingContext)
+connected.set_editor_property("m_parent_context", edit_root)
+connected.set_editor_property("m_display_name", "Building Skills - Connected Components")
+connected.set_editor_property("m_menu_priority", 204.0)
+connected_action = get_or_create(f"{ROOT}/IA_ConnectedSettings", unreal.InputAction)
+connected_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+connected_action.set_editor_property("consume_input", True)
+connected_action.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=connected_action)])
+settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=connected_action)
+settings.set_editor_property("name", "BuildingSkills.ConnectedSettings")
+settings.set_editor_property("display_name", "Connected Components Settings")
+settings.set_editor_property("display_category", "Building Skills")
+settings.set_editor_property("is_player_mappable", True)
+connected_action.set_editor_property("player_mappable_key_settings", settings)
+key = unreal.Key()
+key.set_editor_property("key_name", "K")
+mapping = unreal.EnhancedActionKeyMapping(action=connected_action, key=key)
+mapping.set_editor_property("display_button_hint", False)
+connected.set_editor_property("mappings", [mapping])
+for asset in (connected_action, connected):
+    unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False)
+
+# These contexts are attached only while their corresponding gun tool is active.
+for context_name, label, commands in (
+    ("Volume", "Volume selection", (("VolumeShape", "V", "Change volume shape", True),
+        ("VolumeSettings", "K", "Volume settings", False), ("VolumeOpposite", "LeftAlt", "Opposite volume face", False),
+        ("VolumeRotate", "LeftShift", "Rotate volume", False),
+        ("VolumeScrollUp", "MouseScrollUp", "Increase volume", False),
+        ("VolumeScrollDown", "MouseScrollDown", "Decrease volume", False))),
+    ("Deduplication", "Blueprint deduplication", (("Deduplication", "D", "Toggle deduplication", True),)),
+    ("StickToggle", "Spline Stick", (("StickToggle", "S", "Toggle stick", True),)),
+    ("Stick", "Stick controls", (("StickSettings", "K", "Stick settings", False),
+        ("StickTilt", "LeftAlt", "Vertical tilt (hold + scroll)", False),
+        ("StickHorizontalTilt", "LeftControl", "Horizontal tilt (hold + scroll)", False),
+        ("StickScrollUp", "MouseScrollUp", "Increase stick distance", False),
+        ("StickScrollDown", "MouseScrollDown", "Decrease stick distance", False))),
+):
+    ctx = get_or_create(f"{ROOT}/MC_{context_name}", unreal.FGChildInputMappingContext)
+    ctx.set_editor_property("m_parent_context", edit_root)
+    ctx.set_editor_property("m_display_name", f"Building Skills - {label}")
+    ctx.set_editor_property("m_menu_priority", 205.0)
+    mappings = []
+    for name, key_name, title, use_alt in commands:
+        act = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
+        act.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+        act.set_editor_property("consume_input", name not in ("VolumeRotate", "VolumeOpposite", "StickTilt", "StickHorizontalTilt"))
+        act.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=act)])
+        settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=act)
+        for prop, value in (("name", f"BuildingSkills.{name}"), ("display_name", title), ("display_category", "Building Skills"), ("is_player_mappable", True)):
+            settings.set_editor_property(prop, value)
+        act.set_editor_property("player_mappable_key_settings", settings)
+        key = unreal.Key(); key.set_editor_property("key_name", key_name)
+        m = unreal.EnhancedActionKeyMapping(action=act, key=key)
+        if use_alt: m.set_editor_property("triggers", [modifier_trigger(alt, ctx)])
+        # Blueprint placement keeps the native Build Gun hint list. Its scoped
+        # deduplication action must advertise itself to that list.
+        m.set_editor_property("display_button_hint", context_name in ("Deduplication", "StickToggle", "Stick"))
+        mappings.append(m)
+        unreal.EditorAssetLibrary.save_loaded_asset(act, only_if_is_dirty=False)
+    if context_name == "Volume":
+        # Dismantle Volume also exposes the existing anchor action and rebinding.
+        anchor = unreal.load_asset(f"{ROOT}/IA_BlueprintAnchor")
+        key = unreal.Key(); key.set_editor_property("key_name", "A")
+        mappings.append(unreal.EnhancedActionKeyMapping(action=anchor, key=key, triggers=[modifier_trigger(alt, ctx)]))
+    ctx.set_editor_property("mappings", mappings)
+    unreal.EditorAssetLibrary.save_loaded_asset(ctx, only_if_is_dirty=False)
+
+# Local UI preference, using the same native color selector and persistence as
+# game color options. It is not a session setting or an RGBA mod-config form.
+color_path = "/BuildingSkills/Settings/US_VolumeColor"
+color = get_or_create(color_path, unreal.FGUserSetting)
+color.set_editor_property("str_id", "BuildingSkills.VolumeColor")
+color.set_editor_property("display_name", "Building Skills volume boundary")
+color.set_editor_property("tool_tip", "Outline color for sphere and cube selection volumes.")
+color.set_editor_property("manager_type_availability", unreal.FGGameUserSettings.static_class())
+color.set_editor_property("apply_type", unreal.load_class(None, "/Script/FactoryGame.FGUserSettingApplyType"))
+color.set_editor_property("show_in_builds", unreal.IncludeInBuilds.IIB_PUBLIC_BUILDS)
+selector = unreal.new_object(unreal.load_class(None, "/Script/FactoryGame.FGUserSetting_LinearColorPicker"), outer=color)
+selector.set_editor_property("m_default_value", unreal.LinearColor(.6, .12, 1, 1))
+color.set_editor_property("value_selector", selector)
+location = unreal.SettingsWidgetLocationDescriptor()
+if not location.import_text('(CategoryClass="/Game/FactoryGame/Settings/OptionsMenu/UserInterface/USC_UI.USC_UI_C",SubCategoryClass="/Game/FactoryGame/Settings/OptionsMenu/UserInterface/USubC_UI_Holograms.USubC_UI_Holograms_C",MenuPriority=20)'):
+    raise RuntimeError("Could not configure native color option location")
+color.set_editor_property("widgets_to_create", [location])
+unreal.EditorAssetLibrary.save_loaded_asset(color, only_if_is_dirty=False)
+scan_types = feature.get_editor_property("primary_asset_types_to_scan")
+if not any(str(entry.get_editor_property("primary_asset_type")) == "FGUserSetting" for entry in scan_types):
+    entry = unreal.PrimaryAssetTypeInfo()
+    if not entry.import_text('(PrimaryAssetType="FGUserSetting",AssetBaseClass="/Script/FactoryGame.FGUserSetting",bHasBlueprintClasses=False,bIsEditorOnly=False,Directories=((Path="/BuildingSkills/Settings")),Rules=(Priority=-1,ChunkId=-1,bApplyRecursively=True,CookRule=AlwaysCook))'):
+        raise RuntimeError("Could not configure volume color setting scan")
+    scan_types.append(entry)
+    feature.set_editor_property("primary_asset_types_to_scan", scan_types)
+    unreal.EditorAssetLibrary.save_loaded_asset(feature, only_if_is_dirty=False)
+
+material_path = "/BuildingSkills/Materials/M_Volume"
+material = unreal.load_asset(material_path) if unreal.EditorAssetLibrary.does_asset_exist(material_path) else tools.create_asset("M_Volume", "/BuildingSkills/Materials", unreal.Material, unreal.MaterialFactoryNew())
+unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
+material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+material.set_editor_property("two_sided", True)
+material.set_editor_property("used_with_instanced_static_meshes", True)
+material.set_editor_property("disable_depth_test", False)
+color = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionVectorParameter)
+color.set_editor_property("parameter_name", "Color")
+color.set_editor_property("default_value", unreal.LinearColor(.6, .12, 1, 1))
+opacity = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionScalarParameter)
+opacity.set_editor_property("parameter_name", "Opacity"); opacity.set_editor_property("default_value", .18)
+unreal.MaterialEditingLibrary.connect_material_property(color, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+unreal.MaterialEditingLibrary.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY)
+unreal.MaterialEditingLibrary.recompile_material(material)
+unreal.EditorAssetLibrary.save_loaded_asset(material, only_if_is_dirty=False)
+
+# Build / Dismantle undo is scoped at runtime and shares one rebindable Ctrl+Z.
+history = get_or_create(f"{ROOT}/MC_ActionHistory", unreal.FGChildInputMappingContext)
+history.set_editor_property("m_parent_context", edit_root)
+history.set_editor_property("m_display_name", "Building Skills - Action Undo")
+history.set_editor_property("m_menu_priority", 206.0)
+undo = get_or_create(f"{ROOT}/IA_ActionUndo", unreal.InputAction)
+undo.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+undo.set_editor_property("consume_input", True)
+undo.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=undo)])
+settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=undo)
+for prop, value in (("name", "BuildingSkills.ActionUndo"), ("display_name", "Undo Construction / Deletion"), ("display_category", "Building Skills"), ("is_player_mappable", True)):
+    settings.set_editor_property(prop, value)
+undo.set_editor_property("player_mappable_key_settings", settings)
+ctrl = unreal.load_asset("/Game/FactoryGame/Inputs/IA_ChordCtrl")
+key = unreal.Key(); key.set_editor_property("key_name", "Z")
+mapping = unreal.EnhancedActionKeyMapping(action=undo, key=key, triggers=[modifier_trigger(ctrl, history)])
+mapping.set_editor_property("display_button_hint", True)
+history.set_editor_property("mappings", [mapping])
+unreal.EditorAssetLibrary.save_loaded_asset(undo, only_if_is_dirty=False)
+unreal.EditorAssetLibrary.save_loaded_asset(history, only_if_is_dirty=False)
+# Transformers are scoped to Edit; adding one additionally requires a live anchor.
+for action_name, context_name, label, key_name, chord in (
+    ("TransformerSettings", "Transformers", "Edit Settings / Transformers", "K", None),
+    ("AddTransformer", "AddTransformer", "Add Transformer at Anchor", "X", alt),
+):
+    ia = get_or_create(f"{ROOT}/IA_{action_name}", unreal.InputAction)
+    ia.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+    ia.set_editor_property("consume_input", True)
+    ia.set_editor_property("trigger_when_paused", False)
+    ia.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=ia)])
+    keys = unreal.new_object(unreal.PlayerMappableKeySettings, outer=ia)
+    keys.set_editor_property("name", f"BuildingSkills.{action_name}")
+    keys.set_editor_property("display_name", label)
+    keys.set_editor_property("display_category", "Building Skills")
+    keys.set_editor_property("is_player_mappable", True)
+    ia.set_editor_property("player_mappable_key_settings", keys)
+    mc = get_or_create(f"{ROOT}/MC_{context_name}", unreal.FGChildInputMappingContext)
+    mc.set_editor_property("m_parent_context", edit_root)
+    mc.set_editor_property("m_display_name", "Building Skills - Transformers")
+    mc.set_editor_property("m_menu_priority", 207.0)
+    key = unreal.Key(); key.set_editor_property("key_name", key_name)
+    mapping = unreal.EnhancedActionKeyMapping(action=ia, key=key)
+    if chord:
+        mapping.set_editor_property("triggers", [modifier_trigger(chord, mc)])
+    mapping.set_editor_property("display_button_hint", False)
+    mc.set_editor_property("mappings", [mapping])
+    for asset in (ia, mc):
+        if not unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False):
+            raise RuntimeError(f"Could not save {asset.get_path_name()}")
+unreal.log("BuildingSkills Transformer input assets saved.")

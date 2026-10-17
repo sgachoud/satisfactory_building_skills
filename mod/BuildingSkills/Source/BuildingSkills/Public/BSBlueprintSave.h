@@ -20,10 +20,14 @@ public:
     virtual void GetChildDismantleActors_Implementation(TArray<AActor*>& Out) const override {}
     virtual void RegisterInteractingPlayer_Implementation(AFGCharacterPlayer* Player) override {}
     bool Prepare(FString& Error);
+    bool RequireReach = true; // Server-created construction copies may be distant.
     void ShowSummaryOnly() { mBuildables.Reset(); mBuildables.Add(this); }
-    FGuid Group;
+    UPROPERTY(Transient) FBSSelection SourceSelection;
+    UPROPERTY(Transient) FBSBuildingRef SourceAnchor;
+    FTransform AnchorTransform;
+    const TArray<AFGBuildable*>& GetSelectionBuildables() const { return mBuildables; }
+    FIntVector GetSelectionDimensions() const { return mDimensions; }
     UPROPERTY(Replicated) FGuid RequestId;
-    int32 GroupRevision = INDEX_NONE;
     bool bOpened = false;
     FTransform BlueprintOrigin;
     UPROPERTY(Transient) TArray<FBSBuildingRef> Members;
