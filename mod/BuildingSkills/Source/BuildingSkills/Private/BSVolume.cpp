@@ -24,7 +24,10 @@ FBSVolumeSettings FBSVolumeSettings::Get(UWorld* World)
     if (World && World->GetGameInstance())
         if (auto* Config = World->GetGameInstance()->GetSubsystem<UConfigManager>())
             Config->FillConfigurationStruct(FConfigId{TEXT("BuildingSkills"), TEXT("")}, FDynamicStructInfo{StaticStruct(), &S});
-    return S.Valid() ? S : FBSVolumeSettings{};
+    const FBSVolumeSettings Defaults;
+    if (!FMath::IsFinite(S.VolumeStep) || S.VolumeStep<.01f || S.VolumeStep>1000) S.VolumeStep=Defaults.VolumeStep;
+    if (!FMath::IsFinite(S.VolumeRotation) || S.VolumeRotation<.01f || S.VolumeRotation>180) S.VolumeRotation=Defaults.VolumeRotation;
+    return S;
 }
 bool FBSVolumeSettings::Valid() const
 {
@@ -110,7 +113,7 @@ void UBSEditModeComponent::TickVolume()
     if (InputSubsystem.IsValid())
     {
         if (Active && !VolumeContext)
-            if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Volume.MC_Volume")))
+            if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Volume.MC_Volume")))
             { VolumeContext = DuplicateObject<UInputMappingContext>(Source, this); InputSubsystem->AddMappingContext(VolumeContext, 1002); }
         if (!Active && VolumeContext) { InputSubsystem->RemoveMappingContext(VolumeContext); VolumeContext = nullptr; }
     }

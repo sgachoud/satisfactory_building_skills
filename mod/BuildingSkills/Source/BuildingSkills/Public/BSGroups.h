@@ -7,6 +7,7 @@
 #include "BSTransform.h"
 #include "BSConnectedSettings.h"
 #include "BSTransformers.h"
+#include "BSPlan.h"
 #include "Components/SplineComponent.h"
 #include "BSGroups.generated.h"
 
@@ -221,6 +222,9 @@ public:
     UPROPERTY(Transient) TArray<FBSNativeTransform> TransformSnapshot;
     UPROPERTY(Transient) TArray<FBSNativeTransform> PendingTransforms;
     UPROPERTY(SaveGame) TArray<FBSGroup> Groups;
+    // Never replicated as a public property: owner-filtered RPC snapshots only.
+    UPROPERTY(SaveGame) TArray<FBSRailPlan> RailPlans;
+    UPROPERTY(Transient) TMap<FGuid,FBSPlanHistory> PlanHistories;
     UPROPERTY(SaveGame) int32 SchemaVersion = 1;
     // Revision describes the locally committed tree, never an unfinished transfer.
     UPROPERTY() int32 Revision = 0;
@@ -239,6 +243,18 @@ class BUILDINGSKILLS_API UBSGroupRemoteCallObject : public UFGRemoteCallObject
 {
     GENERATED_BODY()
 public:
+    UFUNCTION(Server, Reliable) void Server_PlanCommand(const FBSPlanCommand& Command);
+    UFUNCTION(Server, Reliable) void Server_PlanSnapshot();
+    UFUNCTION(Server, Reliable) void Server_PlanNext(FGuid Transfer, int32 Sequence);
+    UFUNCTION(Client, Reliable) void Client_PlanChunk(const FBSPlanChunk& Chunk);
+    UFUNCTION(Client, Reliable) void Client_PlanResult(FGuid Plan, const FString& Message);
+    void SendPlanChunk();
+    UPROPERTY(Transient) TArray<FBSRailPlan> OutgoingPlans;
+    UPROPERTY(Transient) TArray<FBSRailPlan> IncomingPlans;
+    FGuid PlanTransfer, ReceivingPlanTransfer;
+    int32 PlanSequence=0, PlanIndex=0, PlanNodeIndex=0, PlanEdgeIndex=0, ReceivingPlanSequence=0;
+    double PlanTransferDeadline=0, LastPlanPoll=-100, LastPlanCommand=-100;
+    uint32 DeliveredPlanHash=0, OutgoingPlanHash=0;
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out) const override;
     UPROPERTY(Replicated) bool ReplicationAnchor = true;
     void RequestSelection(uint8 Action, const FBSSelection& Selection, FGuid Request, int32 Revision, const FBSBuildingRef& Anchor = {});
@@ -281,7 +297,10 @@ public:
     UFUNCTION(Client, Reliable) void Client_Transformers(const TArray<FBSTransformer>& List, int32 NewRevision, const FString& Message, bool BuildAsBlueprint);
     UPROPERTY(Transient) TArray<TObjectPtr<class UBSActionRecord>> BuildHistory;
     UPROPERTY(Transient) TArray<TObjectPtr<class UBSActionRecord>> DeleteHistory;
+    UPROPERTY(Transient) TArray<TObjectPtr<class UBSActionRecord>> BuildRedoHistory;
+    UPROPERTY(Transient) TArray<TObjectPtr<class UBSActionRecord>> DeleteRedoHistory;
     UFUNCTION(Server, Reliable) void Server_UndoGunAction(bool Deletion);
+    UFUNCTION(Server, Reliable) void Server_RedoGunAction(bool Deletion);
     double LastActionUndo = -100;
     UPROPERTY(Transient) TArray<TObjectPtr<class UBSClipboard>> Clipboards;
     UFUNCTION(Server, Reliable) void Server_CopySelection(const FBSSelection& Selection, FGuid RequestId, const FBSBuildingRef& Anchor);

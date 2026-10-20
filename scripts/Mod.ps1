@@ -140,6 +140,7 @@ switch ($Action) {
             Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset")
         }
         foreach ($asset in @('IA_Save', 'MC_Save', 'IA_Pivot', 'IA_AxisSpace', 'IA_Anchor', 'IA_Undo', 'IA_Redo', 'IA_ConnectedSettings', 'MC_Connected')) { Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset") }
+        foreach ($asset in @('IA_TogglePlan', 'IA_PlanSettings', 'IA_PlanScrollUp', 'IA_PlanScrollDown', 'IA_PlanDelete', 'IA_PlanUndo', 'IA_PlanRedo', 'MC_Plan')) { Require-Path (Join-Path $pluginRoot "Content\Inputs\$asset.uasset") }
         # Alpakit can report success with an empty asset container if another
         # project's editor build receipt disabled this game-feature plugin.
         # Check before cooking/deployment; never silently ship only the DLL.

@@ -22,6 +22,9 @@ bool FBSTransformMath::MatchesInitialReplication(const FTransform& Authority, co
         FMath::RadiansToDegrees(QuantizedRotation.Quaternion().AngularDistance(Observed.GetRotation())) <= .002;
 }
 #include "Configuration/ConfigManager.h"
+#include "BSDefaultsWidget.h"
+#include "Configuration/Properties/ConfigPropertyBool.h"
+#include "Configuration/Properties/ConfigPropertyString.h"
 #include "Configuration/Properties/ConfigPropertyFloat.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -31,7 +34,7 @@ UBSTransformConfiguration::UBSTransformConfiguration()
     ConfigId = FConfigId{TEXT("BuildingSkills"), TEXT("")};
     DisplayName = FText::FromString(TEXT("Building Skills"));
     Description = FText::FromString(TEXT("Held step modifiers use the key bindings in Options > Keybindings > Building Skills. Movement is in centimetres, rotation in degrees, and scale is a multiplier. Scroll down uses the inverse multiplier."));
-    RootSection = CreateDefaultSubobject<UConfigPropertySection>(TEXT("TransformSettings"));
+    RootSection = CreateDefaultSubobject<UBSDefaultsSection>(TEXT("TransformSettings"));
     auto Add = [&](const TCHAR* Name, const TCHAR* Label, float Default)
     {
         auto* Property = CreateDefaultSubobject<UConfigPropertyFloat>(FName(Name));
@@ -60,6 +63,21 @@ UBSTransformConfiguration::UBSTransformConfiguration()
     Add(TEXT("StickTiltStep"), TEXT("Stick endpoint tilt step (degrees)"), 15);
     Add(TEXT("StickSlope"), TEXT("Stick upward slope (degrees)"), 0);
     Add(TEXT("StickRadius"), TEXT("Stick horizontal radius (meters; negative left, positive right, zero straight)"), 0);
+    Add(TEXT("ConnectedGap"),TEXT("Connected gap (m)"),0);
+    Add(TEXT("ConnectedLimit"),TEXT("Connected object limit"),64);
+    Add(TEXT("ConnectedScope"),TEXT("Connected matching scope"),3);
+    Add(TEXT("PlanSegmentLength"),TEXT("Rail segment length (m)"),80);
+    Add(TEXT("PlanRemainder"),TEXT("Rail remainder policy"),1);
+    Add(TEXT("PlanSignalEvery"),TEXT("Block signal every N segments"),1);
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("ConnectedIgnoreSwatch")); V->DisplayName=FText::FromString(TEXT("Connected: ignore swatch")); V->DefaultValue=V->Value=false; RootSection->SectionProperties.Add(TEXT("ConnectedIgnoreSwatch"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("ConnectedIgnoreMaterial")); V->DisplayName=FText::FromString(TEXT("Connected: ignore material")); V->DefaultValue=V->Value=false; RootSection->SectionProperties.Add(TEXT("ConnectedIgnoreMaterial"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("VerticalConstraint")); V->DisplayName=FText::FromString(TEXT("Stick vertical constraint")); V->DefaultValue=V->Value=true; RootSection->SectionProperties.Add(TEXT("VerticalConstraint"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("HorizontalConstraint")); V->DisplayName=FText::FromString(TEXT("Stick horizontal constraint")); V->DefaultValue=V->Value=true; RootSection->SectionProperties.Add(TEXT("HorizontalConstraint"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("PlanPlaceBlockSignal")); V->DisplayName=FText::FromString(TEXT("Place block signals")); V->DefaultValue=V->Value=false; RootSection->SectionProperties.Add(TEXT("PlanPlaceBlockSignal"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyBool>(TEXT("PlanLeftSideSignal")); V->DisplayName=FText::FromString(TEXT("Left-side block signals")); V->DefaultValue=V->Value=false; RootSection->SectionProperties.Add(TEXT("PlanLeftSideSignal"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyString>(TEXT("ConnectedWhitelist")); V->DisplayName=FText::FromString(TEXT("Connected name whitelist regex")); RootSection->SectionProperties.Add(TEXT("ConnectedWhitelist"),V); }
+    { auto* V=CreateDefaultSubobject<UConfigPropertyString>(TEXT("ConnectedBlacklist")); V->DisplayName=FText::FromString(TEXT("Connected name blacklist regex")); RootSection->SectionProperties.Add(TEXT("ConnectedBlacklist"),V); }
+
 }
 
 FBSTransformSettings FBSTransformSettings::Get(UWorld* World)

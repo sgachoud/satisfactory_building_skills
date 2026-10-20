@@ -25,6 +25,19 @@ try {
         'MC_BuildingSkills.uasset', 'MC_EditOperations.uasset', 'IA_ToggleEditMode.uasset')) {
         if (-not $tocText.Contains($name)) { throw "The package omitted required cooked content: $name" }
     }
+    $descriptorReader = [IO.StreamReader]::new($archive.GetEntry('BuildingSkills.uplugin').Open())
+    try { $packageVersion = [version](($descriptorReader.ReadToEnd() | ConvertFrom-Json).VersionName) }
+    finally { $descriptorReader.Dispose() }
+    if ($packageVersion -ge [version]'0.10.0') {
+        foreach ($name in @('IA_TogglePlan.uasset', 'MC_Plan.uasset', 'IA_PlanSettings.uasset', 'IA_PlanScrollUp.uasset', 'IA_PlanScrollDown.uasset')) {
+            if (-not $tocText.Contains($name)) { throw "The package omitted required Plan content: $name" }
+        }
+    }
+    if ($packageVersion -ge [version]'0.10.1') {
+        foreach ($name in @('IA_PlanDelete.uasset', 'IA_PlanUndo.uasset', 'IA_PlanRedo.uasset')) {
+            if (-not $tocText.Contains($name)) { throw "The package omitted required Plan history content: $name" }
+        }
+    }
     foreach ($entry in $archive.Entries) {
         if (-not $entry.Name) { continue }
         $target = [IO.Path]::GetFullPath((Join-Path $installedRoot $entry.FullName))

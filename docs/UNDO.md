@@ -1,16 +1,18 @@
 # Build and Dismantle undo
 
-Ctrl+Z is the default rebindable **Undo Construction / Deletion** action in the
-Building Skills keybindings. Its native bottom hint changes with the active gun:
-Build undoes construction; Dismantle restores deletion. Edit retains its separate
-Z/Y transform undo/redo controls. The action is inactive while a settings window
-has input focus.
+Ctrl+Z and Ctrl+Y are the shared rebindable **Undo / Redo** actions in the
+Building Skills keybindings. Their native bottom hints change with the active gun:
+Build undoes or reapplies construction; Dismantle restores or reapplies deletion.
+Edit uses its transform history and Plan uses its geometry history. The actions
+are inactive while a settings window has input focus.
 
 The mod configuration contains **Undo history (actions per gun)**, default 32,
 with 0 disabling capture and a maximum of 256. In multiplayer the server setting
 controls retention. Histories belong to individual players and are session-only;
 they are not saved to game saves. A whole native placement/deletion transaction is
 one action, regardless of how many buildings it contains.
+Each gun has its own redo stack. A new action clears that gun's redo history.
+Redo uses the same connection checks, native refunds and repayment rules as undo.
 
 Restored buildings bypass construction animations so deletion undo does not wait
 for a blueprint build effect before restoring visibility and collision.

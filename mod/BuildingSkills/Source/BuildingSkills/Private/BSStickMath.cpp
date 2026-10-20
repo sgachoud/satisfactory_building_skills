@@ -16,10 +16,31 @@ FBSStickSettings FBSStickSettings::Get(UWorld* World)
     if (World && World->GetGameInstance())
         if (auto* C = World->GetGameInstance()->GetSubsystem<UConfigManager>())
             C->FillConfigurationStruct(FConfigId{TEXT("BuildingSkills"), TEXT("")}, FDynamicStructInfo{StaticStruct(), &S});
-    return S.Valid() ? S : FBSStickSettings{};
+    // A stale/out-of-range field must not discard unrelated saved settings,
+    // especially the constraint switches.
+    const FBSStickSettings Defaults;
+    if (!FMath::IsFinite(S.StickDistance) || S.StickDistance<0 || S.StickDistance>100000) S.StickDistance=Defaults.StickDistance;
+    if (!FMath::IsFinite(S.StickStep) || S.StickStep<=0 || S.StickStep>1000) S.StickStep=Defaults.StickStep;
+    if (!FMath::IsFinite(S.StickTiltStep) || S.StickTiltStep<=0 || S.StickTiltStep>90) S.StickTiltStep=Defaults.StickTiltStep;
+    if (!FMath::IsFinite(S.StickSlope) || FMath::Abs(S.StickSlope)>=89.9) S.StickSlope=Defaults.StickSlope;
+    if (!FMath::IsFinite(S.StickRadius) || FMath::Abs(S.StickRadius)>100000 || (S.StickRadius!=0 && FMath::Abs(S.StickRadius)<.01)) S.StickRadius=Defaults.StickRadius;
+    return S;
 }
-void UBSStickSession::Initialize(FSubsystemCollectionBase& Collection)
-{ Super::Initialize(Collection); Settings = FBSStickSettings::Get(GetWorld()); }
+FBSStickSettings& UBSStickSession::GetSettings()
+{
+    if (!DefaultsLoaded)
+    {
+        auto* World=GetWorld();
+        auto* Instance=World ? World->GetGameInstance() : nullptr;
+        auto* Config=Instance ? Instance->GetSubsystem<UConfigManager>() : nullptr;
+        if (Config && Config->GetConfigurationRootSection({TEXT("BuildingSkills"),TEXT("")}))
+        {
+            Settings=FBSStickSettings::Get(World);
+            DefaultsLoaded=true;
+        }
+    }
+    return Settings;
+}
 
 FVector FBSStickPath::EndpointDirection(const FVector& NativeTangent, bool OverridePitch, double Pitch, double YawOffset)
 {

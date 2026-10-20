@@ -72,6 +72,6 @@ class BUILDINGSKILLS_API FBSActionHistory
 public:
     static void Install();
     static void Record(UBSGroupRemoteCallObject* RCO, UBSActionRecord* Entry);
-    static bool Undo(UBSGroupRemoteCallObject* RCO, bool Deletion, FString& Message);
+    static bool Undo(UBSGroupRemoteCallObject* RCO, bool Deletion, FString& Message, bool Redo=false);
     static int32 Limit(UWorld* World);
 };

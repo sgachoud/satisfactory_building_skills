@@ -35,10 +35,14 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBSEditChordTest, "BuildingSkills.Input.EditCho
 
 bool FBSEditChordTest::RunTest(const FString& Parameters)
 {
-    UFGChildInputMappingContext* Context = LoadObject<UFGChildInputMappingContext>(nullptr,
-        TEXT("/BuildingSkills/Inputs/MC_BuildingSkills.MC_BuildingSkills"));
+    UInputMappingContext* Context = LoadObject<UInputMappingContext>(nullptr,
+        TEXT("/BuildingSkills/Inputs/Runtime/MC_BuildingSkills.MC_BuildingSkills"));
     if (!TestNotNull(TEXT("Edit context is packaged"), Context)) return false;
-    if (!TestEqual(TEXT("One editable shortcut"), Context->GetMappings().Num(), 1)) return false;
+    if (!TestEqual(TEXT("Edit and Plan shortcuts"), Context->GetMappings().Num(), 2)) return false;
+    const auto& PlanMapping=Context->GetMappings()[1];
+    TestEqual(TEXT("Plan defaults to P with a configurable chord"),PlanMapping.Key,EKeys::P);
+    TestTrue(TEXT("Plan shortcut is rebindable"),PlanMapping.IsPlayerMappable());
+    TestTrue(TEXT("Plan uses the native modifier chord"),PlanMapping.Triggers.Num()==1 && Cast<UInputTriggerChordAction>(PlanMapping.Triggers[0])!=nullptr);
     const FEnhancedActionKeyMapping& Mapping = Context->GetMappings()[0];
     const UInputAction* Edit = Mapping.Action;
     if (!TestNotNull(TEXT("Edit action exists"), Edit)) return false;
@@ -61,6 +65,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
     Use->bConsumeInput = false;
     Vanilla->MapKey(Use, EKeys::E);
     Vanilla->MapKey(Chord->ChordAction, EKeys::LeftAlt);
+    Vanilla->MapKey(LoadObject<UInputAction>(nullptr,TEXT("/Game/FactoryGame/Inputs/IA_ChordCtrl.IA_ChordCtrl")),EKeys::LeftControl);
     Subsystem.AddMappingContext(Vanilla, 100);
     Subsystem.AddMappingContext(Context, 0);
     FModifyContextOptions Options;
@@ -117,8 +122,8 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
     Key(EKeys::E, false);
     Tick();
 
-    auto* Operations = LoadObject<UFGChildInputMappingContext>(nullptr,
-        TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
+    auto* Operations = LoadObject<UInputMappingContext>(nullptr,
+        TEXT("/BuildingSkills/Inputs/Runtime/MC_EditOperations.MC_EditOperations"));
     if (TestNotNull(TEXT("Edit operations context exists"), Operations))
     {
         TestEqual(TEXT("Edit commands include configurable blueprint anchor"), Operations->GetMappings().Num(), 7);
@@ -145,12 +150,13 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
                 Key(EKeys::A, false); Tick();
                 Key(EKeys::LeftAlt, true); Tick();
             }
+            if (Op.GetMappingName()==TEXT("BuildingSkills.Undo") || Op.GetMappingName()==TEXT("BuildingSkills.Redo")) { Key(EKeys::LeftControl,true); Tick(); }
             Key(Op.Key, true); Tick();
             TestTrue(TEXT("Configured operation activates"), Fired(Op.Action));
             if (Op.Key == EKeys::M) TestFalse(TEXT("Merge suppresses Map inside Edit"), Fired(Map));
             if (Op.Key == EKeys::A) TestFalse(TEXT("Alt+A blocks movement only for its chord"), Fired(Left));
             Key(Op.Key, false); Tick();
-            Key(EKeys::LeftAlt, false); Tick();
+            Key(EKeys::LeftAlt, false); Key(EKeys::LeftControl,false); Tick();
         }
         Subsystem.RemoveMappingContext(Operations);
         Subsystem.RequestRebuildControlMappings(Options);
@@ -158,7 +164,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("Map restored after closing Edit"), Fired(Map));
         Key(EKeys::M, false); Tick();
     }
-    auto* SaveContext = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Save.MC_Save"));
+    auto* SaveContext = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Save.MC_Save"));
     if (TestNotNull(TEXT("Conditional save context exists"), SaveContext) && TestEqual(TEXT("Save and Copy commands"), SaveContext->GetMappings().Num(),2))
     {
         const auto& Save=SaveContext->GetMappings()[0];
@@ -209,7 +215,7 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("S movement returns after Save context removal"),Fired(Backward));
         Key(EKeys::S,false); Tick();
     }
-    auto* Transform = LoadObject<UFGChildInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Transform.MC_Transform"));
+    auto* Transform = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Transform.MC_Transform"));
     if (TestNotNull(TEXT("Transform context exists"), Transform))
     {
         TestEqual(TEXT("Transform controls include temporary step settings"), Transform->GetMappings().Num(), 17);
@@ -218,11 +224,40 @@ bool FBSEditChordTest::RunTest(const FString& Parameters)
         for (const auto& TransformMapping : Transform->GetMappings())
         {
             TestTrue(TEXT("Transform control is rebindable"), TransformMapping.IsPlayerMappable());
+            if (TransformMapping.GetMappingName()==TEXT("BuildingSkills.Undo") || TransformMapping.GetMappingName()==TEXT("BuildingSkills.Redo")) { Key(EKeys::LeftControl,true); Tick(); }
             Key(TransformMapping.Key, true); Tick();
             TestTrue(TEXT("Transform binding activates"), Fired(TransformMapping.Action));
-            Key(TransformMapping.Key, false); Tick();
+            Key(TransformMapping.Key, false); Key(EKeys::LeftControl,false); Tick();
         }
     }
+    if (Transform) { Subsystem.RemoveMappingContext(Transform); Subsystem.RequestRebuildControlMappings(Options); }
+    auto* Settings=LoadObject<UInputAction>(nullptr,TEXT("/BuildingSkills/Inputs/IA_Settings.IA_Settings"));
+    auto* OtherSettings=NewObject<UInputAction>(); Vanilla->MapKey(OtherSettings,EKeys::K);
+    Subsystem.RequestRebuildControlMappings(Options);
+    for (const TCHAR* Name:{TEXT("Connected"),TEXT("Volume"),TEXT("Stick"),TEXT("Transformers"),TEXT("Plan")})
+    {
+        const FString Path=FString::Printf(TEXT("/BuildingSkills/Inputs/Runtime/MC_%s.MC_%s"),Name,Name);
+        auto* Scoped=LoadObject<UInputMappingContext>(nullptr,*Path);
+        if (!TestNotNull(TEXT("Scoped context exists"),Scoped)) continue;
+        TestNull(TEXT("Runtime contexts do not duplicate controls menu rows"),Cast<UFGChildInputMappingContext>(Scoped));
+        Subsystem.AddMappingContext(Scoped,1001); Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::K,true); Tick(); TestTrue(TEXT("K activates the shared settings action"),Fired(Settings));
+        Key(EKeys::K,false); Tick();
+        Subsystem.RemoveMappingContext(Scoped); Subsystem.RequestRebuildControlMappings(Options);
+        Key(EKeys::K,true); Tick(); TestTrue(TEXT("Leaving our context restores another K action"),Fired(OtherSettings));
+        TestFalse(TEXT("Our settings do not remain active outside their context"),Fired(Settings));
+        Key(EKeys::K,false); Tick();
+    }
+    TSet<FName> Registered;
+    for (int32 I=0;I<7;++I)
+    {
+        const FString Path=FString::Printf(TEXT("/BuildingSkills/Inputs/MC_Bindings%d.MC_Bindings%d"),I,I);
+        auto* Bindings=LoadObject<UFGChildInputMappingContext>(nullptr,*Path);
+        if (!TestNotNull(TEXT("Controls category exists"),Bindings)) continue;
+        for (const auto& Binding:Bindings->GetMappings())
+        { TestFalse(TEXT("Each configurable binding is registered once"),Registered.Contains(Binding.GetMappingName())); Registered.Add(Binding.GetMappingName()); }
+    }
+    TestTrue(TEXT("Shared settings, undo and redo appear in controls"),Registered.Contains(TEXT("BuildingSkills.Settings")) && Registered.Contains(TEXT("BuildingSkills.Undo")) && Registered.Contains(TEXT("BuildingSkills.Redo")));
     World->DestroyWorld(false);
     return true;
 }

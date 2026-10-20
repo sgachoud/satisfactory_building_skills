@@ -7,6 +7,7 @@
 #include "BSBlueprintSave.h"
 #include "BSBlueprintScale.h"
 bool RunBuildingSkillsTransformerChecks(AFGCharacterPlayer* Player, int32 Phase);
+bool RunBuildingSkillsPlanChecks(AFGCharacterPlayer* Player, int32 Phase);
 bool RunBuildingSkillsPolishChecks(AFGCharacterPlayer* Player, int32 Phase);
 bool RunBuildingSkillsNetworkCopyChecks(AFGCharacterPlayer* Player, int32 Phase);
 bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 Phase);
@@ -157,6 +158,7 @@ public:
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest"))) { Samples=150; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest"))) { Samples=250; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest"))) { Samples=300; TestBuilding.Reset(); }
+            if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest"))) { Samples=550; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest"))) { Samples=400; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest"))) { Samples=450; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest"))) { Samples=500; TestBuilding.Reset(); }
@@ -1012,10 +1014,11 @@ public:
         if (Samples >= 450 && Samples <= 476) ChecksPassed &= RunBuildingSkillsTransformerChecks(Player, Samples - 450);
         if (Samples >= 400 && Samples <= 439) ChecksPassed &= RunBuildingSkillsPolishChecks(Player, Samples - 400);
         if (Samples >= 300 && Samples <= 374) ChecksPassed &= FBSStick::RunChecks(Player, Samples - 300);
+        if (Samples >= 550 && Samples <= 604) ChecksPassed &= RunBuildingSkillsPlanChecks(Player, Samples - 550);
         if (Samples >= 500 && Samples <= 535) ChecksPassed &= RunBuildingSkillsBlueprintNetworkChecks(Player, Samples - 500);
         if (Samples == 239 && FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,3);
         if (Samples == 153) Next += 3; // Allow modal/HUD animations to settle for visual inspection.
-        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 376 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 280 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest")) ? 605 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 376 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 280 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;

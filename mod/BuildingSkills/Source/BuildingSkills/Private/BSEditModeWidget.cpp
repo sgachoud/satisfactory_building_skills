@@ -20,6 +20,7 @@
 #include "UI/FGGameUI.h"
 #include "UI/FGInteractWidget.h"
 #include "Components/TextBlock.h"
+#include "Components/PanelWidget.h"
 #include "Patching/NativeHookManager.h"
 
 namespace
@@ -27,6 +28,16 @@ namespace
     // Only the active local Customizer mode labels are registered. Other native
     // and mod widgets keep their normal SetText behavior.
     TMap<TWeakObjectPtr<UTextBlock>, TWeakObjectPtr<UBSEditModeWidget>> SpreadTextOwners;
+    struct FPlanHiddenWidget { TWeakObjectPtr<UBSEditModeWidget> Owner; ESlateVisibility Previous; };
+    TMap<TWeakObjectPtr<UWidget>,FPlanHiddenWidget> PlanHiddenWidgets;
+    void RestorePlanWidgets(UBSEditModeWidget* Owner)
+    {
+        TArray<TPair<TWeakObjectPtr<UWidget>,ESlateVisibility>> Restore;
+        for (auto It=PlanHiddenWidgets.CreateIterator();It;++It)
+            if (!It.Value().Owner.IsValid() || It.Value().Owner==Owner)
+            { Restore.Emplace(It.Key(),It.Value().Previous); It.RemoveCurrent(); }
+        for (const auto& Entry:Restore) if (Entry.Key.IsValid()) Entry.Key->SetVisibility(Entry.Value);
+    }
 }
 
 void UBSEditShortcutWidget::NativeConstruct()
@@ -86,11 +97,14 @@ TSharedRef<SWidget> UBSEditShortcutWidget::RebuildWidget()
     // grid dimensions, and show Stick there only while a spline is equipped.
     return SNew(SOverlay)
         +SOverlay::Slot()[Card(TEXT("BuildingSkills.ToggleEditMode"),NSLOCTEXT("BuildingSkills","EditShortcutLabel","Edit"))]
+        +SOverlay::Slot()[SNew(SBox).WidthOverride(64).HeightOverride(58).RenderTransform(FSlateRenderTransform(FVector2D(0,-124)))
+            [Card(TEXT("BuildingSkills.TogglePlan"),NSLOCTEXT("BuildingSkills","PlanShortcutLabel","Plan"))]]
         +SOverlay::Slot()[SNew(SBox).WidthOverride(64).HeightOverride(58)
             .RenderTransform(FSlateRenderTransform(FVector2D(0,-62)))
             .Visibility_Lambda([this]() {
                 auto* P=GetOwningPlayerPawn(); auto* E=P ? P->FindComponentByClass<UBSEditModeComponent>() : nullptr;
-                return FBSStick::Active(E) ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
+                const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(P));
+                return FBSStick::Active(E) || (Plan && Plan->Active) ? EVisibility::HitTestInvisible : EVisibility::Collapsed;
             })[Card(TEXT("BuildingSkills.StickToggle"),NSLOCTEXT("BuildingSkills","StickShortcutLabel","Stick"))]];
 }
 
@@ -124,6 +138,7 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
                     {
                         auto* Pawn = GetOwningPlayerPawn();
                         auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
+                        if (auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(Pawn)); Plan && Plan->Active) return FSlateColor(FLinearColor(.05f,.7f,1.f));
                         return FSlateColor(Edit && Edit->IsEditing() ? FLinearColor(.1f, 1.f, .2f) : FLinearColor(1.f, .45f, .08f));
                     })
                 ]
@@ -137,7 +152,8 @@ TSharedRef<SWidget> UBSEditModeWidget::RebuildWidget()
             auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
             // Edit replaces the native hints. Connected Dismantle and Paint
             // supplement them, so reserve a separate row immediately above.
-            return FMargin(0, 0, 0, Edit && Edit->IsEditing() ? 120.f : Edit && FBSStick::Active(Edit) ? 155.f : 240.f);
+            const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(Pawn));
+            return FMargin(0, 0, 0, (Plan && Plan->Active) || (Edit && Edit->IsEditing()) ? 120.f : Edit && FBSStick::Active(Edit) ? 155.f : 240.f);
         }))
         [SAssignNew(HintHost, SBox).WidthOverride(1100).HeightOverride(110)];
 }
@@ -163,6 +179,14 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
         if (!HookInstalled)
         {
             HookInstalled = true;
+            SUBSCRIBE_UOBJECT_METHOD(UWidget, SetVisibility, [](auto& Scope,UWidget* Target,ESlateVisibility Visibility)
+            {
+                if (const auto* Entry=PlanHiddenWidgets.Find(Target); Entry && Entry->Owner.IsValid())
+                {
+                    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(Entry->Owner->GetOwningPlayerPawn()));
+                    if (Plan && Plan->Active) { Scope(Target,ESlateVisibility::Collapsed); return; }
+                }
+            });
             SUBSCRIBE_UOBJECT_METHOD(UTextBlock, SetText, [](auto& Scope, UTextBlock* Target, FText Incoming)
             {
                 if (SpreadTextOwners.IsEmpty()) return;
@@ -171,7 +195,8 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
                 if (!Owner || Owner->NativeSpreadText.Get() != Target) return;
                 auto* Pawn = Owner->GetOwningPlayerPawn();
                 auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
-                if (!Edit || !Edit->IsSpreadPainting())
+                const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(Pawn));
+                if (!Edit || (!Edit->IsSpreadPainting() && !(Plan && Plan->Active)))
                 {
                     Owner->RestoreSpreadMode();
                     return;
@@ -186,10 +211,14 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
     }
     auto* Player = Cast<AFGCharacterPlayer>(GetOwningPlayerPawn());
     auto* UI = Player ? Player->GetGameUI() : nullptr;
+    const auto* Plan=UBSPlanComponent::Find(Player);
+    const bool Planning=Plan && Plan->Active;
+    if (!Planning) RestorePlanWidgets(this);
     UTextBlock* NativeText = nullptr;
     UWidget* NativeContainer = nullptr;
     UWidget* NativeIcon = nullptr;
-    if (Enabled && UI)
+    UUserWidget* NativeModeWidget = nullptr;
+    if ((Enabled || Planning) && UI)
     {
         // Paint and Build share the native build-mode widget. Use its existing
         // below-cursor row, so font, backdrop, positioning and UI scale stay native.
@@ -201,7 +230,7 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
                 NativeText = Cast<UTextBlock>(Widget->WidgetTree->FindWidget(TEXT("mBuildModeText")));
                 NativeContainer = Widget->WidgetTree->FindWidget(TEXT("mBuildModeContainer"));
                 NativeIcon = Widget->WidgetTree->FindWidget(TEXT("mBuildModeIcon"));
-                if (NativeText && NativeContainer) return;
+                if (NativeText && NativeContainer) { NativeModeWidget=Widget; return; }
                 NativeText = nullptr;
             }
             Widget->WidgetTree->ForEachWidget([&](UWidget* Child)
@@ -209,6 +238,17 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
         };
         const auto Stack = UI->GetInteractWidgetStack();
         for (int32 I = Stack.Num() - 1; I >= 0 && !NativeText; --I) FindModeRow(Stack[I]);
+    }
+    if (Planning && NativeModeWidget)
+    {
+        // Hide only the native construction branches. Preserve the mode row,
+        // radial and other UI layers regardless of their parent hierarchy.
+        for (const TCHAR* Name:{TEXT("mBuildHints"),TEXT("BuildingNameOverlay"),TEXT("mCostSlotsGrid"),TEXT("mCostSlotOverflow"),TEXT("mButtonHintsGamepad"),TEXT("mHologramButtonHintsGamepad"),TEXT("mMinimalButtonHintsGamepad")})
+            if (auto* Sibling=NativeModeWidget->WidgetTree->FindWidget(Name))
+            {
+                if (!PlanHiddenWidgets.Contains(Sibling)) PlanHiddenWidgets.Add(Sibling,{this,Sibling->GetVisibility()});
+                Sibling->SetVisibility(ESlateVisibility::Collapsed);
+            }
     }
     if (NativeText != NativeSpreadText.Get()) RestoreSpreadMode();
     if (!NativeText) return;
@@ -224,7 +264,7 @@ void UBSEditModeWidget::UpdateSpreadMode(bool Enabled, const FText& Text)
     LastSpreadText = Text;
     SpreadTextOwners.Add(NativeText, this);
     if (!NativeText->GetText().EqualTo(Text)) NativeText->SetText(Text);
-    NativeContainer->SetVisibility(ESlateVisibility::HitTestInvisible);
+    NativeContainer->SetVisibility(Enabled ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
     // A retained Build/Dismantle mode icon would describe the previous gun state.
     if (NativeIcon) NativeIcon->SetVisibility(ESlateVisibility::Collapsed);
 }
@@ -247,6 +287,7 @@ void UBSEditModeWidget::RestoreSpreadMode()
 
 void UBSEditModeWidget::NativeDestruct()
 {
+    RestorePlanWidgets(this);
     RestoreSpreadMode();
     Super::NativeDestruct();
 }

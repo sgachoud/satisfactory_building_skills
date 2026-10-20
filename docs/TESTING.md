@@ -2,7 +2,210 @@
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
 build is CL 502094; the current installed Steam game is CL 513885 (1.2.4.1).
-Results below are tied to their tested versions. Current development version: Building Skills 0.9.8.
+Results below are tied to their tested versions. Current development version: Building Skills 0.10.6.
+
+## 0.10.6: Planner continuity, settings and action redo
+
+All **25 Editor tests**, **197 packaged Plan assertions** and **70 packaged Polish
+assertions** passed with zero failures. Both temporary-world runs exited cleanly.
+The final Windows installation matches all eight archive files by SHA-256;
+Windows and Linux Server archive binaries match the compiled outputs. No live
+dedicated-server session was exercised.
+
+The Plan run covers signed tangent continuation at either terminal, including
+targets behind the existing tangent and a real constrained-Stick preview after
+the camera updates. It checks the 80 m default, the menu minimum against an
+initialized native hologram, and native construction for each short-tail fallback.
+On the tested game, the usable range is 12.00–99.99 m. The final Build specification
+screenshot was inspected. The first run's constrained-preview fixture read the
+camera in the same frame as teleporting; the corrected test waits for its update.
+
+The tests also cover menu field commits without an Apply button, a registered
+Mods defaults editor with its widget tree, build-time discovery of an existing
+rail at an interior node, and successful construction after deleting the original
+snapping source. Editor input checks verify one registration per binding, shared
+K activation in each scoped context, and restoration of another K action after
+removing our context. Foundation snapping reuses the native floor helper; direct
+in-game comparison of Ctrl floor snapping remains a manual check.
+
+The Polish run adds construction redo, deletion redo and undo after each redo,
+alongside restored blueprint identity, inventories/refunds, groups, power, pipes,
+rails/signals and lift/belt connections. It ran before the final planner-only
+minimum-length/test-fixture correction; the undo/redo implementation was unchanged.
+Persistent mod-default editing was checked through its registered editor, not by
+changing the player's saved configuration.
+
+Evidence: `Saved/Automation/index.json`, `Saved/RuntimeTest0106-Plan.log`,
+`Saved/RuntimeTest0106-Polish.log`, and the versioned verification manifests in
+`Saved/Releases`. These generated files remain ignored.
+
+## 0.10.5: Plan build specification, signals and construction fixes
+
+All 25 Editor tests passed. The corrected installed Windows package passed **172
+Plan runtime assertions**, with zero failures and a clean exit. All eight installed
+files match the Windows archive by SHA-256. The Build specification screenshot
+was inspected after the final run.
+
+Coverage includes inherited extension directions and duplicate-route cleanup;
+whole-path segmentation across intermediate nodes; forced endpoints at branches;
+finite closed-loop traversal; all three remainder policies and atomic rejection;
+block-signal spacing, right/left side and reversed parallel directions; saved and
+transmitted build specifications; and exact combined rail/signal deductions from
+inventory, Depot, split sources and both withdrawal preferences. Shortage and
+No Build Cost cases are covered. Existing Plan controls and history remain tested.
+
+The first packaged run caught native rejection at the exact rail maximum and
+hidden signal previews being treated as invalid aim locations. The final build
+uses a centimeter of maximum-length headroom and initializes signal previews
+before native validation. Native signals require a connected rail joint, so open
+ends remain unsignalled. These corrections passed the full packaged rerun.
+
+The matching Linux server binary compiled and its cooked archive was hash-verified.
+No live dedicated-server multiplayer test was run; local RPC/access checks do not
+constitute one.
+
+## 0.10.4: Plan splitting, selection list and orientation
+
+All 25 Editor tests passed. The final installed Windows package passed all 112
+Plan assertions in the rendered temporary world, with zero failures and a clean
+exit. Windows installation hashes match all eight archive entries. The Linux
+server binary and archive were built and hash-verified; no live dedicated-server
+gameplay test is claimed.
+
+Coverage includes exact split/projection checks for all four curve types, a split
+at an existing through-point, atomic split history, shared-node tangent propagation,
+manual through-point tangents and rolled parallel frames. The packaged fixture
+exercises the virtualized selection list, real click-to-split, node and through-point
+direction dragging, orientation undo, editable orientation fields, saved orientation
+and captured constrained-Stick paths. Existing tap/hold R, collapsed-menu,
+selection and connected rail construction checks remain enabled. The K-menu
+screenshot was inspected, including selection rows and yaw/roll/pitch fields.
+
+The first packaged run exposed a fixture timing issue: its click preceded the
+camera update after teleportation, so it was not aiming at the spline. The fixture
+now waits for the camera before clicking; the insertion and dependent drag checks
+pass. Review also found that the placement command discarded the constrained-Stick
+preview route. The command now retains that route, with a packaged regression.
+
+## 0.10.3: Plan controls and local menu preferences
+
+Short R presses reject the native deferred first-item assignment; explicit Plan
+changes and held-radial choices still update the native mode descriptor. Horizontal
+arrows follow the nearest camera-yaw axis; Page Up/Down stay on world Z. The K
+menu has independent Saved plans, Selected items, Parallel lines and Stick
+sections. Expansion states are stored locally under the local account identity
+(or local platform user when offline), outside world saves and replication.
+
+All 25 Editor tests passed. The final installed Windows candidate passed all 69
+Plan assertions in the rendered temporary world and exited cleanly. Checks cover
+a real short R key gesture after deferred callbacks, collapsing sections and
+reloading their preferences from disk, movement with a turned/tilted camera, and
+world-Z Page Up. Direction checks cover all four horizontal quadrants. The fixture
+uses a separate local preferences file. The collapsed-menu screenshot was inspected.
+
+The first packaged run caught a missing first-time preference-file write and a
+movement direction read from the previous camera frame. Preferences now use a
+dedicated local file, and movement uses the controller's current view rotation.
+Both failing checks passed after targeted recompilation and reinstallation.
+Windows installation hashes match all eight archive entries. Linux is packaged
+separately; this does not constitute a live dedicated-server gameplay test.
+
+## 0.10.2: Plan state, native modes and curve controls
+
+Plan now uses an empty native build state and independent node aiming, instead
+of creating and hiding a rail hologram. Place/Edit use native mode descriptors,
+the below-cursor mode row and the native R radial. Free curves offer either
+interpolating Hermite points or two cubic Bezier handles. Bezier endpoint moves
+carry the attached handle; editing a handle aligns adjacent node tangents.
+
+All 25 editor tests passed. The final installed Windows build passed 60 Plan
+assertions in a rendered temporary world with saving blocked and exited cleanly.
+Checks cover no rail holograms during long previews, native mode identity,
+tap/hold R, Bezier geometry, handle movement, malformed curve rejection, selection,
+history, plan access and connected rail construction. Place, K-menu and held-R
+radial screenshots were inspected. Construction-only labels/hints are absent in
+Plan, and the ordinary rail recipe creates its native hologram after leaving.
+
+The first packaged run caught a shipped-game discrepancy: `GotoBuildState`
+rejects a null recipe despite the SDK comment allowing it. The Plan-scoped
+transition now clears the recipe and enters the native state directly. The
+second run passed 59 checks and exposed a return-to-build assertion that wrongly
+required the native hologram to be visible while aiming into empty space; it also
+revealed overlapping construction-only HUD content. These were corrected before
+final validation. The fixture now skips dependent checks safely if its initial
+graph was not created, and captures the radial before releasing the mode key.
+
+Windows installation is checked against all eight packaged files by SHA-256.
+The Linux binary/package is built separately; no live dedicated-server gameplay
+is claimed by the standalone permission checks above.
+
+## 0.10.1: Plan selection, deletion and history
+
+The update hides native rail preview meshes and split children while Plan is
+active, selects nodes and curves by holding the configured multi-select modifier
+without clicking, and adds rebindable F deletion and Ctrl+Z / Ctrl+Y history.
+Undo/redo covers geometry edits, keeps current ownership and sharing, and checks
+shared-plan revisions. Session history uses the action history setting and a
+per-plan memory cap.
+
+All 25 editor tests passed. The installed Windows package passed all 54 Plan
+assertions in a rendered fresh world with saving blocked, including hold-only
+node and spline selection, stable selection during a held gesture, deselection,
+F deletion without changing guns, Ctrl+Z restoration, Ctrl+Y redo, and restoration
+of ordinary rail holograms after leaving Plan. Native spline meshes and split
+children were hidden during planning. Place and K-menu screenshots were inspected.
+
+The first packaged run caught unreliable polling of the native multi-select
+action value. Plan now reads its configured key and modifier chord through the
+same native mapping lookup used by transform steps. The subsequent uninterrupted
+run passed and exited cleanly. An intervening run was interrupted overnight and
+timed out; it is not counted as a pass.
+
+History tests cover stale revisions, private access, shared editing, incident
+Free curves and controls, parallel offsets, action limits, redo invalidation and
+preservation of current plan names/sharing. These access checks use separate
+player-state identities in a standalone world, not a live dedicated server.
+Windows installation is verified against all eight package files by SHA-256.
+The final editor, Windows and Linux binaries compiled. Both release archives
+contain the new controls and are checked against the current native binaries.
+The Linux package has not been tested on a live dedicated server.
+
+## 0.10.0: Plan gun and rail planner
+
+The Plan gun adds owner-filtered saved rail graphs, shared-plan revision checks,
+native rail/Stick aiming, selectable nodes and splines, world-axis movement,
+editable Free controls, local parallel offsets and server-side rail construction.
+The editor, Windows client and Linux server targets compiled. All 25 editor
+automation tests passed, including Plan graph/geometry and input mappings.
+The installed Windows package passed all 34 Plan assertions in the rendered,
+fresh-world regression. The K menu screenshot was inspected with a selected
+node: its world coordinates use meters with centimeter precision, and normal
+Build HUD controls are hidden while planning.
+
+The passing regression covers graph mutations, continuity, local shape limits,
+native gun clicks, close/reopen persistence, save-archive round trips, private
+versus shared snapshots, the K menu, full-path construction and reciprocal rail
+joins. It constructed 12 rail segments across a main and parallel path. Native
+Ctrl-click selection, arrow movement along world X, and held-R radial opening
+and release also passed. Planning itself constructed no real rails; invalid
+geometry was rejected before construction.
+
+Runtime validation corrected tip snapping that previously caught the preceding
+node on a straight chain, and removed an unsupported detour of a native no-op
+mouse-release function. Linux packaging verifies the Plan input assets and the
+compiled server binary. Windows installation is checked against all eight
+archive entries by SHA-256.
+
+The existing rendered Stick regression also passed all 368 assertions, including
+typed temporary settings, endpoint tilt, native snapping, support spacing and
+final clicks between existing supports. Both rendered runs exited cleanly.
+The runner now requires rendering for Stick: its later tilt checks depend on a
+temporary value entered through the real settings window.
+
+These permission checks use separate native player identities in a standalone
+world, not two networked clients. The Linux package has not been exercised on a
+live dedicated server. Save persistence was checked through the native SaveGame
+archive and closing/reopening Plan, not by loading an existing player save.
 
 ## 0.9.8: final click on a snapped split route
 
@@ -1778,3 +1981,111 @@ The final editor and Linux native builds also exercised the two-worker compile
 helper successfully. Each helper compiled the current linker inputs before linking.
 
 Use `RuntimeTest.ps1 -PolishOnly` for the dedicated temporary-world regression.
+
+# 0.10.7 Stick and planner corrections
+
+Stick now loads the active runtime input contexts instead of the empty legacy
+contexts left by the shared-binding migration. This restores its configurable
+toggle, scrolling modifiers and Settings mapping in spline placement and Plan.
+The packaged Stick regression also checks that the activated context actually
+contains the toggle action. Tests are not being run for this update at the
+user's request; gameplay validation is left to the user.
+
+The same update stabilizes path orientation when extending the back, preserves
+existing node directions during extension, and resolves lightweight foundations
+before applying the native floor snap. These planner changes have not been
+gameplay-tested in this update either.
+
+Editor, Windows and Linux native compilation succeeded. Windows 0.10.7 was
+installed and all eight installed files matched its package by SHA-256; both
+release archives matched the compiled native outputs. Evidence is in
+`Saved/Releases/BuildingSkills-0.10.7-verification.json` and
+`Saved/Releases/BuildingSkills-0.10.7-installation.json`. No game was launched.
+
+## 0.10.8 defaults fixes
+
+Built and installed with 0.10.8. Gameplay validation is left to the user.
+
+- Stick settings load on first use after configuration registration instead of
+  during early world-subsystem initialization. All Stick and Plan consumers use
+  that accessor. Temporary settings remain in the world session afterward.
+- Stick and Volume reject invalid numeric fields individually, preserving the
+  other saved fields. The defaults editor uses the same bounds as runtime for
+  movement, rotation, scaling, repeat delay, Connected gap, Volume and Stick.
+- Connected defaults retain invalid regex text for the existing validation
+  message instead of silently clearing every setting and filter.
+- New plans carry the creating player's build defaults to the server, which
+  validates them. Action-history size remains server-controlled.
+
+Source audit: Transform reads defaults on use unless temporary steps exist;
+Volume reads them on entering Volume; Connected reads them when player input is
+initialized; history reads the authority's setting on use; new-plan defaults
+apply only when creating a plan. Existing plans retain their saved specification.
+Volume color uses the native game setting independently of the mod configuration.
+
+Also included: the single-spline K-menu button **Reverse spline direction**.
+It reverses endpoints, control order and tangents without editing shared nodes,
+and runs through the existing server command/revision checks and undo/redo
+history. It compiled with 0.10.8; gameplay tests have not been run.
+
+## 0.10.8 parallel and saved-plan changes
+
+These changes compiled for Editor, Windows and Linux server. Windows is
+installed; gameplay testing is left to the user.
+
+- Parallel node markers follow their source nodes, including selection and
+  dragging. Signed local-X node offsets deform the parallel while retaining
+  endpoint tangent continuity.
+- Signed rail start offsets trim the beginning or extend backward along its
+  tangent. They apply once per connected path; native length and shape limits
+  still apply to construction.
+- Saved plans load on selection. Double-clicking the name enters inline rename.
+  Pending auto-saved edits finish before switching plans.
+- Duplicate preserves geometry and specifications, generates independent graph
+  identities and selects a personal `<plan name> (copy)`. Server visibility,
+  revision and plan-count checks apply.
+
+Manual checks: verify curved and branched parallels, closed loops,
+positive/negative offsets and live rail joints. Verify click-to-load,
+double-click rename, duplicate independence, shared-plan permissions and plan
+switching while a rename or geometry update awaits a server response.
+
+### 0.10.8 build and installation evidence
+
+Editor, Windows client and Linux server compilation and packaging succeeded.
+Editor header generation initially reported an unused access transformer; a
+retry succeeded without changing the declaration or shared SDK.
+All eight installed Windows files matched the package by SHA-256. Both release
+archives contain version 0.10.8, the required cooked assets, and native binaries
+matching the successful builds. Receipts:
+`Saved/Releases/BuildingSkills-0.10.8-installation.json` and
+`Saved/Releases/BuildingSkills-0.10.8-verification.json`.
+No automated tests or gameplay sessions were run for this release.
+
+## 0.10.9: defaults reflection
+
+The 0.10.8 initialization fix did not address SML's reflection write filter.
+`FillConfigurationStruct` writes only Blueprint-visible properties that are
+not Blueprint-read-only. Plain `UPROPERTY()` fields silently retain their
+compiled defaults. This affected all three configuration destination structs:
+Stick, Volume and Transform (also carrying Connected, History and Plan defaults).
+The structs now use `BlueprintType`, and their configuration fields use
+`BlueprintReadWrite`.
+
+`BuildingSkills.Configuration.SavedDefaultsReflection` exercises the actual
+SML section-to-reflected-struct bridge using a private configuration instance.
+It checks every numeric, boolean and string field, including a Stick step of
+10 and disabled horizontal constraint, then refreshes the same reflected
+wrapper with different values. It also checks every schema option has a tested
+consumer. The fixture does not modify the player's settings or files.
+
+The focused editor regression passed (one test, no failures or warnings).
+Report: `Saved/Automation-defaults-0.10.9/index.json`.
+Editor, Windows client and Linux server compilation and packaging succeeded.
+Windows 0.10.9 is installed; all eight installed files matched its package by
+SHA-256. Both release archives contain the required cooked assets and native
+binaries matching the compiled outputs. Receipts:
+`Saved/Releases/BuildingSkills-0.10.9-installation.json` and
+`Saved/Releases/BuildingSkills-0.10.9-verification.json`.
+No gameplay session or player save was opened. Packaged gameplay validation
+is left to the user.

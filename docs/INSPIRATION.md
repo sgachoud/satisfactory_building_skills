@@ -8,6 +8,13 @@ into the distributed plugin, and the project's MIT license was not changed.
 
 ## Sources and license boundaries
 
+The 0.10.0 rail planner follows the user-specified graph workflow and reuses
+Building Skills' Stick path splitting and native rail hologram integration.
+Rail snapping, native construction checks, spline data and connector APIs were
+inspected in the installed CSS SDK. Its graph, private/shared save records,
+revision-checked operations, local previews and menus were independently written;
+no third-party mod source or assets were imported for this feature.
+
 The 0.9.8 Stick endpoint correction follows the installed game's native
 pipe/belt placement state machines. Their final click consults the root's end
 snap, while Building Skills transfers that snap to the final split segment.
@@ -324,3 +331,51 @@ The interaction and reflection rules come from the requested feature design.
 Implementation uses Unreal's runtime Slate color wheel and Satisfactory's native
 blueprint archive/loading APIs, reusing Building Skills' existing copy isolation
 and construction-history hooks. No external mod code was copied for this feature.
+
+## Rail planning (0.10.x)
+
+The Plan tool and its interaction rules follow the requested design. The native
+build gun's supported empty-recipe state provides the gun lifecycle without a
+construction hologram. Its mode descriptors, tap/hold selector and below-cursor
+widget provide Place/Edit presentation. Existing Building Skills Stick geometry
+and rail construction checks provide path subdivision and final construction.
+Through-point curves use cubic Hermite interpolation with automatic interior
+tangents; Bezier handles are converted exactly to endpoint Hermite tangents for
+the same native rail pipeline. No external mod implementation was copied.
+
+Plan item selection uses Unreal Slate's native virtualized multi-selection list.
+Spline insertion uses cubic Hermite subdivision with reparameterized tangents;
+Bezier controls are recovered from the split endpoint tangents. These geometry
+operations are implemented locally, with exact-curve regression checks.
+
+Plan construction uses the native central-storage item counts and
+`UFGInventoryLibrary::GrabItemsFromInventoryAndCentralStorage`, with the player's
+withdrawal preference, to match ordinary inventory/Dimensional Depot payment.
+
+Plan block signals use the native `AFGRailroadSignalHologram` connection-snap
+configuration and left/right mesh selection. The installed game implementation
+was inspected to verify that a snapped endpoint becomes a guarded connection;
+this avoids splitting an already segmented track again. No third-party mod code
+was copied for path segmentation, direction arrows or signal scheduling.
+
+The 0.10.6 menu work uses SML's configuration-root editor extension and dirty-value
+notification API. Plan foundation placement reuses the game's
+`FHologramHelpers::SnapToFloor` with the Railway hologram's native grid and rotation
+step. Shared input mappings use Unreal's existing player-mappable action identity
+across tool-scoped contexts. No third-party mod implementation was copied for
+these changes, signed spline tangents, remainder fallback, or action redo.
+The rail minimum follows native `AFGRailroadTrackHologram::BeginPlay`, which derives
+it from the buildable's mesh length. Reading the hologram class default before
+that initialization returns zero; the planner instead reads the same buildable
+value and checks it against an initialized native hologram in the runtime test.
+
+The 0.10.7 foundation correction uses the native AbstractInstance hit-resolution
+API and lightweight subsystem's temporary-buildable API to supply the real
+foundation to `SnapToFloor`. Native rail floor snapping and build-gun trace
+handling were inspected locally; no third-party mod code was copied.
+
+The pending defaults fix follows SML's configuration-registration contract:
+`FillConfigurationStruct` leaves the destination unchanged when the config has
+not been registered. Stick therefore waits for an available configuration root
+before taking its session snapshot. The SML implementation was read locally;
+no SML code was copied.

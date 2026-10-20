@@ -119,7 +119,7 @@ void UBSEditModeComponent::TickBlueprintSave()
     if (InputSubsystem.IsValid())
     {
         if (Enabled && !SaveContext)
-            if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Save.MC_Save")))
+            if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Save.MC_Save")))
             { SaveContext = DuplicateObject<UInputMappingContext>(Source, this); InputSubsystem->AddMappingContext(SaveContext, 1000); }
         if (!Enabled && SaveContext) { InputSubsystem->RemoveMappingContext(SaveContext); SaveContext = nullptr; }
     }

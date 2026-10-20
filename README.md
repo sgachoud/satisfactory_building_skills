@@ -2,13 +2,18 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, Group, Connected and Volume selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.9.7`.
+The mod reference is `BuildingSkills`; the development version is `0.10.9`.
+
+The **Plan** gun designs rail paths before construction, with named personal or
+shared plans, editable nodes and curves, parallel tracks, configurable segment
+lengths and automatic block signals. See [Plan gun](docs/PLAN.md).
 
 ## Controls
 
 | Default | Action |
 | --- | --- |
-| Alt + E | Open / Close Edit Mode |
+| Alt + E | Open / Close Edit Gun |
+| Alt + P | Open / Close Plan Gun |
 | Ctrl (existing multi-dismantle binding) | Hold and aim to select multiple items |
 | R (existing Build Gun mode binding) | Switch Normal / Blueprint / Group / Connected / Volume selection |
 | K (in Connected selection/painting) | Open Connected Components settings |
@@ -18,6 +23,7 @@ The mod reference is `BuildingSkills`; the development version is `0.9.7`.
 | U | Ungroup, available for exactly one selected group |
 | T | Enter Transform with the current selection |
 | Ctrl + Z (in Build / Dismantle) | Undo the last construction / deletion action |
+| Ctrl + Y (in Build / Dismantle) | Redo the last undone construction / deletion action |
 | K (in Transform) | Edit temporary movement, rotation and scale steps |
 | Alt + S | Save the current selection as a blueprint |
 | Alt + C | Copy the current selection into a Build Gun hologram |
@@ -34,6 +40,9 @@ The mod reference is `BuildingSkills`; the development version is `0.9.7`.
 | K (while Stick is active) | Set steps, slope and radius; enable each constraint independently |
 
 The Building Skills commands can be changed in the game's keybinding settings.
+Settings (K), Undo, Redo, Toggle Stick and the gun toggles each have one shared
+binding under Building Skills. Save and Copy are in the Edit category. Persistent
+defaults are available under Mods → Building Skills; menu fields save when edited.
 Stick begins at 64 m, with a 1 m distance step and a 15 degree endpoint-tilt step. Its constrained path uses a fixed
 upward slope and signed horizontal radius, and can follow multiple spiral turns.
 The K menu lets you enable horizontal and vertical constraints independently, retaining disabled values. With both disabled, placement uses native routing.
@@ -206,7 +215,9 @@ deletion/material/swatch operations, plus repeated Edit transforms with shared
 connection updates and undo/redo, input/output-aware mirror orientation, and
 lift deletion archive safeguards, bounded selection uploads and replies, and
 large-selection regression coverage, split-rail endpoint connection checks,
-and blueprint conveyor-chain isolation with an imported-blueprint regression.
+and blueprint conveyor-chain isolation with an imported-blueprint regression,
+plus named personal/shared rail plans, node and curve editing, parallel paths,
+and server-validated plan construction.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

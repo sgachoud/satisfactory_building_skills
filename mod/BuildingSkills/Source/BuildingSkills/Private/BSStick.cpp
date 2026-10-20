@@ -90,6 +90,42 @@ namespace BSStickPrivate
 }
 using namespace BSStickPrivate;
 
+TArray<FSplinePointData> FBSStick::PlanPreview(AFGSplineHologram* H)
+{
+    if (!H) return {};
+    const auto* S=States.Find(H);
+    auto Points=S && !S->Preview.IsEmpty() ? S->Preview : H->mSplineData;
+    for (auto& P:Points) { P.Location=H->GetActorTransform().TransformPosition(P.Location); P.ArriveTangent=H->GetActorTransform().TransformVector(P.ArriveTangent); P.LeaveTangent=H->GetActorTransform().TransformVector(P.LeaveTangent); }
+    return Points;
+}
+UFGRailroadTrackConnectionComponent* FBSStick::PlanEnd(AFGSplineHologram* H)
+{
+    if (!H) return nullptr;
+    const auto* S=States.Find(H);
+    return Cast<UFGRailroadTrackConnectionComponent>(S ? S->EndSnap.Get() : Snap(H,H->mBuildStep==ESplineHologramBuildStep::SHBS_FindStart ? 0 : 1));
+}
+void FBSStick::PlanStart(AFGSplineHologram* Base,const FBSPlanNode* N)
+{
+    auto* H=Cast<AFGRailroadTrackHologram>(Base); if (!H) return;
+    Restore(H); Starts.Remove(H); Snap(H,0,nullptr); Snap(H,1,nullptr); H->mSnappedRailroadTrack=nullptr;
+    H->mBuildStep=N ? ESplineHologramBuildStep::SHBS_PlacePoleOrSnapEnding : ESplineHologramBuildStep::SHBS_FindStart;
+    if (!N) return;
+    H->SetActorLocation(N->Position); H->SetActorRotation(FRotator::ZeroRotator); H->mActivePointIdx=1;
+    H->mSnappedStartLocation=N->Position; H->mSnappedStartTangent=N->Direction;
+    FBSStickPath Start; Start.Start=N->Position; Start.Forward=N->Direction; Starts.Add(H,Start);
+    SetPoints(H,{FSplinePointData(FVector::ZeroVector,N->Direction*100),FSplinePointData(N->Direction*100,N->Direction*100)});
+}
+void FBSStick::PlanGeometry(AFGSplineHologram* H,const TArray<FSplinePointData>& World)
+{
+    H->Tags.AddUnique(TEXT("BuildingSkillsPlanConstruction"));
+    H->SetActorTransform(FTransform(World[0].Location)); H->mBuildStep=ESplineHologramBuildStep::SHBS_PlacePoleOrSnapEnding; H->mActivePointIdx=World.Num()-1;
+    auto Local=World; for (auto& P:Local) P.Location-=World[0].Location;
+    SetPoints(H,Local); H->SetActorHiddenInGame(false);
+    if (auto* R=Cast<AFGRailroadTrackHologram>(H)) { R->mFloorData.Reset(); for (const auto& P:Local) R->mFloorData.Add(P.Location); }
+}
+FVector FBSStick::PlanLimits(AFGSplineHologram* H)
+{ auto* R=Cast<AFGRailroadTrackHologram>(H); return R ? FVector(R->mMinBendRadius,R->mMaxGrade,R->mMinLength) : FVector(2000,35,100); }
+
 AFGSplineHologram* FBSStick::Active(UBSEditModeComponent* E)
 {
     auto* P=E ? Cast<AFGCharacterPlayer>(E->GetOwner()) : nullptr;
@@ -197,7 +233,7 @@ void FBSStick::Update(AFGSplineHologram* H,UBSEditModeComponent* E,const FVector
     bool Valid=false;
     FVector StartDirection=FVector::ZeroVector;
     const auto Transform=H->GetActorTransform();
-    const auto& Settings=E->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+    const auto& Settings=E->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
     // An accepted native endpoint owns its position, tangent and route.
     if (E->StickMode==EBSStickMode::Constrained && (Settings.VerticalConstraint || Settings.HorizontalConstraint) && !Snap(H,1))
     {
@@ -478,7 +514,7 @@ void FBSStick::Install()
             { Path.Start=Start; Path.Forward=H->GetActorTransform().TransformVectorNoScale(H->mSplineData[0].LeaveTangent); }
             if (E->StickMode==EBSStickMode::Constrained)
             {
-                const auto& Settings=E->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+                const auto& Settings=E->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
                 if (Settings.VerticalConstraint || Settings.HorizontalConstraint)
                 {
                     auto ConstrainedPath=Path;
@@ -555,7 +591,11 @@ void FBSStick::Install()
         // Holograms are local previews and need not have an authoritative actor
         // role. The construction world, rather than that role, owns this decision.
         if (H->GetNetMode()==NM_Client) return;
-        TGuardValue<APawn*> PlayerGuard(ConstructionPlayer,(StickRoot(H) || Part(H)) ? H->GetConstructionInstigator() : nullptr);
+        const bool PlanConstruction=H->ActorHasTag(TEXT("BuildingSkillsPlanConstruction"));
+        TGuardValue<APawn*> PlayerGuard(ConstructionPlayer,(StickRoot(H) || Part(H) || PlanConstruction) ? H->GetConstructionInstigator() : nullptr);
+        // Planner pieces are detached native holograms. Keep their payer in
+        // scope through construction, including early rail-support callbacks.
+        if (PlanConstruction) { Scope.Override(Scope(Base,Children,Id)); return; }
         if (Constructed) { AActor* A=Scope(Base,Children,Id); Constructed->Add(H,A); return; }
         auto* State=States.Find(H);
         TArray<AFGSplineHologram*> Extra;
@@ -656,14 +696,16 @@ void FBSStick::InstallRailCompatibility()
 
 void UBSEditModeComponent::OnStick()
 {
-    if (!FBSStick::Active(this) || !InputAllowed()) return;
-    FBSStick::Restore(FBSStick::Active(this));
+    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner()));
+    if ((!FBSStick::Active(this) && !(Plan && Plan->Active)) || !InputAllowed()) return;
+    if (auto* H=FBSStick::Active(this)) FBSStick::Restore(H);
     StickMode=EBSStickMode((uint8(StickMode)+1)%3); StickStatus.Reset(); TickStick();
 }
 void UBSEditModeComponent::ScrollStick(int32 Delta)
 {
-    if (!FBSStick::Active(this) || StickMode==EBSStickMode::Off || !InputAllowed()) return;
-    const auto& Settings=GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner()));
+    if ((!FBSStick::Active(this) && !(Plan && Plan->Active)) || StickMode==EBSStickMode::Off || !InputAllowed()) return;
+    const auto& Settings=GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
     auto* PC=Cast<APlayerController>(Cast<APawn>(GetOwner())->GetController());
     auto* Input=PC ? Cast<UEnhancedPlayerInput>(PC->PlayerInput) : nullptr;
     auto* Modifier=LoadObject<UInputAction>(nullptr,TEXT("/BuildingSkills/Inputs/IA_StickTilt.IA_StickTilt"));
@@ -683,12 +725,18 @@ void UBSEditModeComponent::ScrollStick(int32 Delta)
 void UBSEditModeComponent::TickStick()
 {
     FBSStick::InstallRailCompatibility();
-    const bool Spline=FBSStick::Active(this)!=nullptr;
-    if (!StickInitialized && Spline) { StickDistance=GetWorld()->GetSubsystem<UBSStickSession>()->Settings.StickDistance; StickInitialized=true; }
+    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner()));
+    const bool Spline=FBSStick::Active(this)!=nullptr || (Plan && Plan->Active);
+    if (!StickInitialized && Spline)
+    {
+        auto* Session=GetWorld()->GetSubsystem<UBSStickSession>();
+        StickDistance=Session->GetSettings().StickDistance;
+        StickInitialized=Session->HasLoadedDefaults();
+    }
     if (!Spline) { StickTilt=0; StickTiltSet=false; StickYaw=0; StickYawSet=false; StickMode=EBSStickMode::Off; StickStatus.Reset(); if (StickWindow) CloseStickSettings(); }
     if (!InputSubsystem.IsValid()) return;
     auto Context=[&](TObjectPtr<UInputMappingContext>& Owned,const TCHAR* Name,bool Enable) {
-        if (Enable && !Owned) if (auto* Source=LoadObject<UInputMappingContext>(nullptr,*FString::Printf(TEXT("/BuildingSkills/Inputs/MC_%s.MC_%s"),Name,Name)))
+        if (Enable && !Owned) if (auto* Source=LoadObject<UInputMappingContext>(nullptr,*FString::Printf(TEXT("/BuildingSkills/Inputs/Runtime/MC_%s.MC_%s"),Name,Name)))
         { Owned=DuplicateObject<UInputMappingContext>(Source,this); InputSubsystem->AddMappingContext(Owned,1003); }
         if (!Enable && Owned) { InputSubsystem->RemoveMappingContext(Owned); Owned=nullptr; }
     };
@@ -704,7 +752,7 @@ void UBSEditModeComponent::OnStickSettings()
     auto* P=Cast<AFGCharacterPlayer>(GetOwner()); auto* UI=P ? P->GetGameUI() : nullptr;
     if (!UI) return;
     StickWindow=CreateWidget<UBSStickSettingsWidget>(UI->GetOwningPlayer());
-    StickWindow->Draft=GetWorld()->GetSubsystem<UBSStickSession>()->Settings; StickWindow->mInteractObject=this;
+    StickWindow->Draft=GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings(); StickWindow->mInteractObject=this;
     StickWindow->SetDefaultFocusWidget(StickWindow); UI->PushWidget(StickWindow); StickWindow->SetInputMode();
 }
 void UBSEditModeComponent::CloseStickSettings()
@@ -870,6 +918,10 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     if (Phase==1)
     {
         Check(TEXT("Spline exposes toggle while initially off"),Active(E) && E->StickToggleContext && !E->StickContext && E->StickMode==EBSStickMode::Off);
+        auto* Toggle=LoadObject<UInputAction>(nullptr,TEXT("/BuildingSkills/Inputs/IA_StickToggle.IA_StickToggle"));
+        Check(TEXT("Active Stick context contains the toggle action"),
+            E->StickToggleContext && E->StickToggleContext->GetMappings().ContainsByPredicate(
+                [Toggle](const FEnhancedActionKeyMapping& Mapping) { return Toggle && Mapping.Action==Toggle; }));
         Check(TEXT("Initial distance defaults to sixty-four meters"),FBSStickSettings{}.StickDistance==64 && E->StickDistance==64);
         Key(EKeys::LeftAlt,true); Key(EKeys::S,true);
     }
@@ -878,7 +930,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
         Key(EKeys::S,false); Key(EKeys::LeftAlt,false);
         Check(TEXT("Configured Alt+S enters Default"),E->StickMode==EBSStickMode::Default && E->StickContext);
         E->StickDistance=8; E->ScrollStick(1);
-        Check(TEXT("One scroll adds configured step"),FMath::IsNearlyEqual(E->StickDistance,8.0+Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings.StickStep));
+        Check(TEXT("One scroll adds configured step"),FMath::IsNearlyEqual(E->StickDistance,8.0+Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings().StickStep));
         E->StickDistance=0; E->ScrollStick(-1); Check(TEXT("Distance stops at zero"),E->StickDistance==0);
         E->StickDistance=8;
         Key(EKeys::K,true);
@@ -909,7 +961,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
         SetPoints(H,Line);
         if (!Curved)
         {
-            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
             const auto SavedSettings=Settings; const auto SavedMode=E->StickMode;
             E->StickMode=EBSStickMode::Constrained;
             Settings.StickSlope=0; Settings.StickRadius=10;
@@ -1088,7 +1140,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     if (Phase==12)
     {
         Key(EKeys::MouseScrollUp,false);
-        Check(TEXT("Physical wheel drives the configured distance action"),FMath::IsNearlyEqual(E->StickDistance,8.0+Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings.StickStep));
+        Check(TEXT("Physical wheel drives the configured distance action"),FMath::IsNearlyEqual(E->StickDistance,8.0+Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings().StickStep));
         Check(TEXT("Bottom hints expose toggle, wheel, both tilt axes and K"),E->GetControlHints().Num()==6);
         Key(EKeys::K,true);
     }
@@ -1143,7 +1195,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
             };
             Find(E->StickWindow->TakeWidget());
             Check(TEXT("Mouse Apply closes settings"),Buttons.Num()==2 && Click(Buttons.Last()) && !E->StickWindow);
-            const auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+            const auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
             Check(TEXT("Apply stores temporary session values"),Settings.StickStep==2.5f && Settings.StickRadius==60 && Settings.StickTiltStep==7.5f && !Settings.VerticalConstraint && !Settings.HorizontalConstraint);
         }
         if (E->StickWindow) E->CloseStickSettings();
@@ -1151,7 +1203,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     }
     if (Phase==15)
     {
-        auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+        auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
         const bool VerticalBefore=Settings.VerticalConstraint, HorizontalBefore=Settings.HorizontalConstraint;
         Check(TEXT("Reopening K retains applied constraint switches"),E->StickWindow && E->StickWindow->Draft.VerticalConstraint==VerticalBefore && E->StickWindow->Draft.HorizontalConstraint==HorizontalBefore);
         if (E->StickWindow) E->StickWindow->Draft.VerticalConstraint=!VerticalBefore;
@@ -1247,7 +1299,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
             Check(TEXT("Received native path with supports is buildable"),Received->CanConstruct());
             Received->Destroy();
             E->OnStick();
-            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
             // Free supports may face back toward the player. A finite radius
             // gives those starts a valid forward-running turn toward the aim.
             Settings.StickSlope=FMath::RadiansToDegrees(FMath::Atan(.1)); Settings.StickRadius=120;
@@ -1559,7 +1611,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     if (Phase==44)
     {
         Key(EKeys::MouseScrollUp,false); Key(EKeys::LeftControl,false);
-        const auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+        const auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
         Check(TEXT("Ctrl wheel uses the configured horizontal tilt step without changing pitch or distance"),
             E->StickYawSet && FMath::IsNearlyEqual(E->StickYaw,double(Settings.StickTiltStep)) && E->StickTilt==15 && E->StickDistance==64);
         Player->UnequipBuildGun(); E->TickStick();
@@ -1582,7 +1634,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
         {
             E->StickMode=EBSStickMode::Default;
             E->TickStick(); E->StickDistance=8;
-            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->Settings;
+            auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
             Settings.VerticalConstraint=true; Settings.HorizontalConstraint=true;
             Settings.StickSlope=FMath::RadiansToDegrees(FMath::Atan(.1)); Settings.StickRadius=120;
             auto Refresh=[&] {

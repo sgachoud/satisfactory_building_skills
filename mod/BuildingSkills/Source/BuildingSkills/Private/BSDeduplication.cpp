@@ -429,7 +429,7 @@ void UBSEditModeComponent::TickDeduplication()
     if (!InputSubsystem.IsValid()) return;
     const bool Active = IsBlueprintBuilding();
     if (Active && !DeduplicationContext)
-        if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Deduplication.MC_Deduplication")))
+        if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Deduplication.MC_Deduplication")))
         { DeduplicationContext = DuplicateObject<UInputMappingContext>(Source, this); InputSubsystem->AddMappingContext(DeduplicationContext, 1002); }
     if (!Active && DeduplicationContext)
     { InputSubsystem->RemoveMappingContext(DeduplicationContext); DeduplicationContext = nullptr; Deduplication = EBSDeduplication::Off; }

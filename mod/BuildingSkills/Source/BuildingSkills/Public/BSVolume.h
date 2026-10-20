@@ -4,12 +4,13 @@
 #include "BSGroups.h"
 #include "BSVolume.generated.h"
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct BUILDINGSKILLS_API FBSVolumeSettings
 {
     GENERATED_BODY()
-    UPROPERTY() float VolumeStep = 8;
-    UPROPERTY() float VolumeRotation = 15;
+    // Required by SML's writable Blueprint-reflection configuration bridge.
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float VolumeStep = 8;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float VolumeRotation = 15;
     static FBSVolumeSettings Get(UWorld* World);
     bool Valid() const;
     static FLinearColor Color();
@@ -34,6 +35,7 @@ class BUILDINGSKILLS_API UBSVolumeSettingsWidget : public UFGInteractWidget
 public:
     UBSVolumeSettingsWidget(const FObjectInitializer& Initializer);
     FBSVolumeSettings Draft;
+    void Save();
     virtual void OnEscapePressed_Implementation() override;
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;

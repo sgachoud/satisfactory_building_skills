@@ -1,4 +1,6 @@
 #include "BSGroups.h"
+#include "FGPlayerState.h"
+#include "Buildables/FGBuildableRailroadTrack.h"
 #include "BSEditModeComponent.h"
 #include "BuildingSkills.h"
 #include "Buildables/FGBuildable.h"
@@ -387,6 +389,10 @@ void ABSGroupSubsystem::GatherDependencies_Implementation(TArray<UObject*>& Out)
 {
     if (auto* LW = AFGLightweightBuildableSubsystem::Get(GetWorld())) Out.AddUnique(LW);
     for (const auto& G : Groups) for (const auto& B : G.Buildings) if (IsValid(B.Actor)) Out.AddUnique(B.Actor);
+    for (const auto& Plan : RailPlans)
+    {
+        if (IsValid(Plan.Owner)) Out.AddUnique(Plan.Owner);
+    }
 }
 
 void ABSGroupSubsystem::PreSaveGame_Implementation(int32, int32)

@@ -97,6 +97,7 @@ void FBSActionHistory::Record(UBSGroupRemoteCallObject* RCO, UBSActionRecord* En
 {
     if (!RCO || !Entry || Entry->Members.IsEmpty()) return;
     auto& History = Entry->Deletion ? RCO->DeleteHistory : RCO->BuildHistory;
+    (Entry->Deletion ? RCO->DeleteRedoHistory : RCO->BuildRedoHistory).Reset();
     History.Add(Entry);
     const int32 Max = Limit(RCO->GetWorld());
     if (History.Num() > Max) History.RemoveAt(0, History.Num() - Max);
@@ -415,6 +416,7 @@ bool UBSActionRecord::Restore(AFGCharacterPlayer* Player, FString& Message)
         FBSGroupTree::PruneEmpty(GroupSystem->Groups); GroupSystem->PublishGroups();
     }
     for(const auto& D:Debits) D.Inventory->RemoveFromIndex(D.Slot,D.Count);
+    Members=Restored;
     Committed=true; Message=FString::Printf(TEXT("Restored %d buildings."),Restored.Num()); return true;
 }
 
@@ -525,7 +527,7 @@ void FBSActionHistory::Install()
         });
 }
 
-bool FBSActionHistory::Undo(UBSGroupRemoteCallObject* RCO,bool Deletion,FString& Message)
+bool FBSActionHistory::Undo(UBSGroupRemoteCallObject* RCO,bool Deletion,FString& Message,bool Redo)
 {
     auto* Player=RCO?RCO->GetOwnerPlayerCharacter():nullptr; auto* Gun=Player?Player->GetBuildGun():nullptr;
     if(!Player || !Player->HasAuthority() || !Player->IsBuildGunEquipped() || !Gun ||
@@ -533,15 +535,22 @@ bool FBSActionHistory::Undo(UBSGroupRemoteCallObject* RCO,bool Deletion,FString&
         UBSEditModeComponent::IsEditDescriptor(Gun->GetCurrentBuildGunMode()) || Player->IsDrivingVehicle() || Player->IsInPortal() ||
         !Player->GetHealthComponent() || Player->GetHealthComponent()->IsDead())
     { Message=TEXT("Open the matching Build or Dismantle gun to undo."); return false; }
-    auto& History=Deletion?RCO->DeleteHistory:RCO->BuildHistory;
+    auto& UndoStack=Deletion?RCO->DeleteHistory:RCO->BuildHistory;
+    auto& RedoStack=Deletion?RCO->DeleteRedoHistory:RCO->BuildRedoHistory;
+    auto& History=Redo?RedoStack:UndoStack;
+    auto& Destination=Redo?UndoStack:RedoStack;
     const int32 Max=Limit(RCO->GetWorld()); if(History.Num()>Max) History.RemoveAt(0,History.Num()-Max);
-    if(History.IsEmpty()) { Message=Deletion?TEXT("No deletion to undo."):TEXT("No construction to undo."); return false; }
+    if(History.IsEmpty()) { Message=Redo?TEXT("Nothing to redo in this gun."):TEXT("Nothing to undo in this gun."); return false; }
     auto* Entry=History.Last().Get(); if(!Entry || !Entry->Error.IsEmpty()) { Message=Entry?Entry->Error:TEXT("History is unavailable."); return false; }
     bool InReach=false; for(const auto& Ref:Entry->Members) InReach |= FVector::DistSquared(Ref.Transform.GetLocation(),Player->GetActorLocation())<=FMath::Square(Gun->GetBuildGunRange()+1000.0f);
     if(!InReach) { Message=TEXT("Move within Build Gun range of the affected buildings to undo."); return false; }
     TGuardValue<bool> RestoreGuard(Restoring,true);
-    if(Deletion)
-    { if(!Entry->Restore(Player,Message)) return false; History.Pop(); return true; }
+    auto Transfer=[&](UBSActionRecord* Inverse) {
+        History.Pop(); Destination.Add(Inverse);
+        if (Destination.Num()>Max) Destination.RemoveAt(0,Destination.Num()-Max);
+    };
+    if(Deletion!=Redo)
+    { if(!Entry->Restore(Player,Message)) return false; Transfer(Entry); return true; }
     auto* State=Cast<UFGBuildGunStateDismantle>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_DISMANTLE));
     if(!State) return false;
     TArray<AActor*> Actors; TArray<FDismantleLightweightBundle> Bundles; TSet<AActor*> Allowed;
@@ -567,10 +576,26 @@ bool FBSActionHistory::Undo(UBSGroupRemoteCallObject* RCO,bool Deletion,FString&
         for(auto* Other:Related) if(IsValid(Other) && !Allowed.Contains(Other))
         { Message=TEXT("Other buildings now depend on this construction. Disconnect them before undoing it."); return false; }
     }
+    auto* Inverse=NewObject<UBSActionRecord>(RCO); Inverse->Deletion=true;
+    if (!Inverse->Capture(Player,Entry->Members)) { Message=Inverse->Error; return false; }
+    auto* Inventory=Player->GetInventory(); TArray<FInventoryStack> Before,After;
+    if (Inventory) Inventory->GetInventoryStacks(Before);
+    TArray<TWeakObjectPtr<AActor>> Spawned;
+    const auto SpawnHandle=RCO->GetWorld()->AddOnActorSpawnedHandler(FOnActorSpawned::FDelegate::CreateLambda([&](AActor* A) { if(DroppingRefund) Spawned.Add(A); }));
+    ON_SCOPE_EXIT { RCO->GetWorld()->RemoveOnActorSpawnedHandler(SpawnHandle); };
+    TGuardValue<UBSActionRecord*> CaptureGuard(Capturing,Inverse);
+    TGuardValue<AFGCharacterPlayer*> PlayerGuard(CapturingPlayer,Player);
     State->Server_DismantleActors_Implementation(Actors,Bundles);
-    Entry->Members.RemoveAll([&](const auto& Ref){ return !Ref.IsAlive(RCO->GetWorld()); });
-    if(!Entry->Members.IsEmpty()) { Message=TEXT("Some construction objects could not be dismantled; remaining objects stay in history."); return false; }
-    History.Pop(); Message=TEXT("Construction undone."); return true;
+    if (Inventory) Inventory->GetInventoryStacks(After);
+    TArray<FInventoryStack> Totals;
+    for (const auto& Stack:After) AppendRefund(Totals,Stack);
+    for (const auto& Stack:Before) for (auto& Total:Totals) if (SameItem(Stack.Item,Total.Item)) { Total.NumItems-=Stack.NumItems; break; }
+    for (const auto& Stack:Totals) AppendRefund(Inverse->Refund,Stack);
+    for (const auto& Weak:Spawned) if (auto* A=Weak.Get())
+        for (auto* I:TInlineComponentArray<UFGInventoryComponent*>(A)) Inverse->RefundInventories.AddUnique(I);
+    for (const auto& Ref:Entry->Members) if (Ref.IsAlive(RCO->GetWorld()))
+    { Entry->Error=TEXT("The action only partially completed; history cannot safely replay it."); Message=Entry->Error; return false; }
+    Transfer(Inverse); Message=Redo?TEXT("Deletion redone."):TEXT("Construction undone."); return true;
 }
 void UBSGroupRemoteCallObject::Server_UndoGunAction_Implementation(bool Deletion)
 {
@@ -582,4 +607,12 @@ void UBSGroupRemoteCallObject::Server_UndoGunAction_Implementation(bool Deletion
         FChatMessageStruct Notice; Notice.MessageText=FText::FromString(Message);
         Notice.MessageType=EFGChatMessageType::CMT_SystemMessage; PC->Client_SendChatMessage(Notice);
     }
+}
+
+void UBSGroupRemoteCallObject::Server_RedoGunAction_Implementation(bool Deletion)
+{
+    const double Now=GetWorld()->GetRealTimeSeconds(); if(Now-LastActionUndo<.25) return; LastActionUndo=Now;
+    FString Message; FBSActionHistory::Undo(this,Deletion,Message,true);
+    UE_LOG(LogBuildingSkills,Display,TEXT("Action redo: %s"),*Message);
+    Client_ConnectedMessage(Message);
 }

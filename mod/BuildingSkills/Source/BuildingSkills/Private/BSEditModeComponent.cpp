@@ -73,6 +73,7 @@ UBSSpreadConnectedModeDescriptor::UBSSpreadConnectedModeDescriptor() { mDisplayN
 namespace
 {
     FNativeFuncPtr OriginalSupportedModesThunk = nullptr;
+    FNativeFuncPtr OriginalPlanCostThunk = nullptr;
     TMap<TWeakObjectPtr<AFGBuildGun>, uint64> PendingRadialCommits;
     void TraceModeInput(const TCHAR* Event, AFGBuildGun* Gun)
     {
@@ -105,8 +106,36 @@ UBSEditModeComponent* UBSEditModeComponent::ForGun(AFGBuildGun* Gun)
 void UBSEditModeComponent::InstallHooks()
 {
     if (!WITH_EDITOR) {
+    if (auto* Function=UFGBuildGunStateBuild::StaticClass()->FindFunctionByName(TEXT("GetHologramCost")); Function && !OriginalPlanCostThunk)
+    {
+        OriginalPlanCostThunk=Function->GetNativeFunc();
+        Function->SetNativeFunc([](UObject* Context,FFrame& Stack,void* Result)
+        {
+            auto* State=Cast<UFGBuildGunStateBuild>(Context);
+            if (State && UBSPlanComponent::For(State->GetBuildGun()) && !State->GetHologram())
+            {
+                // This parameterless Blueprint query has no construction cost
+                // in Plan. Avoid both the warning and aggregate native-hook ABI.
+                Stack.Code += !!Stack.Code;
+                if (Result) reinterpret_cast<TArray<FItemAmount>*>(Result)->Reset();
+                return;
+            }
+            OriginalPlanCostThunk(Context,Stack,Result);
+        });
+    }
+    SUBSCRIBE_METHOD(AFGBuildGun::GotoBuildState, [](auto& Scope, AFGBuildGun* Gun, TSubclassOf<UFGRecipe> Recipe)
+    {
+        if (Recipe || !UBSPlanComponent::For(Gun)) return;
+        // The SDK documents nullptr here, but the shipped wrapper rejects it.
+        // Enter its native state directly after clearing the cached recipe so
+        // BeginState cannot recreate a previous construction hologram.
+        Scope.Cancel();
+        if (auto* Build=Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD))) Build->SetActiveRecipe(nullptr);
+        Gun->GotoState(EBuildGunState::BGS_BUILD);
+    });
     SUBSCRIBE_METHOD(AFGBuildGun::OnPrimaryFirePressed, [](auto& Scope, AFGBuildGun* Gun)
     {
+        if (auto* Plan=UBSPlanComponent::For(Gun)) { Scope.Cancel(); if (!Gun->mWaitingForPrimaryFireRelease) { Gun->mWaitingForPrimaryFireRelease=true; Plan->Primary(false); } return; }
         auto* Edit = ForGun(Gun);
         auto* Paint = Cast<UFGBuildGunStatePaint>(Gun->GetCurrentState());
         auto* Player=Gun->GetInstigatorCharacter();
@@ -123,6 +152,12 @@ void UBSEditModeComponent::InstallHooks()
         Gun->mWaitingForPrimaryFireRelease = true;
         Paint->PrimaryFire();
     });
+    SUBSCRIBE_METHOD(AFGBuildGun::OnPrimaryFireReleased, [](auto& Scope, AFGBuildGun* Gun)
+    { if (auto* Plan=UBSPlanComponent::For(Gun)) { Scope.Cancel(); Gun->mWaitingForPrimaryFireRelease=false; Plan->Primary(true); } });
+    SUBSCRIBE_METHOD(AFGBuildGun::OnSecondaryFirePressed, [](auto& Scope, AFGBuildGun* Gun)
+    { if (auto* Plan=UBSPlanComponent::For(Gun)) { Scope.Cancel(); Plan->Secondary(); } });
+    // Secondary release is a native no-op (too small to detour in Shipping).
+    // Consume the press above; no release hook is needed.
     // Native tracing still establishes the target, but our persistent selection
     // and separate hover layer own its outlines. Avoid creating/destroying a
     // temporary native hover proxy every frame beside a pinned selection.
@@ -150,22 +185,24 @@ void UBSEditModeComponent::InstallHooks()
         TraceModeInput(TEXT("Pressed"), Gun);
         for (auto It = PendingRadialCommits.CreateIterator(); It; ++It)
             if (!It.Key().IsValid() || It.Value() < GFrameCounter || It.Key() == Gun) It.RemoveCurrent();
-        if (auto* Edit = ForGun(Gun); Edit && (Edit->bTransforming || Edit->IsSpreadPainting()) && !Edit->InputAllowed()) Scope.Cancel();
+        if (auto* Edit = ForGun(Gun); Edit && (Edit->bTransforming || Edit->IsSpreadPainting() || UBSPlanComponent::For(Gun)) && !Edit->InputAllowed()) Scope.Cancel();
     });
     SUBSCRIBE_METHOD(AFGBuildGun::Input_ModeSelect, [](auto& Scope, AFGBuildGun* Gun, const FInputActionValue& Value)
     {
         TraceModeInput(Value.Get<bool>() ? TEXT("Action press") : TEXT("Action release"), Gun);
         auto* Edit = ForGun(Gun);
-        if (!Edit || Value.Get<bool>() || !(Edit->bTransforming || Edit->IsSpreadPainting())) return;
+        auto* Plan=UBSPlanComponent::For(Gun);
+        if (!Edit || Value.Get<bool>() || !(Edit->bTransforming || Edit->IsSpreadPainting() || Plan)) return;
         const bool RadialWasOpen = Gun->IsWaitingForBuildGunModeSelectUI();
         if (RadialWasOpen) PendingRadialCommits.Add(Gun, GFrameCounter + 4);
         const bool Tap = Gun->mBuildModeSelectHoldTime >= 0 && !RadialWasOpen;
         const auto PreviousTransform = Edit->TransformMode;
         const bool PreviousSpread = Edit->bConnectedPaint;
+        const bool PreviousPlanEdit = Plan && Plan->Editing;
         // Native release closes a held radial. A short release has no native
         // local-tool mode to advance, so cycle once after the normal release.
         Scope(Gun, Value);
-        if (Tap && Edit->TransformMode == PreviousTransform && Edit->bConnectedPaint == PreviousSpread)
+        if (Tap && Edit->TransformMode == PreviousTransform && Edit->bConnectedPaint == PreviousSpread && (!Plan || Plan->Editing==PreviousPlanEdit))
         {
             if (FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsRuntimeTest")))
             {
@@ -176,7 +213,7 @@ void UBSEditModeComponent::InstallHooks()
                             if (Widget && (Widget->mDisableBuildGunActions || Widget->mUseKeyboard || Widget->mUseMouse))
                                 UE_LOG(LogBuildingSkills, Display, TEXT("MODE TAP BLOCKER: %s"), *GetNameSafe(Widget));
             }
-            if (Edit->bTransforming) Edit->CycleTransform(1); else Edit->ToggleConnectedPaint();
+            if (Plan) Plan->SetMode(!Plan->Editing); else if (Edit->bTransforming) Edit->CycleTransform(1); else Edit->ToggleConnectedPaint();
             if (FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsRuntimeTest")))
                 UE_LOG(LogBuildingSkills, Display, TEXT("MODE TAP RESULT: transform=%d spread=%d"), int32(Edit->TransformMode), Edit->bConnectedPaint);
         }
@@ -193,6 +230,7 @@ void UBSEditModeComponent::InstallHooks()
             auto* State = Cast<UFGBuildGunState>(Context);
             if (!State || !Stack.MostRecentPropertyAddress || !CastField<FArrayProperty>(Stack.MostRecentProperty)) return;
             auto& Modes = *reinterpret_cast<TArray<TSubclassOf<UFGBuildGunModeDescriptor>>*>(Stack.MostRecentPropertyAddress);
+            if (UBSPlanComponent::For(State->GetBuildGun())) { Modes={UBSPlanPlaceMode::StaticClass(),UBSPlanEditMode::StaticClass()}; return; }
             if (auto* Edit = ForGun(State->GetBuildGun()))
             {
                 if (Edit->bTransforming && State->IsA<UFGBuildGunStateDismantle>()) Modes = TransformRadialModes();
@@ -205,6 +243,7 @@ void UBSEditModeComponent::InstallHooks()
     // reflected thunk. Supply the same local choices after that dispatch too.
     SUBSCRIBE_METHOD_AFTER(UFGBuildGunState::GetSupportedBuildModes, [](const UFGBuildGunState* State, TArray<TSubclassOf<UFGBuildGunModeDescriptor>>& Modes)
     {
+        if (UBSPlanComponent::For(State->GetBuildGun())) { Modes.Reset(); Modes.Add(UBSPlanPlaceMode::StaticClass()); Modes.Add(UBSPlanEditMode::StaticClass()); return; }
         if (auto* Edit = ForGun(State->GetBuildGun()))
         {
             if (Edit->bTransforming && State->IsA<UFGBuildGunStateDismantle>()) Modes = TransformRadialModes();
@@ -215,6 +254,7 @@ void UBSEditModeComponent::InstallHooks()
     SUBSCRIBE_METHOD(AFGBuildGun::CycleBuildMode, [](auto& Scope, AFGBuildGun* Gun, int32 Delta)
     {
         TraceModeInput(TEXT("Cycle"), Gun);
+        if (auto* Plan=UBSPlanComponent::For(Gun)) { if (Delta%2) Plan->SetMode(!Plan->Editing); Scope.Cancel(); return; }
         if (auto* Edit = ForGun(Gun))
         {
             if (Edit->bTransforming) { Edit->CycleTransform(Delta); Scope.Cancel(); }
@@ -223,6 +263,7 @@ void UBSEditModeComponent::InstallHooks()
     });
     SUBSCRIBE_METHOD(AFGBuildGun::IsCurrentBuildGunMode, [](auto& Scope, const AFGBuildGun* Gun, TSubclassOf<UFGBuildGunModeDescriptor> Mode)
     {
+        if (auto* Plan=UBSPlanComponent::For(const_cast<AFGBuildGun*>(Gun))) { Scope.Override(Mode==(Plan->Editing ? UBSPlanEditMode::StaticClass() : UBSPlanPlaceMode::StaticClass())); return; }
         if (auto* Edit = ForGun(const_cast<AFGBuildGun*>(Gun)))
         {
             if (Edit->bTransforming) Scope.Override(Mode == TransformRadialModes()[int32(Edit->TransformMode)]);
@@ -231,9 +272,24 @@ void UBSEditModeComponent::InstallHooks()
     });
     SUBSCRIBE_METHOD(AFGBuildGun::SetCurrentBuildGunMode, [](auto& Scope, AFGBuildGun* Gun, TSubclassOf<UFGBuildGunModeDescriptor> Mode)
     {
+        // A tap also queues a native first-item assignment. Only explicit Plan
+        // changes or an actual radial choice may update its native descriptor.
+        if (auto* Plan=UBSPlanComponent::For(Gun); Plan && (Mode==UBSPlanPlaceMode::StaticClass() || Mode==UBSPlanEditMode::StaticClass()))
+        {
+            if (!Plan->UpdatingNativeMode)
+            {
+                uint64 Deadline=0;
+                const bool Pending=PendingRadialCommits.RemoveAndCopyValue(Gun,Deadline) && Deadline>=GFrameCounter;
+                if (!Gun->IsWaitingForBuildGunModeSelectUI() && !Pending) { Scope.Cancel(); return; }
+            }
+            Scope(Gun,Mode);
+            if (!Plan->UpdatingNativeMode) Plan->SetMode(Mode==UBSPlanEditMode::StaticClass());
+            return;
+        }
         const int32 TransformIndex = TransformRadialModes().IndexOfByKey(Mode);
         const bool Spread = Mode == UBSSpreadDefaultModeDescriptor::StaticClass() || Mode == UBSSpreadConnectedModeDescriptor::StaticClass();
-        if (TransformIndex == INDEX_NONE && !Spread) return;
+        const bool PlanMode=Mode==UBSPlanPlaceMode::StaticClass() || Mode==UBSPlanEditMode::StaticClass();
+        if (TransformIndex == INDEX_NONE && !Spread && !PlanMode) return;
         Scope.Cancel();
         auto* Edit = ForGun(Gun);
         if (!Edit) return;
@@ -244,13 +300,14 @@ void UBSEditModeComponent::InstallHooks()
         uint64 CommitDeadline = 0;
         const bool PendingCommit = PendingRadialCommits.RemoveAndCopyValue(Gun, CommitDeadline) && CommitDeadline >= GFrameCounter;
         if (!Gun->IsWaitingForBuildGunModeSelectUI() && !PendingCommit) return;
-        if (!((TransformIndex != INDEX_NONE && Edit->bTransforming) || (Spread && Edit->IsSpreadPainting()))) return;
+        if (!((TransformIndex != INDEX_NONE && Edit->bTransforming) || (Spread && Edit->IsSpreadPainting()) || (PlanMode && UBSPlanComponent::For(Gun)))) return;
         // Match native ordering: closing the radial may commit its hovered item.
         // Apply the requested choice last so that callback cannot overwrite it.
         Gun->mBuildModeSelectHoldTime = -1;
         Gun->mIsWaitingForSelectionUI = false;
         Gun->CloseBuildGunModeSelectUI();
-        if (TransformIndex != INDEX_NONE)
+        if (PlanMode) UBSPlanComponent::For(Gun)->SetMode(Mode==UBSPlanEditMode::StaticClass());
+        else if (TransformIndex != INDEX_NONE)
         {
             Edit->TransformMode = EBSTransformMode(TransformIndex);
             Edit->TransformOptions.Gesture.Invalidate();
@@ -263,10 +320,16 @@ void UBSEditModeComponent::InstallHooks()
         }
     });
     SUBSCRIBE_METHOD(AFGBuildGun::Scroll, [](auto& Scope, AFGBuildGun* Gun, int32 Delta)
-    { if (auto* Edit = ForGun(Gun)) { if (Edit->bTransforming) { Edit->ScrollTransform(Delta); Scope.Cancel(); } else if (Edit->IsVolumeSelection()) Scope.Cancel(); } });
+    { if (UBSPlanComponent::For(Gun)) { Scope.Cancel(); return; } if (auto* Edit = ForGun(Gun)) { if (Edit->bTransforming) { Edit->ScrollTransform(Delta); Scope.Cancel(); } else if (Edit->IsVolumeSelection()) Scope.Cancel(); } });
     SUBSCRIBE_METHOD(UFGGameUI::Native_HandlePauseGamePressed, [](auto& Scope, UFGGameUI* UI)
     {
         auto* Pawn = UI->GetOwningPlayerPawn();
+        if (auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(Pawn)); Plan && Plan->Active)
+        {
+            const auto& Stack=UI->GetInteractWidgetStack();
+            if (Plan->Window && !Stack.IsEmpty() && Stack.Last()==Plan->Window) { Plan->CloseSettings(); Scope.Cancel(); return; }
+            if (Plan->Allowed()) { Plan->Close(true); Scope.Cancel(); return; }
+        }
         auto* Edit = Pawn ? Pawn->FindComponentByClass<UBSEditModeComponent>() : nullptr;
         if (Edit && Edit->TransformersWindow)
         {
@@ -457,7 +520,7 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     PC->PushInputComponent(Input);
     BoundInput = Input;
     InputSubsystem = PC->GetLocalPlayer() ? PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
-    if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_BuildingSkills.MC_BuildingSkills")); Source && InputSubsystem.IsValid())
+    if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_BuildingSkills.MC_BuildingSkills")); Source && InputSubsystem.IsValid())
     {
         // Own a runtime copy so native player-context changes cannot remove it.
         // Mappable names and actions remain identical to the settings assets.
@@ -478,14 +541,10 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     { if (auto* Action = LoadObject<UInputAction>(nullptr, Path)) Input->BindAction(Action, ETriggerEvent::Started, this, Handler); };
     Bind(TEXT("/BuildingSkills/Inputs/IA_Transform.IA_Transform"), &ThisClass::OnTransform);
     Bind(TEXT("/BuildingSkills/Inputs/IA_AddTransformer.IA_AddTransformer"), &ThisClass::OnAddTransformer);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_TransformerSettings.IA_TransformerSettings"), &ThisClass::OnTransformerSettings);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_TransformSettings.IA_TransformSettings"), &ThisClass::OnTransformSettings);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_ConnectedSettings.IA_ConnectedSettings"), &ThisClass::OnConnectedSettings);
     Bind(TEXT("/BuildingSkills/Inputs/IA_VolumeShape.IA_VolumeShape"), &ThisClass::OnVolumeShape);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_VolumeSettings.IA_VolumeSettings"), &ThisClass::OnVolumeSettings);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Deduplication.IA_Deduplication"), &ThisClass::OnDeduplication);
+    Bind(TEXT("/BuildingSkills/Inputs/IA_Settings.IA_Settings"), &ThisClass::OnSettings);
     Bind(TEXT("/BuildingSkills/Inputs/IA_StickToggle.IA_StickToggle"), &ThisClass::OnStick);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_StickSettings.IA_StickSettings"), &ThisClass::OnStickSettings);
     for (int32 Direction : {1,-1})
     {
         const FString Name=Direction>0 ? TEXT("StickScrollUp") : TEXT("StickScrollDown");
@@ -495,7 +554,6 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     Bind(TEXT("/BuildingSkills/Inputs/IA_Pivot.IA_Pivot"), &ThisClass::OnPivot);
     Bind(TEXT("/BuildingSkills/Inputs/IA_AxisSpace.IA_AxisSpace"), &ThisClass::OnAxisSpace);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Anchor.IA_Anchor"), &ThisClass::OnAnchor);
-    Bind(TEXT("/BuildingSkills/Inputs/IA_ActionUndo.IA_ActionUndo"), &ThisClass::OnActionUndo);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Undo.IA_Undo"), &ThisClass::OnUndo);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Redo.IA_Redo"), &ThisClass::OnRedo);
     for (int32 Direction : {1, -1})
@@ -525,6 +583,18 @@ void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)
     Bind(TEXT("/BuildingSkills/Inputs/IA_Save.IA_Save"), &ThisClass::OnSave);
     Bind(TEXT("/BuildingSkills/Inputs/IA_Copy.IA_Copy"), &ThisClass::OnCopy);
     Bind(TEXT("/BuildingSkills/Inputs/IA_BlueprintAnchor.IA_BlueprintAnchor"), &ThisClass::OnBlueprintAnchor);
+    auto* Plan=UBSPlanComponent::Find(Player);
+    if (!Plan) { Plan=NewObject<UBSPlanComponent>(Player); Player->AddInstanceComponent(Plan); Plan->RegisterComponent(); }
+    const auto Defaults=FBSTransformSettings::Get(GetWorld());
+    ConnectedSettings.Gap=FMath::IsFinite(Defaults.ConnectedGap) ? FMath::Clamp(Defaults.ConnectedGap,0.f,1000.f) : 0;
+    ConnectedSettings.Limit=FMath::IsFinite(Defaults.ConnectedLimit) ? FMath::RoundToInt(FMath::Clamp(Defaults.ConnectedLimit,1.f,2048.f)) : 64;
+    ConnectedSettings.Scope=EBSConnectedScope(FMath::IsFinite(Defaults.ConnectedScope) ? FMath::RoundToInt(FMath::Clamp(Defaults.ConnectedScope,0.f,3.f)) : 3);
+    ConnectedSettings.IgnoreSwatch=Defaults.ConnectedIgnoreSwatch; ConnectedSettings.IgnoreMaterial=Defaults.ConnectedIgnoreMaterial;
+    ConnectedSettings.Whitelist=Defaults.ConnectedWhitelist; ConnectedSettings.Blacklist=Defaults.ConnectedBlacklist;
+    // Keep regex errors visible to the existing settings/search validation.
+    // Resetting the whole settings struct would silently remove the filters
+    // and discard otherwise valid defaults.
+    Plan->Initialize(Input);
 }
 
 bool UBSEditModeComponent::InputAllowed() const
@@ -552,6 +622,7 @@ void UBSEditModeComponent::OnToggleTriggered()
     if (!InputAllowed()) return;
     if (EditGun.IsValid()) { LeaveEditMode(true); return; }
     auto* Player = CastChecked<AFGCharacterPlayer>(GetOwner());
+    if (auto* Plan=UBSPlanComponent::Find(Player); Plan && Plan->Active) Plan->Close(false);
     if (!Player->CanEquipBuildGunForDismantle()) return;
     auto* Gun = Player->GetBuildGun();
     if (!IsValid(Gun)) return;
@@ -899,7 +970,7 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
                 bEnteringEdit = false;
                 if (InputSubsystem.IsValid())
                 {
-                    auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_EditOperations.MC_EditOperations"));
+                    auto* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_EditOperations.MC_EditOperations"));
                     if (Context)
                     {
                         OperationsContext = DuplicateObject<UInputMappingContext>(Context, this);
@@ -919,7 +990,7 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
     }
     if (!bEnteringEdit && EditGun.IsValid() && (!State || !IsEditDescriptor(Gun->GetCurrentBuildGunMode()) ||
         !Player->GetHealthComponent() || Player->GetHealthComponent()->IsDead())) LeaveEditMode(false);
-    if (!State && !IsPainting() && !IsBlueprintBuilding() && !FBSStick::Active(this))
+    if (!State && !IsPainting() && !IsBlueprintBuilding() && !FBSStick::Active(this) && !UBSPlanComponent::For(Gun))
     {
         if (ActiveState.IsValid()) { ClearSelection(); ActiveState.Reset(); }
         // The hint container is embedded in the indicator's Slate tree. Retaining
@@ -943,12 +1014,16 @@ void UBSEditModeComponent::TickComponent(float Delta, ELevelTick Type, FActorCom
     UpdateBlueprintAnchor();
     UpdateEditColors(IsEditing());
     UpdateNativeGunHUD(IsEditing() && !Gun->IsWaitingForBuildGunModeSelectUI());
-    UpdateControlHints((IsEditing() || IsConnectedSelection() || IsVolumeSelection() || IsSpreadPainting() || IsBlueprintBuilding() || FBSStick::Active(this)) && !Gun->IsWaitingForBuildGunModeSelectUI() && InputAllowed());
+    UpdateControlHints((IsEditing() || IsConnectedSelection() || IsVolumeSelection() || IsSpreadPainting() || IsBlueprintBuilding() || FBSStick::Active(this) || UBSPlanComponent::For(Gun)) && !Gun->IsWaitingForBuildGunModeSelectUI() && InputAllowed());
     if (Indicator) Indicator->SetVisibility(InputAllowed() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
 void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
 {
+    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner()));
+    const FName Desired=Plan && Plan->Active ? TEXT("Widget_BuildMode_C") : TEXT("Widget_DismantleMode_C");
+    if (NativeGunHUD.IsValid() && NativeGunHUD->GetClass()->GetFName()!=Desired)
+    { NativeGunHUD->SetVisibility(NativeGunHUDVisibility); NativeGunHUD.Reset(); }
     if (!Editing)
     {
         if (NativeGunHUD.IsValid()) NativeGunHUD->SetVisibility(NativeGunHUDVisibility);
@@ -959,7 +1034,7 @@ void UBSEditModeComponent::UpdateNativeGunHUD(bool Editing)
         if (auto* Player = Cast<AFGCharacterPlayer>(GetOwner()))
             if (auto* UI = Player->GetGameUI())
                 for (auto* Widget : UI->GetInteractWidgetStack())
-                    if (Widget && Widget->GetClass()->GetFName() == TEXT("Widget_DismantleMode_C"))
+                    if (Widget && Widget->GetClass()->GetFName() == Desired)
                     {
                         NativeGunHUD = Widget;
                         NativeGunHUDVisibility = Widget->GetVisibility();
@@ -1044,6 +1119,7 @@ void UBSEditModeComponent::ReleaseInput()
 
 FText UBSEditModeComponent::GetStatusText() const
 {
+    if (auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner())); Plan && Plan->Active) return Plan->Status();
     if (FBSStick::Active(const_cast<UBSEditModeComponent*>(this)))
         return FText::FromString(FString::Printf(TEXT("Stick: %s | %.2f m | Vertical: %s | Horizontal: %s%s%s"),
             StickMode==EBSStickMode::Off ? TEXT("Off") : StickMode==EBSStickMode::Default ? TEXT("Default") : TEXT("Constrained"),
@@ -1088,6 +1164,13 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
         return NAME_None;
     };
     TArray<TPair<FText, FText>> Hints;
+    if (auto* Plan=UBSPlanComponent::Find(Player); Plan && Plan->Active)
+    {
+        Hints=Plan->Hints();
+        Hints.Emplace(FText::FromString(TEXT("Place / Edit (hold for modes)")),Key(MappingName(ModeAction,TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
+        Hints.Emplace(FText::FromString(TEXT("Hold and aim to select")),Key(MappingName(MultiSelectAction,TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle.MC_BuildGunDismantle"))));
+        return Hints;
+    }
     if (FBSStick::Active(const_cast<UBSEditModeComponent*>(this)))
     {
         Hints.Emplace(FText::FromString(TEXT("Toggle stick")),Key(TEXT("BuildingSkills.StickToggle")));
@@ -1097,7 +1180,7 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
             Hints.Emplace(FText::FromString(TEXT("Decrease distance")),Key(TEXT("BuildingSkills.StickScrollDown")));
             Hints.Emplace(FText::FromString(TEXT("Vertical tilt (hold + scroll)")),Key(TEXT("BuildingSkills.StickTilt")));
             Hints.Emplace(FText::FromString(TEXT("Horizontal tilt (hold + scroll)")),Key(TEXT("BuildingSkills.StickHorizontalTilt")));
-            Hints.Emplace(FText::FromString(TEXT("Stick settings")),Key(TEXT("BuildingSkills.StickSettings")));
+            Hints.Emplace(FText::FromString(TEXT("Stick settings")),Key(TEXT("BuildingSkills.Settings")));
         }
         return Hints;
     }
@@ -1112,12 +1195,12 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
         if (IsSpreadPainting())
         {
             Hints.Emplace(LOCTEXT("ToggleSpreadHint", "Toggle spread"), Key(MappingName(ModeAction, TEXT("/Game/FactoryGame/Inputs/Equipment/Buildgun/MC_Buildgun.MC_Buildgun"))));
-            if (bConnectedPaint) if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Connected settings")), Key(TEXT("BuildingSkills.ConnectedSettings")));
+            if (bConnectedPaint) if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Connected settings")), Key(TEXT("BuildingSkills.Settings")));
         }
         return Hints;
     }
     if (IsConnectedSelection() && !bTransforming)
-        if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Connected settings")), Key(TEXT("BuildingSkills.ConnectedSettings")));
+        if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Connected settings")), Key(TEXT("BuildingSkills.Settings")));
     if (IsVolumeSelection())
     {
         Hints.Emplace(FText::FromString(Volume.Cube ? TEXT("Shape: Cube") : TEXT("Shape: Sphere")), Key(TEXT("BuildingSkills.VolumeShape")));
@@ -1127,7 +1210,7 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
             Hints.Emplace(FText::FromString(TEXT("Opposite face")), Key(TEXT("BuildingSkills.VolumeOpposite")));
             Hints.Emplace(FText::FromString(TEXT("Rotate + scroll")), Key(TEXT("BuildingSkills.VolumeRotate")));
         }
-        if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Volume settings")), Key(TEXT("BuildingSkills.VolumeSettings")));
+        if(!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Volume settings")), Key(TEXT("BuildingSkills.Settings")));
         if (!IsEditing()) Hints.Emplace(FText::FromString(TEXT("Set / clear anchor")), Key(TEXT("BuildingSkills.BlueprintAnchor")));
     }
     if ((IsConnectedSelection() || IsVolumeSelection()) && !IsEditing()) return Hints; // Native dismantle already supplies its other hints.
@@ -1142,7 +1225,7 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
             Hints.Emplace(FText::FromString(FString(Name) == TEXT("Anchor") ? TEXT("Reference") : Name), Key(FName(FString(TEXT("BuildingSkills.")) + Name)));
         for (const auto* Name : {TEXT("Pivot"), TEXT("AxisSpace"), TEXT("Anchor"), TEXT("Undo"), TEXT("Redo")})
             Hints.Emplace(FText::FromString(FString(Name) == TEXT("Anchor") ? TEXT("Reference") : Name), Key(FName(FString(TEXT("BuildingSkills.")) + Name)));
-        Hints.Emplace(FText::FromString(TEXT("Step settings")), Key(TEXT("BuildingSkills.TransformSettings")));
+        Hints.Emplace(FText::FromString(TEXT("Step settings")), Key(TEXT("BuildingSkills.Settings")));
         Hints.Emplace(FText::FromString(TEXT("Return to Edit")), FText::FromString(TEXT("Esc")));
         return Hints;
     }
@@ -1157,7 +1240,7 @@ TArray<TPair<FText, FText>> UBSEditModeComponent::GetControlHints() const
         Hints.Emplace(LOCTEXT("TransformHint", "Transform"), Key(TEXT("BuildingSkills.Transform")));
         Hints.Emplace(LOCTEXT("GroupHint", "Group"), Key(TEXT("BuildingSkills.Group")));
         Hints.Emplace(LOCTEXT("MergeHint", "Merge"), Key(TEXT("BuildingSkills.Merge")));
-        Hints.Emplace(FText::FromString(TEXT("Edit settings")), Key(TEXT("BuildingSkills.TransformerSettings")));
+        Hints.Emplace(FText::FromString(TEXT("Edit settings")), Key(TEXT("BuildingSkills.Settings")));
         if(BlueprintAnchor.IsAlive(GetWorld())) Hints.Emplace(FText::FromString(TEXT("Add transformer")),Key(TEXT("BuildingSkills.AddTransformer")));
         Hints.Emplace(LOCTEXT("BlueprintAnchorHint", "Set / clear blueprint anchor"), Key(TEXT("BuildingSkills.BlueprintAnchor")));
         const FBSSelection Current = EffectiveSelection();
@@ -1184,7 +1267,8 @@ FText UBSEditModeComponent::GetControlsText() const
 
 void UBSEditModeComponent::UpdateControlHints(bool Editing)
 {
-    if (Indicator) Indicator->UpdateSpreadMode(Editing && IsSpreadPainting(), GetStatusText());
+    const auto* Plan=UBSPlanComponent::Find(Cast<AFGCharacterPlayer>(GetOwner()));
+    if (Indicator) Indicator->UpdateSpreadMode(Editing && (IsSpreadPainting() || (Plan && Plan->Active)),Plan && Plan->Active ? FText::FromString(Plan->Editing ? TEXT("Plan mode: Edit") : TEXT("Plan mode: Place")) : GetStatusText());
     if (!Editing)
     {
         if (Indicator) Indicator->SetHints(nullptr);
@@ -1365,4 +1449,16 @@ void UBSEditModeComponent::UpdateEditColors(bool Editing)
     if (Editing && !Instance->GetVectorParameterValue(Parameter, PreviousDismantleColor)) return;
     Instance->SetVectorParameterValue(Parameter, Editing ? FLinearColor(.1f, 1.f, .2f) : PreviousDismantleColor);
     bEditColorsApplied = Editing;
+}
+
+void UBSEditModeComponent::OnSettings()
+{
+    if (!InputAllowed()) return;
+    auto* P=Cast<AFGCharacterPlayer>(GetOwner());
+    if (auto* Plan=P ? UBSPlanComponent::For(P->GetBuildGun()) : nullptr) { Plan->Settings(); return; }
+    if (bTransforming) { OnTransformSettings(); return; }
+    if (IsEditing()) { OnTransformerSettings(); return; }
+    if (IsVolumeSelection()) { OnVolumeSettings(); return; }
+    if (IsConnectedSelection() || (IsSpreadPainting() && bConnectedPaint)) { OnConnectedSettings(); return; }
+    OnStickSettings();
 }

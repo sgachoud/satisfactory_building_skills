@@ -25,7 +25,8 @@ it is not an undo command.
 - **B** cycles the reference building. The building aimed at when entering Transform is
   the initial reference if it belongs to the selection. This is separate from Alt+A
   which chooses the external alignment anchor.
-- **Z / Y** undo/redo the last transform in Edit or Transform. These keys are configurable.
+- **Ctrl+Z / Ctrl+Y** undo/redo the last transform in Edit or Transform. These
+  configurable bindings are shared with Plan, Build and Dismantle.
 - Three held modifiers choose Tiny, Small or Large steps. Tiny takes precedence,
   then Small, then Large if multiple modifiers are held.
 

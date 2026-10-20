@@ -20,6 +20,11 @@ bool FBSActionCountTest::RunTest(const FString&)
     auto* Construction=NewObject<UBSActionRecord>(RCO); Construction->Members.SetNum(4); FBSActionHistory::Record(RCO,Construction);
     TestEqual(TEXT("Build has an independent history"),RCO->BuildHistory.Num(),1);
     TestEqual(TEXT("Recording build does not evict deletion"),RCO->DeleteHistory.Num(),32);
+    RCO->BuildRedoHistory.Add(Construction); RCO->DeleteRedoHistory.Add(RCO->DeleteHistory.Last());
+    FBSActionHistory::Record(RCO,Construction);
+    TestTrue(TEXT("New construction invalidates only construction redo"),RCO->BuildRedoHistory.IsEmpty() && RCO->DeleteRedoHistory.Num()==1);
+    FBSActionHistory::Record(RCO,RCO->DeleteHistory.Last());
+    TestTrue(TEXT("New deletion invalidates deletion redo"),RCO->DeleteRedoHistory.IsEmpty());
     auto* Other=NewObject<UBSGroupRemoteCallObject>(Controller); TestTrue(TEXT("History belongs to its player"),Other->DeleteHistory.IsEmpty());
     World->DestroyWorld(false);
     return true;

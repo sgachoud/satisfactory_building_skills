@@ -8,6 +8,7 @@ public class BuildingSkills : ModuleRules
         PCHUsage = PCHUsageMode.NoPCHs;
         CppStandard = CppStandardVersion.Cpp20;
         AddEngineThirdPartyPrivateStaticDependencies(Target, "ICU");
+        PrivateDependencyModuleNames.Add("CoreOnline"); // Local account identity for per-player menu preferences.
 
         // SML / FactoryGame public headers expose these transitive dependencies.
         PublicDependencyModuleNames.AddRange(new string[] {

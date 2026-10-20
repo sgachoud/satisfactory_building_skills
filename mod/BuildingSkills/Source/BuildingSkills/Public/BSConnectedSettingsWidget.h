@@ -10,6 +10,7 @@ class BUILDINGSKILLS_API UBSConnectedSettingsWidget : public UFGInteractWidget
 public:
     UBSConnectedSettingsWidget(const FObjectInitializer& Initializer);
     UPROPERTY(Transient) FBSConnectedSettings Draft;
+    void Save();
     virtual void OnEscapePressed_Implementation() override;
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;

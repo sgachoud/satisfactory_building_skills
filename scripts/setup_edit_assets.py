@@ -52,7 +52,7 @@ settings = action.get_editor_property("player_mappable_key_settings")
 if settings is None:
     settings = unreal.new_object(unreal.PlayerMappableKeySettings, outer=action)
 settings.set_editor_property("name", "BuildingSkills.ToggleEditMode")
-settings.set_editor_property("display_name", "Open / Close Edit Mode")
+settings.set_editor_property("display_name", "Open / Close Edit Gun")
 settings.set_editor_property("display_category", "Building Skills")
 settings.set_editor_property("is_player_mappable", True)
 action.set_editor_property("player_mappable_key_settings", settings)
@@ -404,3 +404,153 @@ for action_name, context_name, label, key_name, chord in (
         if not unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False):
             raise RuntimeError(f"Could not save {asset.get_path_name()}")
 unreal.log("BuildingSkills Transformer input assets saved.")
+
+# Plan is a separate local tool over the native rail gun. Only its toggle is
+# global; its K, wheel and movement mappings disappear immediately on exit.
+plan_context = get_or_create(f"{ROOT}/MC_Plan", unreal.FGChildInputMappingContext)
+plan_context.set_editor_property("m_parent_context", edit_root)
+plan_context.set_editor_property("m_display_name", "Building Skills - Plan")
+plan_context.set_editor_property("m_menu_priority", 208.0)
+plan_mappings = []
+for name, key_name, label in (
+    ("TogglePlan", "P", "Open / Close Plan Gun"),
+    ("PlanSettings", "K", "Plans / Rail Planner Settings"),
+    ("PlanScrollUp", "MouseScrollUp", "Increase Plan Distance / Drag Depth"),
+    ("PlanScrollDown", "MouseScrollDown", "Decrease Plan Distance / Drag Depth"),
+    ("PlanDelete", "F", "Delete Selected Plan Items"),
+    ("PlanUndo", "Z", "Undo Plan Edit"),
+    ("PlanRedo", "Y", "Redo Plan Edit"),
+):
+    ia = get_or_create(f"{ROOT}/IA_{name}", unreal.InputAction)
+    ia.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+    ia.set_editor_property("consume_input", True)
+    ia.set_editor_property("trigger_when_paused", False)
+    ia.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=ia)])
+    keys = unreal.new_object(unreal.PlayerMappableKeySettings, outer=ia)
+    for prop, value in (("name", f"BuildingSkills.{name}"), ("display_name", label), ("display_category", "Building Skills"), ("is_player_mappable", True)):
+        keys.set_editor_property(prop, value)
+    ia.set_editor_property("player_mappable_key_settings", keys)
+    key = unreal.Key(); key.set_editor_property("key_name", key_name)
+    mapping = unreal.EnhancedActionKeyMapping(action=ia, key=key)
+    mapping.set_editor_property("display_button_hint", False)
+    if name == "TogglePlan":
+        mapping.set_editor_property("triggers", [modifier_trigger(alt, context)])
+        context.set_editor_property("mappings", list(context.get_editor_property("mappings")) + [mapping])
+    else:
+        if name in ("PlanUndo", "PlanRedo"):
+            mapping.set_editor_property("triggers", [modifier_trigger(ctrl, plan_context)])
+        plan_mappings.append(mapping)
+    unreal.EditorAssetLibrary.save_loaded_asset(ia, only_if_is_dirty=False)
+transform_context = unreal.load_asset(f"{ROOT}/MC_Transform")
+for mapping in transform_context.get_editor_property("mappings"):
+    ia = mapping.get_editor_property("action")
+    if ia and ia.get_name().startswith("IA_Move"):
+        plan_mappings.append(mapping)
+# Reuse the native configured multi-select mapping, including its mappable name.
+native_multi = unreal.load_asset("/Game/FactoryGame/Inputs/Equipment/Buildgun/Dismantle/MC_BuildGunDismantle")
+for mapping in native_multi.get_editor_property("mappings"):
+    ia = mapping.get_editor_property("action")
+    if ia and ia.get_name() == "IA_DismantleMultiSelect":
+        plan_mappings.append(mapping)
+plan_context.set_editor_property("mappings", plan_mappings)
+for asset in (context, plan_context):
+    unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False)
+unreal.log("BuildingSkills Plan input assets saved.")
+
+# Register each binding once. Runtime contexts are plain contexts, so their
+# shared actions do not create duplicate settings/undo rows in the controls UI.
+shared = get_or_create(f"{ROOT}/IA_Settings", unreal.InputAction)
+shared.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+shared.set_editor_property("consume_input", True)
+shared.set_editor_property("triggers", [unreal.new_object(unreal.InputTriggerDown, outer=shared)])
+keys = unreal.new_object(unreal.PlayerMappableKeySettings, outer=shared)
+for prop,value in (("name","BuildingSkills.Settings"),("display_name","Open Settings"),("display_category","Building Skills"),("is_player_mappable",True)):
+    keys.set_editor_property(prop,value)
+shared.set_editor_property("player_mappable_key_settings",keys)
+unreal.EditorAssetLibrary.save_loaded_asset(shared, only_if_is_dirty=False)
+aliases = {name:"Settings" for name in ("TransformSettings","ConnectedSettings","VolumeSettings","StickSettings","TransformerSettings","PlanSettings")}
+aliases.update({"ActionUndo":"Undo","PlanUndo":"Undo","PlanRedo":"Redo"})
+contexts = ("BuildingSkills","EditOperations","Save","Transform","Connected","Volume","Deduplication","StickToggle","Stick","ActionHistory","Transformers","AddTransformer","Plan")
+categories = {}
+seen = set()
+def owned_mappings(source, owner):
+    result=[]
+    for original in source:
+        mapping=unreal.EnhancedActionKeyMapping(action=original.get_editor_property("action"),key=original.get_editor_property("key"))
+        mapping.set_editor_property("display_button_hint",original.get_editor_property("display_button_hint"))
+        triggers=[]
+        for trigger in original.get_editor_property("triggers"):
+            if not isinstance(trigger,unreal.InputTriggerChordAction):
+                raise RuntimeError(f"Unexpected mapping trigger: {trigger}")
+            triggers.append(modifier_trigger(trigger.get_editor_property("chord_action"),owner))
+        mapping.set_editor_property("triggers",triggers)
+        result.append(mapping)
+    return result
+def save_required(asset):
+    if not unreal.EditorAssetLibrary.save_loaded_asset(asset,only_if_is_dirty=False):
+        raise RuntimeError(f"Could not save {asset.get_path_name()}")
+for ctx_name in contexts:
+    path=f"{ROOT}/MC_{ctx_name}"
+    old=unreal.load_asset(path)
+    mappings=[]
+    for old_mapping in old.get_editor_property("mappings"):
+        act=old_mapping.get_editor_property("action")
+        name=act.get_name()[3:]
+        if name=="DismantleMultiSelect":
+            mappings.append(old_mapping)
+            continue
+        name=aliases.get(name,name)
+        act=unreal.load_asset(f"{ROOT}/IA_{name}")
+        key=old_mapping.get_editor_property("key")
+        if name in ("Settings","Undo","Redo"):
+            key=unreal.Key(); key.set_editor_property("key_name",{"Settings":"K","Undo":"Z","Redo":"Y"}[name])
+        mapping=unreal.EnhancedActionKeyMapping(action=act,key=key)
+        mapping.set_editor_property("display_button_hint", old_mapping.get_editor_property("display_button_hint"))
+        if name in ("Undo","Redo"):
+            mapping.set_editor_property("triggers",[modifier_trigger(ctrl,act)])
+        elif old_mapping.get_editor_property("triggers"):
+            # All other chords in these contexts are Alt; native multiselect
+            # is copied unchanged below.
+            mapping.set_editor_property("triggers",[modifier_trigger(alt,act)])
+        if name=="DismantleMultiSelect": mapping=old_mapping
+        mappings.append(mapping)
+        if name=="DismantleMultiSelect" or name in seen: continue
+        seen.add(name)
+        category="Building Skills" if name in ("ToggleEditMode","TogglePlan","Settings","Undo","Redo","StickToggle") else \
+            "Building Skills - Edit" if name in ("Group","Merge","Ungroup","Transform","BlueprintAnchor","Save","Copy","AddTransformer") else \
+            "Building Skills - Plan" if name.startswith("Plan") else \
+            "Building Skills - Volume" if name.startswith("Volume") else \
+            "Building Skills - Stick" if name.startswith("Stick") else \
+            "Building Skills - Build" if name=="Deduplication" else "Building Skills - Transform"
+        settings=act.get_editor_property("player_mappable_key_settings")
+        settings.set_editor_property("display_category",category)
+        if name in ("Undo","Redo"): settings.set_editor_property("display_name",name)
+        unreal.EditorAssetLibrary.save_loaded_asset(act,only_if_is_dirty=False)
+        categories.setdefault(category,[]).append(mapping)
+    if ctx_name=="ActionHistory":
+        act=unreal.load_asset(f"{ROOT}/IA_Redo"); key=unreal.Key();key.set_editor_property("key_name","Y")
+        m=unreal.EnhancedActionKeyMapping(action=act,key=key,triggers=[modifier_trigger(ctrl,act)])
+        m.set_editor_property("display_button_hint",True);mappings.append(m)
+    # Keep the former child assets empty for migration. Force-deleting a loaded
+    # input context can crash the commandlet; runtime-only contexts have their
+    # own stable paths and never register duplicate controls-menu bindings.
+    old.set_editor_property("mappings",[])
+    save_required(old)
+    ctx=get_or_create(f"{ROOT}/Runtime/MC_{ctx_name}",unreal.InputMappingContext)
+    ctx.set_editor_property("mappings",owned_mappings(mappings,ctx))
+    save_required(ctx)
+for index,(label,mappings) in enumerate(categories.items()):
+    ctx=get_or_create(f"{ROOT}/MC_Bindings{index}",unreal.FGChildInputMappingContext)
+    ctx.set_editor_property("m_parent_context",edit_root)
+    ctx.set_editor_property("m_display_name",label)
+    ctx.set_editor_property("m_menu_priority",201.0+index)
+    ctx.set_editor_property("mappings",owned_mappings(mappings,ctx))
+    save_required(ctx)
+scan_types=feature.get_editor_property("primary_asset_types_to_scan")
+for entry in scan_types:
+    if str(entry.get_editor_property("primary_asset_type"))=="FGChildInputMappingContext":
+        entry.set_editor_property("directories",[])
+        entry.set_editor_property("specific_assets",[unreal.SoftObjectPath(f"{ROOT}/MC_Bindings{i}.MC_Bindings{i}") for i in range(len(categories))])
+feature.set_editor_property("primary_asset_types_to_scan",scan_types)
+save_required(feature)
+unreal.log("BuildingSkills shared bindings verified and saved.")

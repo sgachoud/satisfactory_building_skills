@@ -82,7 +82,7 @@ void UBSEditModeComponent::OnTransform()
     if (InputSubsystem.IsValid())
     {
         if (OperationsContext) InputSubsystem->RemoveMappingContext(OperationsContext);
-        if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/MC_Transform.MC_Transform")))
+        if (auto* Source = LoadObject<UInputMappingContext>(nullptr, TEXT("/BuildingSkills/Inputs/Runtime/MC_Transform.MC_Transform")))
         {
             TransformContext = DuplicateObject<UInputMappingContext>(Source, this);
             InputSubsystem->AddMappingContext(TransformContext, 1001);
@@ -228,8 +228,20 @@ void UBSEditModeComponent::OnAnchor()
     TransformOptions.AnchorIndex = (TransformOptions.AnchorIndex + 1) % TransformMembers.Num();
     TransformOptions.Gesture.Invalidate(); RefreshTransformFrame();
 }
-void UBSEditModeComponent::OnUndo() { RequestHistory(false); }
-void UBSEditModeComponent::OnRedo() { RequestHistory(true); }
+void UBSEditModeComponent::OnUndo()
+{
+    auto* P=Cast<AFGCharacterPlayer>(GetOwner());
+    if (auto* Plan=P ? UBSPlanComponent::For(P->GetBuildGun()) : nullptr) { Plan->Undo(); return; }
+    if (!IsEditing()) { OnActionUndo(); return; }
+    RequestHistory(false);
+}
+void UBSEditModeComponent::OnRedo()
+{
+    auto* P=Cast<AFGCharacterPlayer>(GetOwner());
+    if (auto* Plan=P ? UBSPlanComponent::For(P->GetBuildGun()) : nullptr) { Plan->Redo(); return; }
+    if (!IsEditing()) { OnActionRedo(); return; }
+    RequestHistory(true);
+}
 void UBSEditModeComponent::RequestHistory(bool Redo)
 {
     if (!IsEditing() || !InputAllowed() || bRequestPending || bOpeningBlueprint || bCopyPending || BlueprintWindow) return;

@@ -163,6 +163,9 @@ public:
         {
             Key(EKeys::Z,false); Key(EKeys::LeftControl,false);
             Check(TEXT("Physical Build undo removes the last construction action"),RCO->BuildHistory.Num()==BuildCount);
+            FString RedoMessage;
+            Check(TEXT("Build redo restores the complete undone construction"),FBSActionHistory::Undo(RCO,false,RedoMessage,true) && RCO->BuildHistory.Num()==BuildCount+1);
+            Check(TEXT("Redone construction can be undone again"),FBSActionHistory::Undo(RCO,false,RedoMessage) && RCO->BuildHistory.Num()==BuildCount);
             Gun->GotoNoneState();
         }
         if(Phase==9) Check(TEXT("Leaving the gun releases undo input"),!Edit->ActionHistoryContext && !Edit->ActionHistoryHint);
@@ -200,6 +203,9 @@ public:
             RCO->Server_UndoGunAction_Implementation(true);
             auto* Proxy=BlueprintRefs[0].Blueprint(World);
             Check(TEXT("Undo restores native blueprint selection identity"),Proxy && BlueprintRefs[1].Blueprint(World)==Proxy && Proxy->GetActorTransform().Equals(BlueprintPose,.01));
+            FString RedoMessage;
+            Check(TEXT("Deletion redo removes the restored blueprint as one action"),FBSActionHistory::Undo(RCO,true,RedoMessage,true) && !BlueprintRefs[0].IsAlive(World) && !BlueprintRefs[1].IsAlive(World));
+            Check(TEXT("Redone blueprint deletion can be undone again"),FBSActionHistory::Undo(RCO,true,RedoMessage) && BlueprintRefs[0].IsAlive(World) && BlueprintRefs[1].IsAlive(World));
             Edit->TransformMembers=BlueprintRefs; Edit->Selection={}; Edit->BlueprintAnchor={};
             Check(TEXT("Complete blueprint exposes its global transform"),Edit->TransformPoseText().Contains(TEXT("Blueprint")) && Edit->TransformPoseText().Contains(TEXT("world")));
             Edit->TransformMembers.Reset();

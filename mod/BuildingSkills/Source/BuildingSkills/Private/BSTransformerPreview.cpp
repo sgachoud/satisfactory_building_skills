@@ -43,12 +43,12 @@ void UBSEditModeComponent::TickTransformers()
         if(Active && !Current) if(auto* Source=LoadObject<UInputMappingContext>(nullptr,Path)) {Current=DuplicateObject<UInputMappingContext>(Source,this);InputSubsystem->AddMappingContext(Current,1004);}
         if(!Active && Current){InputSubsystem->RemoveMappingContext(Current);Current=nullptr;}
     };
-    Context(Editing && !bTransforming,TransformersContext,TEXT("/BuildingSkills/Inputs/MC_Transformers.MC_Transformers"));
-    Context(Editing && !bTransforming && BlueprintAnchor.IsAlive(GetWorld()),AddTransformerContext,TEXT("/BuildingSkills/Inputs/MC_AddTransformer.MC_AddTransformer"));
+    Context(Editing && !bTransforming,TransformersContext,TEXT("/BuildingSkills/Inputs/Runtime/MC_Transformers.MC_Transformers"));
+    Context(Editing && !bTransforming && BlueprintAnchor.IsAlive(GetWorld()),AddTransformerContext,TEXT("/BuildingSkills/Inputs/Runtime/MC_AddTransformer.MC_AddTransformer"));
     auto* Gun=P->IsBuildGunEquipped()?P->GetBuildGun():nullptr;
     auto* Build=Gun?Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState()):nullptr;
     auto* H=Build?Build->GetHologram():nullptr;
-    const bool Show=(Editing || H) && InputAllowed();
+    const bool Show=(Editing || H) && !UBSPlanComponent::For(Gun) && InputAllowed();
     const auto& Rules=RCO->Transformers;
     // Markers are owned only by this local player, with no collision or ticking actors.
     for(int32 I=0;I<Rules.Num();++I)

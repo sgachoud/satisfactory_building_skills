@@ -225,6 +225,7 @@ public:
     bool IsCopyPending(FGuid RequestId) const { return bCopyPending && CopyRequestId == RequestId; }
 private:
     friend class UBSGroupRemoteCallObject;
+    friend class UBSPlanComponent;
     friend class FBSStick;
     friend class FBSRuntimeSmoke;
     friend class FBSPolishSmoke;
@@ -310,9 +311,12 @@ private:
     FString TransformPoseText() const;
     void OnUndo();
     void OnActionUndo();
+    void OnActionRedo();
+    void OnSettings();
     void TickActionHistory();
     UPROPERTY(Transient) TObjectPtr<UInputMappingContext> ActionHistoryContext;
     UPROPERTY(Transient) TObjectPtr<UUserWidget> ActionHistoryHint;
+    UPROPERTY(Transient) TObjectPtr<UUserWidget> ActionRedoHint;
     FString LastActionHistoryHint;
     double NextActionHistoryHintRefresh = 0;
     void OnRedo();

@@ -67,6 +67,11 @@ public:
     bool BuildAsBlueprint = false;
     int32 Selected = 0;
     int32 Revision = 0;
+    void Save();
+    void Changed();
+    bool Dirty=false;
+    double SaveAfter=0;
+    virtual void NativeTick(const FGeometry&,float) override;
     virtual void OnEscapePressed_Implementation() override;
     virtual FReply NativeOnPreviewKeyDown(const FGeometry&, const FKeyEvent&) override;
     virtual FReply NativeOnKeyDown(const FGeometry&, const FKeyEvent&) override;

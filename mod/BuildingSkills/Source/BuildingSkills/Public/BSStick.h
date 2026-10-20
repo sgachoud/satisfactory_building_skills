@@ -8,19 +8,20 @@
 UENUM()
 enum class EBSStickMode : uint8 { Off, Default, Constrained };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct BUILDINGSKILLS_API FBSStickSettings
 {
     GENERATED_BODY()
-    UPROPERTY() float StickDistance = 64;
-    UPROPERTY() float StickStep = 1;
-    UPROPERTY() float StickTiltStep = 15;
-    UPROPERTY() float StickSlope = 0;
+    // SML's config reflection only writes Blueprint-visible, writable fields.
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float StickDistance = 64;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float StickStep = 1;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float StickTiltStep = 15;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float StickSlope = 0;
     // Signed horizontal radius in meters. Zero means no horizontal turn.
-    UPROPERTY() float StickRadius = 0;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") float StickRadius = 0;
     // K-menu switches are session-only; disabled values are retained.
-    bool VerticalConstraint = true;
-    bool HorizontalConstraint = true;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") bool VerticalConstraint = true;
+    UPROPERTY(BlueprintReadWrite, Category="Building Skills") bool HorizontalConstraint = true;
     bool Valid() const;
     static FBSStickSettings Get(UWorld* World);
 };
@@ -32,11 +33,16 @@ class BUILDINGSKILLS_API UBSStickSession : public UWorldSubsystem
 {
     GENERATED_BODY()
 public:
-    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-    FBSStickSettings Settings;
+    // World subsystem initialization may precede the GameInstance/config
+    // attachment. Load once on use, only after the config is registered.
+    FBSStickSettings& GetSettings();
+    bool HasLoadedDefaults() const { return DefaultsLoaded; }
     // Bound only by the isolated runtime regression.
     UFUNCTION() void ObserveConstruction(class AFGBuildable* Building);
     TArray<TWeakObjectPtr<class AFGBuildable>> ObservedConstruction;
+private:
+    FBSStickSettings Settings;
+    bool DefaultsLoaded = false;
 };
 
 struct BUILDINGSKILLS_API FBSStickPath
@@ -71,6 +77,11 @@ public:
     static void Validate(class AFGSplineHologram* Hologram);
     static bool Connect(class AActor* A, class AActor* B, const FVector& At);
     static bool RunChecks(class AFGCharacterPlayer* Player, int32 Phase);
+    static TArray<FSplinePointData> PlanPreview(class AFGSplineHologram* Hologram);
+    static void PlanStart(class AFGSplineHologram* Hologram, const struct FBSPlanNode* Node);
+    static class UFGRailroadTrackConnectionComponent* PlanEnd(class AFGSplineHologram* Hologram);
+    static void PlanGeometry(class AFGSplineHologram* Hologram, const TArray<FSplinePointData>& WorldPoints);
+    static FVector PlanLimits(class AFGSplineHologram* Hologram);
 };
 
 UCLASS()
@@ -80,6 +91,7 @@ class BUILDINGSKILLS_API UBSStickSettingsWidget : public UFGInteractWidget
 public:
     UBSStickSettingsWidget(const FObjectInitializer& Initializer);
     FBSStickSettings Draft;
+    void Save();
     virtual void OnEscapePressed_Implementation() override;
 protected:
     virtual TSharedRef<SWidget> RebuildWidget() override;

@@ -7,6 +7,7 @@ param(
     [switch]$ConnectedOnly,
     [switch]$VolumeOnly,
     [switch]$StickOnly,
+    [switch]$PlanOnly,
     [switch]$PolishOnly,
     [switch]$TransformersOnly,
     [switch]$ARSDoubleTest,
@@ -19,6 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($PooledVisualsOnly -and -not $Render) { throw 'The pooled visual regression requires -Render.' }
+if ($StickOnly -and -not $Render) { throw 'The Stick regression requires -Render for its temporary numeric settings and endpoint-tilt checks.' }
 if (Get-Process -Name 'FactoryGameSteam-Win64-Shipping' -ErrorAction SilentlyContinue) {
     throw 'Close Satisfactory before running the isolated runtime test.'
 }
@@ -37,6 +39,7 @@ $arguments += '-ini:Engine:[EOSSDK.Platform.Live]:bDisableOverlay=True,[EOSSDK.P
 if ($ConnectedOnly) { $arguments += '-BuildingSkillsConnectedTest' }
 if ($VolumeOnly) { $arguments += '-BuildingSkillsVolumeTest' }
 if ($StickOnly) { $arguments += '-BuildingSkillsStickTest' }
+if ($PlanOnly) { $arguments += '-BuildingSkillsPlanTest' }
 if ($TransformersOnly) { $arguments += '-BuildingSkillsTransformersTest' }
 if ($PolishOnly) { $arguments += '-BuildingSkillsPolishTest' }
 if ($ARSDoubleTest) { $arguments += '-BuildingSkillsARSDoubleTest' }
@@ -62,7 +65,7 @@ while (-not $testProcess.WaitForExit(30000)) {
         throw "Runtime test timed out. See $log"
     }
 }
-if ($Render -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $BlueprintsOnly -and -not $PooledVisualsOnly) {
+if ($Render -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $BlueprintsOnly -and -not $PooledVisualsOnly) {
     $screenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsRuntimeTest.png'
     if ((Test-Path -LiteralPath $screenshot) -and (Get-Item -LiteralPath $screenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $screenshot -Destination (Join-Path $saved 'RuntimeTest.png') -Force
@@ -72,7 +75,7 @@ if ($Render -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $P
         Copy-Item -LiteralPath $transformScreenshot -Destination (Join-Path $saved 'TransformTest.png') -Force
     } else { throw 'The runtime test did not produce a fresh transform screenshot.' }
 }
-if ($Render -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $PooledVisualsOnly) {
+if ($Render -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $PooledVisualsOnly) {
     $blueprintScreenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsBlueprintTest.png'
     if ((Test-Path -LiteralPath $blueprintScreenshot) -and (Get-Item -LiteralPath $blueprintScreenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $blueprintScreenshot -Destination (Join-Path $saved 'BlueprintTest.png') -Force
@@ -105,6 +108,13 @@ if ($Render -and -not $BlueprintFixture -and $StickOnly) {
     }
 }
 if ($Render) {
+    if ($PlanOnly) {
+        foreach ($name in @('Settings', 'Place', 'Radial', 'BuildSpecification')) {
+            $image = Join-Path $env:LOCALAPPDATA ("FactoryGame/Saved/BuildingSkillsPlan$name.png")
+            if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).LastWriteTime -lt $started) { throw "Missing fresh Plan $name screenshot." }
+            Copy-Item -LiteralPath $image -Destination (Join-Path $saved ("Plan$name.png")) -Force
+        }
+    }
     if ($BlueprintsOnly) {
         foreach ($name in @('CopyHints', 'BlueprintHints')) {
             $image = Join-Path $env:LOCALAPPDATA ('FactoryGame\Saved\BuildingSkills' + $name + '.png')
