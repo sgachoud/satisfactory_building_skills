@@ -40,7 +40,7 @@ as the mod version.
 5. Use the source/support URLs in `METADATA.json`. The supplied public GitHub
    repository exists and has issues enabled, but was empty when checked during
    preparation. Upload the reviewed source before publishing those links.
-   Include `docs/publishing/media/` on branch `master`: the overview embeds these
+   Include `docs/publishing/media/` on branch `main`: the overview embeds these
    GIFs through raw GitHub URLs. Until the source is pushed, those public image
    links will not resolve. Alternatively upload the GIFs to SMR's media service
    and replace the image URLs before submission.
