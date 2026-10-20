@@ -103,19 +103,20 @@ are collapsible.
 Their expanded/collapsed states are remembered on this computer per player account,
 across menus and game sessions. These preferences are not part of the world save.
 
-Select a named plan, then **Load** to edit it or **Make shared** to publish it to
+Click a named plan to load it, or use **Make shared** to make it available to
 the other players in this world. **New plan** creates a separate named plan;
-**Save name** names or renames the current plan. Each accepted edit is already
-part of the world's next save. Sharing does not copy or delete the owner's plan.
+double-click a name to rename it. Each accepted edit is already part of the
+world's next save. Sharing does not copy or delete the owner's plan.
 
 The **Nodes and splines** list shows every item in the current plan. Click to
 select one; Ctrl+click adds or removes items. Selected rows and their world
 geometry highlight together. The list is virtualized for large plans.
 
 A single selected node exposes world X/Y/Z in meters with two decimal places,
-and world yaw, roll and pitch in degrees. **Apply position and orientation**
-submits one undoable edit. A node snapped to a built rail uses that connector's
-tangent direction; moving it detaches it. Roll rotates the parallel-line frame
+and world yaw, roll and pitch in degrees. Finishing a field edit submits the
+change without a separate Apply button. A node snapped to a built rail copies
+that connector's tangent direction without retaining a dependency on the rail.
+Roll rotates the parallel-line frame
 around the node tangent; native rails still use their native unbanked geometry.
 A single spline exposes Curve, Straight, Free — through points and Free — Bezier
 handles. Through points uses piecewise cubic Hermite curves with automatically

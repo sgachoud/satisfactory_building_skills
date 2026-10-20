@@ -2089,3 +2089,38 @@ binaries matching the compiled outputs. Receipts:
 `Saved/Releases/BuildingSkills-0.10.9-verification.json`.
 No gameplay session or player save was opened. Packaged gameplay validation
 is left to the user.
+
+## 0.10.9 public-release preparation
+
+The Steam client and Linux server native binaries from the verified 0.10.9
+build are reused unchanged. Epic client and Windows server native compilation
+completed against the same installed SDK. The Windows server target needed a
+previously uncached resource file before linking; the native build helper now
+compiles Windows resources explicitly. All four targets were cooked and combined
+by Alpakit.
+
+The first merged archive was rejected by the publication validator: stale shared
+target receipts excluded the Steam and Linux native binaries even though
+Alpakit reported success. Refreshing those target records and repackaging fixed
+the omissions. Packaging now checks all requested target receipts before staging.
+No other mod source or shared toolchain source was changed.
+
+`scripts/PreparePublication.py` verified the corrected archive's three platform
+folders, four native binaries against the local compiled outputs, SML module
+manifests, descriptors, required Edit/Plan cooked assets, nonempty cooked payloads,
+MIT/ICU/SML notices and icon. CRC checks passed. Debug symbols are omitted from
+the public upload, with the original full Alpakit archive retained locally.
+Three malformed-path/layout cases were rejected by the validator.
+
+The output is `Saved/Publication/0.10.9/BuildingSkills.zip`; the accompanying
+`verification.json` and `SHA256SUMS.txt` record exact hashes. The source snapshot
+includes the publication changes. This preparation did not install the mod,
+launch gameplay, or load a player save. Epic and Windows server runtime behavior
+has not been tested in this preparation.
+
+Six gameplay clips supplied by the publisher were converted to looping GIFs
+for the short publication overview. Every GIF frame was decoded successfully,
+and representative frames from each clip were visually inspected. The media
+manifest records source/output hashes, trims, playback speeds and dimensions.
+The original recordings were preserved. This media validation does not add
+gameplay regression coverage.

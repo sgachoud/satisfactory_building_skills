@@ -150,10 +150,35 @@ switch ($Action) {
         if ($editorReceipt.BuildPlugins -notcontains 'BuildingSkills') {
             throw 'The editor build receipt disables Building Skills. Run Mod.ps1 BuildEditor before packaging so its content is mounted by the cooker.'
         }
-        if ($Action -eq 'PackageLinux' -and -not $SkipNativeBuild) {
+        if ($Action -eq 'Release' -and -not $SkipNativeBuild) {
+            foreach ($releaseTarget in @('FactoryGameSteam', 'FactoryGameEGS', 'FactoryServer')) {
+                & (Join-Path $PSScriptRoot 'BuildNative.ps1') -Target $releaseTarget -SmlRoot $SmlRoot -EngineRoot $EngineRoot
+            }
+            & (Join-Path $PSScriptRoot 'BuildLinux.ps1') -SmlRoot $SmlRoot -EngineRoot $EngineRoot
+        } elseif ($Action -eq 'PackageLinux' -and -not $SkipNativeBuild) {
             & (Join-Path $PSScriptRoot 'BuildLinux.ps1') -SmlRoot $SmlRoot -EngineRoot $EngineRoot
         } elseif ($Action -ne 'Release' -and -not $SkipNativeBuild) {
             & (Join-Path $PSScriptRoot 'BuildNative.ps1') -Target FactoryGameSteam -SmlRoot $SmlRoot -EngineRoot $EngineRoot
+        }
+        # Shared SDK receipts can be replaced by another mod's isolated build.
+        # Existing DLLs alone are insufficient: Alpakit stages only receipt entries.
+        $nativeReceipts = if ($Action -eq 'Release') {
+            @('Win64/FactoryGameSteam-Win64-Shipping.target',
+              'Win64/FactoryGameEGS-Win64-Shipping.target',
+              'Win64/FactoryServer-Win64-Shipping.target',
+              'Linux/FactoryServer-Linux-Shipping.target')
+        } elseif ($Action -eq 'PackageLinux') {
+            @('Linux/FactoryServer-Linux-Shipping.target')
+        } else {
+            @('Win64/FactoryGameSteam-Win64-Shipping.target')
+        }
+        foreach ($nativeReceiptName in $nativeReceipts) {
+            $nativeReceiptPath = Join-Path $SmlRoot "Binaries/$nativeReceiptName"
+            Require-Path $nativeReceiptPath
+            $nativeReceipt = Get-Content -LiteralPath $nativeReceiptPath -Raw | ConvertFrom-Json
+            if ($nativeReceipt.BuildPlugins -notcontains 'BuildingSkills') {
+                throw "The shared receipt $nativeReceiptName excludes Building Skills. Refresh that target's build metadata before packaging; existing binaries will otherwise be omitted."
+            }
         }
         $uatArgs = @(
             "-ScriptsForProject=$project", 'PackagePlugin', "-project=$project",
@@ -161,7 +186,7 @@ switch ($Action) {
             '-DLCName=BuildingSkills', '-platform=Win64',
             '-nocompileeditor', '-installed', "-UbtArgs=-NoUBA -MaxParallelActions=$MaxParallelActions"
         )
-        if ($Action -eq 'Release') { $uatArgs += @('-build', '-server', '-serverplatform=Win64+Linux', '-merge') }
+        if ($Action -eq 'Release') { $uatArgs += @('-server', '-serverplatform=Win64+Linux', '-merge') }
         if ($Action -eq 'PackageLinux') { $uatArgs += @('-noclient', '-server', '-serverplatform=Linux') }
         # The native development build above compiles Steam only. Explicitly
         # select it so packaging cannot include an older cached Epic binary.

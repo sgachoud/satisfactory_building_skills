@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('FactoryEditor','FactoryGameSteam')][string]$Target = 'FactoryEditor',
+    [ValidateSet('FactoryEditor','FactoryGameSteam','FactoryGameEGS','FactoryServer')][string]$Target = 'FactoryEditor',
     [string]$SmlRoot = 'F:/dev/satisfactory_mods/SatisfactoryModLoader',
     [string]$EngineRoot = 'C:/Program Files/Unreal Engine - CSS',
     [string]$CompilerRoot = 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.38.33130',
@@ -58,6 +58,26 @@ $objects = @([regex]::Matches($linkText, '(?m)^"([^"]+\.cpp\.obj)"') | ForEach-O
 })
 if ($objects.Count -eq 0) { throw 'No plugin translation units found; refusing to link stale objects.' }
 & (Join-Path $PSScriptRoot 'CompileUnits.ps1') -Compiler $compiler -ResponseFiles @($objects | ForEach-Object { $_ + '.rsp' }) -WorkingDirectory (Get-Location).Path -OutputDirectory $saved -Workers $CompilerWorkers
+# A newly used target has no cached .res file. Compile UBT's resource response
+# with the exact Windows SDK it selected, before either import or DLL linking.
+foreach ($resource in [regex]::Matches($linkText, '(?m)^"([^"]+\.res)"')) {
+    $resourcePath = $resource.Groups[1].Value
+    if (-not $resourcePath.Replace('\','/').StartsWith($pluginPrefix,[StringComparison]::OrdinalIgnoreCase)) { continue }
+    $resourceResponse = $resourcePath + '.rsp'
+    $resourceText = Get-Content -LiteralPath $resourceResponse -Raw
+    $sdk = [regex]::Match($resourceText, '(?im)^/I "([^"]+)/include/([^/]+)/um"')
+    if (-not $sdk.Success) { throw "Cannot resolve Windows SDK for $resourceResponse" }
+    $resourceCompiler = Join-Path $sdk.Groups[1].Value "bin/$($sdk.Groups[2].Value)/x64/rc.exe"
+    # rc.exe's @file parser preserves quotes differently from its command-line
+    # parser. UBT records one argument per line; pass that prepared command line.
+    $resourceLog = Join-Path $saved ([IO.Path]::GetFileName($resourcePath) + '.compile.log')
+    $resourceErrorLog = Join-Path $saved ([IO.Path]::GetFileName($resourcePath) + '.compile.err.log')
+    $resourceProcess = Start-Process -FilePath $resourceCompiler -ArgumentList ($resourceText -replace '\r?\n', ' ') -WorkingDirectory (Get-Location).Path -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $resourceLog -RedirectStandardError $resourceErrorLog
+    Get-Content -LiteralPath $resourceLog
+    Get-Content -LiteralPath $resourceErrorLog
+    if ($resourceProcess.ExitCode -ne 0) { throw "Resource compilation failed: $resourceResponse" }
+    $resourceProcess.Dispose()
+}
 & $linker /LIB "@$intermediate/$binary-BuildingSkills$suffix.lib.rsp"
 if ($LASTEXITCODE -ne 0) { throw 'Plugin import library failed.' }
 $localLink = Join-Path $saved 'PluginLink.rsp'

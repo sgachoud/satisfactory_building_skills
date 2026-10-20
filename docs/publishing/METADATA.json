@@ -1,0 +1,20 @@
+{
+  "name": "Building Skills",
+  "mod_reference": "BuildingSkills",
+  "short_description": "Group, move, copy and mirror your factory. Plan rail networks, extend spline placement, and undo construction or dismantling.",
+  "version": "0.10.9",
+  "stability": "Early access",
+  "author": "sgachoud",
+  "source_url": "https://github.com/sgachoud/satisfactory_building_skills",
+  "support_url": "https://github.com/sgachoud/satisfactory_building_skills/issues",
+  "icon": "icon-512.png",
+  "banner": "banner-1600x900.png",
+  "full_description_file": "OVERVIEW.md",
+  "changelog_file": "CHANGELOG.md",
+  "network_activity_transparency": "Building Skills makes no external network requests and includes no telemetry or online AI service. Multiplayer communication uses the game's client/server networking to synchronize mod actions and plans. Documentation and support links open the external GitHub website when clicked.",
+  "ai_usage_transparency": "OpenAI Codex was used to help develop source code, build and test scripts, documentation, release notes, and this mod page. It also helped create the mod's UI/content setup and the original geometric icon and promotional artwork. Gameplay previews are real recordings supplied by the mod author, trimmed and converted to GIF with Codex-assisted scripts; they are not generated gameplay. Building Skills does not use generative AI at runtime.",
+  "suggested_tags": ["Building", "Tools", "Quality of Life", "Trains"],
+  "required_on_remote": true,
+  "sml_requirement": "^3.12.0",
+  "game_build_requirement": ">=502094"
+}

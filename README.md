@@ -140,8 +140,9 @@ keep their native classes, inventories and blueprint membership. Transform updat
 the native saved transforms directly. Mutations are validated on the server; all
 peers need the mod. Group renaming and skill progression are not implemented.
 
-The mod's own world-save fields contain only the group hierarchy, member references,
-pivots and a schema version. Building positions, rotations, scales and edited network
+The mod's own world-save fields contain the group hierarchy, member references,
+pivots, schema versions and named personal/shared rail plans with their geometry
+and build specifications. Building positions, rotations, scales and edited network
 geometry live in native building records. Selection, undo/redo history, replication
 snapshots, copy clipboards and blueprint Save sessions are transient. Blueprints are separate files;
 scale preservation adds no world-save fields or companion blueprint files.
@@ -164,8 +165,8 @@ active operation; the colored axis display marks the active axes at the shared p
 Arrow keys move relative to your facing; Page Up / Down move vertically. **Esc**
 returns to normal Edit, keeping the changes and selection.
 
-**P** changes the pivot, **L** switches world/local axes, and **B** changes the
-anchor building. **Z / Y** undo/redo transforms, including affected connections.
+**P** changes the pivot, **L** switches World/Local/Anchor axes, and **B** changes the
+reference building. **Z / Y** undo/redo transforms, including affected connections.
 Cyan wire boxes preview queued movement while the server applies it.
 
 Movement bindings, these transform controls, T, and the three held step modifiers are rebindable. Step amounts
@@ -179,6 +180,8 @@ power wires follow their connection points. Extractors keep their resource bindi
 - `mod/BuildingSkills/`: Unreal plugin, C++ source, config and committed content.
 - `scripts/Mod.ps1`: setup, editor build, assets, tests, packaging and installation.
 - [Setup](docs/SETUP.md): toolchain and commands.
+- [Publication kit](docs/publishing/PUBLISHING.md): release files, listing,
+  disclosure fields and short-video shot list.
 - [Verification](docs/TESTING.md): completed checks and in-game test matrix.
 - [Grouping implementation](docs/GROUPING.md): hierarchy and integration details.
 - [Build and Dismantle undo](docs/UNDO.md): action history, refunds and restoration checks.
@@ -218,6 +221,9 @@ large-selection regression coverage, split-rail endpoint connection checks,
 and blueprint conveyor-chain isolation with an imported-blueprint regression,
 plus named personal/shared rail plans, node and curve editing, parallel paths,
 and server-validated plan construction.
+Release preparation also covered packaging checks, listing text, an original
+geometric icon and banner, the gameplay-video shot list, and trimming/converting
+the author's recordings into GIF previews for the publication overview.
 Participation is recorded here rather than in commit messages or co-author trailers.
 See [verification](docs/TESTING.md) for what was actually run.
 

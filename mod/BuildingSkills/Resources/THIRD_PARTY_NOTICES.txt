@@ -1,0 +1,27 @@
+Building Skills
+Copyright (c) 2026 sgachoud
+Licensed under MIT. See LICENSE.txt in this directory.
+
+ICU (International Components for Unicode)
+Building Skills uses the engine-provided ICU library for regular-expression
+matching. Its copyright and permission notices, including notices for the
+bundled ICU data, are reproduced in ICU_64-1_License.txt.
+Upstream: https://icu.unicode.org/
+
+Satisfactory Mod Loader (SML)
+Building Skills depends on SML and uses its public integration APIs and C++
+templates. SML is installed separately by Satisfactory Mod Manager; this package
+does not distribute a modified SML runtime. SML's upstream license is GPLv3;
+its license text is included as SML_LICENSE.txt for reference. The Building
+Skills MIT notice does not replace the licenses of dependencies.
+Upstream/source: https://github.com/satisfactorymodding/SatisfactoryModLoader
+
+Satisfactory and Unreal Engine
+The game and engine remain subject to their respective owners' terms. They are
+not licensed under the Building Skills MIT license.
+
+Implementation research
+The project records source reviews and feature inspiration in
+docs/INSPIRATION.md in its source distribution. Referenced third-party mod
+implementations and assets are not included in this release. Their names and
+licenses do not imply endorsement.

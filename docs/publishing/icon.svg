@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="48" fill="#111e28"/>
+<polyline points="32,-128 480,96" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,96 480,-128" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,-64 480,160" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,160 480,-64" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,0 480,224" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,224 480,0" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,64 480,288" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,288 480,64" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,128 480,352" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,352 480,128" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,192 480,416" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,416 480,192" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,256 480,480" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,480 480,256" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,320 480,544" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,544 480,320" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,384 480,608" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,608 480,384" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,448 480,672" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,672 480,448" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,512 480,736" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,736 480,512" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,576 480,800" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,800 480,576" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,640 480,864" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polyline points="32,864 480,640" fill="none" stroke="#1c303c" stroke-width="1" stroke-linejoin="round"/>
+<polygon points="256,122 368,180 256,240 144,180" fill="#5ce6a2"/>
+<polygon points="144,180 256,240 256,362 144,302" fill="#278766"/>
+<polygon points="256,240 368,180 368,302 256,362" fill="#3bbd8b"/>
+<polyline points="256,240 256,362" fill="none" stroke="#a2f8cf" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="144,180 256,240 368,180" fill="none" stroke="#a2f8cf" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="68,164 68,76 156,76" fill="none" stroke="#5ce6a2" stroke-width="10" stroke-linejoin="round"/>
+<polyline points="356,76 444,76 444,164" fill="none" stroke="#5ce6a2" stroke-width="10" stroke-linejoin="round"/>
+<polyline points="68,348 68,436 156,436" fill="none" stroke="#5ce6a2" stroke-width="10" stroke-linejoin="round"/>
+<polyline points="356,436 444,436 444,348" fill="none" stroke="#5ce6a2" stroke-width="10" stroke-linejoin="round"/>
+<polyline points="98.0,376.0 102.25,378.907 106.481,381.69 110.693,384.35 114.886,386.889 119.058,389.308 123.211,391.609 127.345,393.793 131.458,395.863 135.552,397.819 139.626,399.663 143.68,401.397 147.713,403.022 151.727,404.541 155.72,405.954 159.693,407.263 163.645,408.469 167.577,409.575 171.488,410.582 175.378,411.491 179.248,412.304 183.097,413.023 186.925,413.648 190.731,414.183 194.517,414.628 198.281,414.984 202.024,415.254 205.746,415.44 209.446,415.541 213.125,415.561 216.782,415.501 220.417,415.362 224.031,415.146 227.622,414.854 231.192,414.489 234.74,414.051 238.265,413.543 241.768,412.965 245.249,412.319 248.708,411.608 252.144,410.832 255.558,409.993 258.948,409.093 262.317,408.133 265.662,407.115 268.984,406.041 272.284,404.911 275.56,403.728 278.813,402.494 282.043,401.209 285.25,399.875 288.433,398.494 291.593,397.068 294.729,395.598 297.842,394.085 300.931,392.532 303.996,390.939 307.037,389.309 310.054,387.642 313.047,385.942 316.016,384.208 318.961,382.443 321.881,380.648 324.777,378.825 327.648,376.976 330.495,375.101 333.317,373.203 336.115,371.284 338.888,369.344 341.635,367.385 344.358,365.409 347.056,363.418 349.728,361.412 352.375,359.394 354.997,357.366 357.594,355.328 360.165,353.283 362.71,351.231 365.23,349.175 367.724,347.116 370.192,345.056 372.634,342.996 375.05,340.938 377.441,338.883 379.805,336.833 382.142,334.79 384.454,332.755 386.739,330.729 388.997,328.715 391.229,326.714 393.434,324.727 395.612,322.756 397.764,320.803 399.889,318.869 401.986,316.956 404.057,315.065 406.1,313.198 408.116,311.356 410.105,309.541 412.066,307.756 414.0,306.0" fill="none" stroke="#b0a0ff" stroke-width="5" stroke-linejoin="round"/>
+<polyline points="98.0,361.0 102.25,363.907 106.481,366.69 110.693,369.35 114.886,371.889 119.058,374.308 123.211,376.609 127.345,378.793 131.458,380.863 135.552,382.819 139.626,384.663 143.68,386.397 147.713,388.022 151.727,389.541 155.72,390.954 159.693,392.263 163.645,393.469 167.577,394.575 171.488,395.582 175.378,396.491 179.248,397.304 183.097,398.023 186.925,398.648 190.731,399.183 194.517,399.628 198.281,399.984 202.024,400.254 205.746,400.44 209.446,400.541 213.125,400.561 216.782,400.501 220.417,400.362 224.031,400.146 227.622,399.854 231.192,399.489 234.74,399.051 238.265,398.543 241.768,397.965 245.249,397.319 248.708,396.608 252.144,395.832 255.558,394.993 258.948,394.093 262.317,393.133 265.662,392.115 268.984,391.041 272.284,389.911 275.56,388.728 278.813,387.494 282.043,386.209 285.25,384.875 288.433,383.494 291.593,382.068 294.729,380.598 297.842,379.085 300.931,377.532 303.996,375.939 307.037,374.309 310.054,372.642 313.047,370.942 316.016,369.208 318.961,367.443 321.881,365.648 324.777,363.825 327.648,361.976 330.495,360.101 333.317,358.203 336.115,356.284 338.888,354.344 341.635,352.385 344.358,350.409 347.056,348.418 349.728,346.412 352.375,344.394 354.997,342.366 357.594,340.328 360.165,338.283 362.71,336.231 365.23,334.175 367.724,332.116 370.192,330.056 372.634,327.996 375.05,325.938 377.441,323.883 379.805,321.833 382.142,319.79 384.454,317.755 386.739,315.729 388.997,313.715 391.229,311.714 393.434,309.727 395.612,307.756 397.764,305.803 399.889,303.869 401.986,301.956 404.057,300.065 406.1,298.198 408.116,296.356 410.105,294.541 412.066,292.756 414.0,291.0" fill="none" stroke="#b0a0ff" stroke-width="5" stroke-linejoin="round"/>
+</svg>

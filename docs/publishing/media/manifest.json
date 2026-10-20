@@ -1,0 +1,140 @@
+[
+  {
+    "file": "transform_foundations.gif",
+    "source": "transform_foundations.mp4",
+    "source_sha256": "61915e05ea1a1aea65430e7b5d5704cf77b666f71018444450db6ec4c34b671f",
+    "segments_seconds": [
+      [
+        0,
+        5.03
+      ]
+    ],
+    "speed": 1.0,
+    "width": 640,
+    "height": 360,
+    "frames": 40,
+    "duration_seconds": 5.01,
+    "loop": 0,
+    "bytes": 1945829,
+    "sha256": "fe47f275337fc9ac437a00af98c70f9d22c61ed20a40fb8badef25aba931ea49"
+  },
+  {
+    "file": "save_copy.gif",
+    "source": "save_copy.mp4",
+    "source_sha256": "6771f5d45513caf9fc289b83e5f191f9c386dd94f013cb42d8f8c5d7b24b4e9f",
+    "segments_seconds": [
+      [
+        1,
+        9
+      ],
+      [
+        11,
+        14
+      ],
+      [
+        16,
+        21.5
+      ],
+      [
+        23,
+        30.4
+      ]
+    ],
+    "speed": 1.5,
+    "width": 640,
+    "height": 360,
+    "frames": 127,
+    "duration_seconds": 15.88,
+    "loop": 0,
+    "bytes": 7238249,
+    "sha256": "1717983257df483218178f3cec9c1e027d0363323113dd30f5c733c59cba6dbd"
+  },
+  {
+    "file": "transformers.gif",
+    "source": "transformers.mp4",
+    "source_sha256": "f83d8c6826e67e1b9cea53311b534e9c5cb59e2362be10b343e29bf082decbe5",
+    "segments_seconds": [
+      [
+        0.85,
+        11.47
+      ]
+    ],
+    "speed": 1.0,
+    "width": 640,
+    "height": 360,
+    "frames": 85,
+    "duration_seconds": 10.63,
+    "loop": 0,
+    "bytes": 4094610,
+    "sha256": "d511027086b56b21773366653179016fa067d85c317dd91417c059ac9c37dd0a"
+  },
+  {
+    "file": "rails_with_stick.gif",
+    "source": "rails_with_stick.mp4",
+    "source_sha256": "ce505a3fc1676679d673228ac2195caa5ff388794ed9862ecc1a151c8134f440",
+    "segments_seconds": [
+      [
+        1.8,
+        9
+      ],
+      [
+        19,
+        25.93
+      ]
+    ],
+    "speed": 1.25,
+    "width": 640,
+    "height": 360,
+    "frames": 90,
+    "duration_seconds": 11.26,
+    "loop": 0,
+    "bytes": 6110452,
+    "sha256": "d874f79caf0705deb0ccdfd3deb3823fb7d6e6b4567e4056dcb39b425d8fd0bc"
+  },
+  {
+    "file": "connected_spread.gif",
+    "source": "connected_spread.mp4",
+    "source_sha256": "d5ffa5ff7593e5d30c91e2095956e55559a2cd8c71bdb9bac307791b658aaa6f",
+    "segments_seconds": [
+      [
+        1.8,
+        6.1
+      ],
+      [
+        8.7,
+        10.7
+      ]
+    ],
+    "speed": 1.0,
+    "width": 640,
+    "height": 360,
+    "frames": 50,
+    "duration_seconds": 6.26,
+    "loop": 0,
+    "bytes": 3153452,
+    "sha256": "4ac2576b6e4cf8e51c453e62c779fd9955e429d7e8dfb587b8b7a32b2fb7273a"
+  },
+  {
+    "file": "rail_planning.gif",
+    "source": "rail_planning.mp4",
+    "source_sha256": "dde1447c01d7358846f71e6a8cf93903514b6425f6972f6fec0089ef84858fc7",
+    "segments_seconds": [
+      [
+        1,
+        18
+      ],
+      [
+        22,
+        37.13
+      ]
+    ],
+    "speed": 2.0,
+    "width": 640,
+    "height": 360,
+    "frames": 129,
+    "duration_seconds": 16.13,
+    "loop": 0,
+    "bytes": 10640934,
+    "sha256": "a835e45accb14eece9869d072800548a995359acdc9c0787f223a9af0a69744b"
+  }
+]

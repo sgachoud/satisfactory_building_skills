@@ -140,8 +140,16 @@ temporary imports from its existing cached objects under this repository's
 `Saved/NativeBuild`. It does not write those libraries into the shared checkout.
 Alpakit then cooks, packages and installs the new DLL. `-SkipNativeBuild` on `Install`
 is only for immediately reusing an already successful native build during iteration.
-The broader `Release` path still uses the standard full target build and is untested
-for the Transform feature.
+`Release` uses the same isolated build helper for Steam, Epic and Windows Server,
+then the Linux helper, before Alpakit cooks and merges all targets. With
+`-SkipNativeBuild`, all four native targets must already be compiled from the
+current source; this switch is intended only for immediate packaging reuse.
+The helpers compile each target's Windows resource file before linking.
+Packaging checks every requested target's build receipt as well as the editor
+receipt: another isolated mod build can replace these shared records and cause
+Alpakit to omit existing native binaries. If only the receipt is stale and the
+native code is unchanged, refreshing the corresponding UBT target with
+`-SkipBuild` restores its metadata without recompiling the C++ units.
 
 `PackageLinux` uses `scripts/BuildLinux.ps1` to compile only Building Skills against
 the existing Linux SDK binaries, then cooks and archives the Linux server plugin.
