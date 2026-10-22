@@ -4,8 +4,17 @@ Alt+P opens the Plan gun. Its initial tool is the rail planner. Plan geometry is
 local visualization, with no collision, costs or world buildings until Build.
 Closing the gun hides all plan geometry without discarding the plan.
 
-Personal plans belong to the native saved player identity. They are saved with
-the world, and their geometry is sent only to their owner. Shared plans are
+Activation waits for the native gun to finish equipping before entering Plan's
+empty build state. This avoids multiplayer timing sending the player to the
+build menu. Entry also removes the previous construction preview through native
+cleanup and clears its reference before enabling Plan controls. Alt+P remains
+configurable; no rail hologram is spawned for planning.
+
+Personal plans store their owner’s native account/offline identity, so access does
+not depend on the same PlayerState actor surviving a reload or reconnect. Existing
+plans acquire that identity from their saved owner when it is still available.
+Ownerless legacy plans are never assigned to a different player by name.
+Personal plans are saved with the world, and their geometry is sent only to their owner. Shared plans are
 visible to everyone while using Plan, and everyone can edit or build them.
 Shared edits use revision checks; a conflicting edit is rejected and the latest
 plan is loaded instead of silently overwriting somebody else's work.
@@ -15,6 +24,8 @@ separate Save or Load button. Double-click the name to rename it in place;
 Enter or leaving the field commits the name. **Duplicate** creates and selects
 an independent personal plan named `<plan name> (copy)`, including its geometry,
 parallel offsets and build specification. The original remains unchanged.
+Menu actions keep the window open and refresh their controls after the server
+confirms the edit. Escape or Close dismisses the window.
 Copies can be shared afterward. Names are limited to 80 characters, so a long
 name is shortened as needed to retain the `(copy)` suffix.
 
@@ -157,6 +168,27 @@ Construction discovers matching positions and opposing tangents in the current
 world, including interior nodes. Each path between these
 boundaries is divided separately; closed loops are processed once. An impossible
 policy rejects the whole build before construction.
+
+**Sync parallels in turns** defaults off. When enabled, the main curve supplies
+the segment boundaries for every parallel, keeping their joints at corresponding
+cross-sections through turns. Outer rails can be longer than the main segment;
+inner rails can be shorter. If a rail would exceed the native maximum, the shared
+target length for that connected path is reduced and its boundaries are recalculated
+using the selected remainder policy.
+
+With synchronization enabled, a parallel's rail placement offset is measured along
+the main curve and shifts its joint positions by that amount. Positive offsets
+leave a starting gap; negative offsets extend backward along the starting tangent.
+Large negative offsets receive additional joints throughout the extended path.
+The preview uses the same starting position as construction. Parallel node offsets
+remain part of the parallel geometry and are included in the length checks.
+
+Live rail intersections remain mandatory joints. A staggered parallel's final
+remainder may be merged with its preceding segment when too short; the merged
+segment is included in the maximum-length check. If synchronized rails cannot
+respect both native length limits, the entire build is rejected before placement.
+This checkbox is saved with each plan, synchronized in multiplayer and included
+in undo/redo.
 
 **Place block signal** defaults off. When enabled, **Every N segment(s)** defaults
 to 1 and counts from the start of each path in the displayed signal direction.

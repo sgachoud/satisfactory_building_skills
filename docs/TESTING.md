@@ -2,7 +2,117 @@
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
 build is CL 502094; the current installed Steam game is CL 513885 (1.2.4.1).
-Results below are tied to their tested versions. Current development version: Building Skills 0.10.6.
+Results below are tied to their tested versions. Current development version: Building Skills 0.10.14.
+
+## 0.10.14: Blueprint construction interface pointers
+
+Blueprint post-deserialization and deduplication serialization now receive the
+native construction interface pointer and adjust it before accessing the actor.
+The blueprint serializer has a separate registration from Stick's base hologram
+serializer, avoiding SML's per-member-function hook-cache collision.
+
+The packaged Steam regression successfully decoded and constructed a three-object
+Copy, a newly saved three-object blueprint, and the exact two-foundation `rest`
+blueprint preserved from the live crash. All three cases transported Off, Replace
+and Skip correctly, consumed their complete message buffers, retained their
+configured descriptors and left the native descriptor library unchanged.
+The fixture initializes the selected descriptor before decoding, as the build gun
+does; the current native callback does not itself select a blueprint. This is
+native serialization and construction in a temporary standalone world, not RPC
+transport. Evidence: `Saved/Issue1/decoder-fixed-test.log`.
+
+The wider Blueprint run recorded 130 passing and six failing assertions. The
+failures concern closing/reopening the Transform step window and subsequent
+input; they have not been resolved in this crash fix. The Stick run recorded
+361 passing and six failing assertions: one settings-window mouse interaction
+and five ARS fixture/support checks with ARS absent. Stick serialization,
+supported-spline construction and connections to existing endpoints passed.
+Neither run crashed, but neither full suite is reported as passing.
+Evidence: `Saved/Issue1/stick-fixed-test.log` and
+`Saved/Issue1/fixed-regression-results.json`.
+
+The opt-in `BuildingSkillsIssue1NetworkTest` joins the saved loopback test server
+through the native Server Manager, selects `rest`, invokes the native build-gun
+click path and checks that a new proxy with both foundations replicates to the
+client. It refuses construction outside the named isolated session. The final
+Steam client and Windows dedicated-server binaries passed this check on game
+build 513885 with SML 3.12.0 and no other gameplay mods. At 19:24:39 UTC the native
+click reported `canConstruct=1 authority=0`; at 19:24:41 both foundations were
+registered and valid on the remote client. The client then exited with code 0
+and the server remained healthy. Evidence: `Saved/Issue1/network-fixed-test.log`
+and `Saved/Issue1/server.log`.
+
+The fixture equips the gun through the native recipe hotkey, enables No Build
+Cost for the test player, and uses a real terrain hit plus the normal per-frame
+disqualifier reset. It does not suppress placement validation. Earlier harness
+attempts stopped at server discovery, an unequipped gun, or invalid placement;
+those attempts are not counted as passes.
+Steam, Epic, Windows Server, Linux Server and Editor compilation completed.
+The merged release archive matches all four compiled runtime binaries and the
+source descriptor, contains the required cooked assets and license notices,
+and has valid SML module manifests. Linux was compiled and packaged, not run.
+Evidence: `Saved/Releases/BuildingSkills-0.10.14-verification.json` and
+`Saved/Publication/0.10.14/verification.json`. The normal SMM-managed installation
+has not been replaced.
+
+## Issue 1: Blueprint message callback investigation (2026-10-22)
+
+An opt-in `BuildingSkillsClipboardDecodeTest` fixture invokes the native
+construction-message post-deserialization interface on a blueprint hologram.
+It runs inside the existing isolated blueprint runtime test and is inactive
+during ordinary gameplay. The initial investigation kept the production hook
+unchanged; the subsequent correction is documented under 0.10.14 above.
+
+An initial local attempt crashed in `UBSClipboard::Find` / `FString::StartsWith`,
+matching the reported call path, but its preceding message round-trip assertion
+failed. That attempt is not a clean end-to-end reproduction. The revised fixture
+supplies a known-valid clipboard name, verifies lookup before the callback, and
+then checks descriptor restoration. Its input check passed; restoration failed
+without a crash. A separate hints assertion also failed in that run.
+
+A Windows dedicated server and separate client using the unmodified 0.10.13
+package were prepared with only SML and Building Skills, game build 513885.
+The live multiplayer attempt reproduced the reported server crash. The player
+reported that Copy worked. Saving the two-building blueprint succeeded at
+18:01:31 UTC (`expected=2 serialized=2`, disk result `success=1`). A subsequent
+construction request crashed in `FString::StartsWith`, through Building Skills
+and `Server_ConstructHologram_Implementation`, matching issue 1's call path.
+This established a reproduction with only SML and Building Skills. The save
+operation itself did not fail in this attempt; the later pointer correction and
+its validation are documented under 0.10.14 above.
+
+The normal installation matched all 13 packaged Windows files and was not
+modified. Evidence is preserved as `server-live-reproduction-20261022.log` and
+`client-live-reproduction-20261022.log` under the ignored `Saved/Issue1`
+directory, alongside the test launchers.
+
+## 0.10.13: Synchronized parallel rail joints
+
+The Plan build specification includes a saved, server-synchronized checkbox,
+disabled for existing plans. Spline parameter correspondence carries cuts from
+the main path to each parallel; signed placement offsets shift those cuts in
+main-path distance. A shared target is reduced if any resulting rail exceeds the
+maximum. Mandatory live intersections remain joints, including with offsets.
+Negative extensions receive additional cuts beyond the original reference range.
+The final optional joint can be merged for a short tail, then rechecked against
+the maximum. Impossible minimum/maximum combinations fail before construction.
+
+The new Editor regression covers inner and outer turns, maximum shortening,
+independent-mode preservation, all remainder policies, positive and negative
+placement offsets, preview agreement, large backward extensions, closed loops,
+branches, live junctions, reversed edges, unequal span sampling, node offsets,
+save round trips and undo/redo. All **28 Editor tests passed**, with zero failures
+or warnings. Packaged fixture cases were added for network snapshots, the
+displayed checkbox and immediate menu saving, but have not been executed for
+this version. Native construction, menu interaction and live multiplayer still
+need gameplay validation; prepared cases are not gameplay passes.
+
+Steam and Epic clients, Windows Server and Linux Server compiled successfully.
+The combined release archive passed descriptor, cooked-content and CRC checks;
+all four packaged native binaries match their compiled outputs by SHA-256.
+The existing SMM installation was verified unchanged. Evidence is recorded in
+`Saved/Releases/BuildingSkills-0.10.13-verification.json` and
+`Saved/Publication/0.10.13/verification.json`.
 
 ## 0.10.6: Planner continuity, settings and action redo
 
@@ -2124,3 +2234,145 @@ and representative frames from each clip were visually inspected. The media
 manifest records source/output hashes, trims, playback speeds and dimensions.
 The original recordings were preserved. This media validation does not add
 gameplay regression coverage.
+
+### SMR version-field correction
+
+SMR rejected the first upload because the descriptor used integer `Version: 56`
+as a build counter alongside `SemVersion: "0.10.9"`. The required integer is
+the semantic major version, `0`. Source and all three packaged descriptors
+were corrected without changing the semantic version.
+
+The publication validator now checks the major-version relationship in source
+and packaged descriptors. Focused checks accept matching major versions and
+reject the old counter, string integers and booleans. A corrected merged input
+is retained at `Saved/PublicationInputs/BuildingSkills-0.10.9-version-fixed.zip`;
+all entries except the three descriptors were verified byte-identical to the
+original archive. No compilation or gameplay test was needed for this metadata
+correction. Local validation does not establish SMR upload acceptance.
+
+## 0.10.10 multiplayer Plan activation
+
+The reported client log records `GotoBuildState failed cause recipe was null`
+on repeated Plan attempts. The former entry path requested equipment and called
+the recipe-based transition immediately. Its Plan-specific hook depended on the
+gun already having an instigator, which need not be true during client equip.
+
+Plan now waits for the equipped gun and matching player instigator before
+entering the native build state directly with no recipe. Plan input stays
+disabled while entry is pending. Closing cancels pending entry, and a bounded
+timeout logs the equipment/state information rather than leaving Plan active.
+
+The temporary-world Plan regression includes delayed owner assignment beyond
+the old two-second grace period, successful recipe-free entry afterward, and
+cancellation before entry. These added runtime cases have not yet been run;
+they do not constitute live multiplayer verification. The user's game is now
+managed by SMM and is not modified by this release preparation.
+
+Multiplayer acceptance check after installing 0.10.10 on client and server:
+
+- From normal gameplay, press the configured Plan shortcut. Confirm the Plan
+  panel and Place/Edit modes appear with no build menu or rail hologram.
+- Close and reopen Plan; confirm the same saved plan is still selected.
+- Open the vanilla build menu first, then open Plan. Repeat from an active
+  construction hologram and from Edit/Dismantle.
+- Place a plan node, open K, and verify that the server stores the edit.
+- If activation fails, capture the new `Plan mode requested`, `Plan mode active`
+  or `Plan entry timed out` log entries.
+
+Steam, Epic, Windows Server and Linux Server native builds passed. The Epic
+header-generation pass initially reported an unused existing pipe friend
+declaration; retrying it succeeded without changing any source or toolchain.
+Alpakit cooking and merged packaging passed. Archive validation checked all
+four native hashes against compiled outputs, all three descriptors, cooked
+Plan/Edit assets, notices and CRC. The SMM-managed 0.10.9 installation was
+verified unchanged by file count and SHA-256 hashes. The release evidence is
+`Saved/Releases/BuildingSkills-0.10.10-verification.json`; no gameplay or live
+multiplayer success is claimed by these build checks.
+
+
+## 0.10.11 Plan reentry after construction
+
+The 0.10.10 client log contains four five-second Plan-entry timeouts with the gun
+already equipped, its instigator assigned, and its current state set to Build.
+Native game inspection shows that SetActiveRecipe(nullptr) destroys the previous
+hologram without nulling mHologram. The entry check incorrectly treated that
+non-null reference as a live preview and kept controls disabled until timeout.
+
+Entry now uses native RemoveHologram for a live preview, clears an already dead
+reference without repeating destruction, and clears the pending recipe before
+transitioning. The null-recipe entry hook uses this same path. Timeout diagnostics
+now include the recipe, hologram, and hologram validity.
+
+The temporary-world Plan regression adds repeated transitions from a live rail
+preview, a destroyed preview retained by the native recipe setter, and a fresh
+preview again. It checks entry completion, controls, context, a null hologram,
+and continued activity on the next tick without waiting for garbage collection.
+These runtime cases are prepared but have not been executed. Repeat the 0.10.10
+multiplayer acceptance checks, especially after using normal construction.
+
+Steam, Epic, Windows Server and Linux Server compilation and linking passed.
+The interrupted Epic build was restarted; the completed Steam build was retained.
+Alpakit cooking and merged packaging passed. Archive checks verified all four
+native hashes against the compiled outputs, descriptors, cooked Plan/Edit assets,
+module manifests, notices and CRC. The SMM-managed installation remains identical
+to its recorded file hashes. Evidence is saved in
+`Saved/Releases/BuildingSkills-0.10.11-verification.json`. No gameplay or live
+multiplayer regression was run for this candidate.
+
+
+## 0.10.12 personal-plan reload and persistent menu
+
+Personal-plan visibility and ownership limits now use a saved native client
+identity instead of requiring the same PlayerState actor. Creation and duplication
+capture the owner identity; legacy references are migrated while still available,
+including during save/load. Matching uses account IDs, or nonempty offline IDs
+when neither identity has online accounts. Names do not grant ownership.
+
+Plan activation requests a fresh snapshot. The server marks a snapshot delivered
+only after the client accepts its final chunk. Missing components or rejected
+snapshots are not acknowledged. Pending menu responses can retry while the window
+is open. Save/load and snapshot diagnostics log counts without account identifiers.
+
+Plan action buttons no longer close the interact window. Structural controls
+refresh after acknowledgement, outside the click callback. Parallel row backing
+arrays remain intact while awaiting that response. Numeric field edits retain
+the existing commit-and-queue behavior.
+
+Editor regression cases check mismatched/empty identities, online-account
+precedence and the owner identity's SaveGame metadata. The SDK editor stubs the
+native identity getter/setter, serializer and remote-call world lookup; it cannot
+validate those runtime APIs. An initial attempt to exercise them crashed the
+isolated editor fixture. Those checks now run only in the packaged Plan fixture,
+which covers owner replacement, legacy migration, serialization without the old
+owner actor and final snapshot acknowledgements. It also invokes Add/Remove
+parallel and Undo/Redo buttons and checks that the same menu remains open and
+its rows refresh. Test additions are not gameplay passes.
+
+The corrected Editor build and all 27 Editor automation tests passed on
+2026-10-21. Packaged gameplay, native ownership serialization and a live
+multiplayer save reload have not been tested for this candidate.
+
+Steam, Epic, Windows Server and Linux Server native builds and Alpakit cooking
+and merged packaging passed. The initial Steam compilation caught an editor-only
+button simulation helper in the packaged test fixture; it now uses normal key
+events, and the corrected Editor suite again passed all 27 tests. Only the
+affected unit was rebuilt for the already-compiled Editor and Steam targets;
+their other units were retained from the same source revision.
+
+Archive validation checked CRC, descriptors, all four native hashes, module
+manifests, required cooked Plan/Edit assets and notices. The SMM-managed
+installation matched its pre-build file hashes. Evidence is saved in
+`Saved/Releases/BuildingSkills-0.10.12-verification.json`.
+
+Manual multiplayer confirmation, with both peers updated:
+
+1. Create a personal plan with at least two connected nodes, save the world,
+   reload that server save, reconnect with the same account and open Plan.
+   Confirm the plan's name and geometry are present; another player must not
+   see it unless it is shared.
+2. In the K menu, add and remove a parallel, use Undo/Redo, change a spline's
+   trace mode, duplicate a plan and make the duplicate shared. The same window
+   should stay open and update after each response. Escape and Close should
+   still dismiss it.
+3. Repeat entry from a normal construction hologram. Plan should remain active
+   without that hologram, and node placement and selection should respond.

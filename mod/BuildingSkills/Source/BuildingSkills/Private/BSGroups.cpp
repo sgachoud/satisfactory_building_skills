@@ -398,6 +398,8 @@ void ABSGroupSubsystem::GatherDependencies_Implementation(TArray<UObject*>& Out)
 void ABSGroupSubsystem::PreSaveGame_Implementation(int32, int32)
 {
     if (!HasAuthority() || SchemaVersion != 1) return;
+    for (auto& Plan:RailPlans) FBSPlanOwnership::CaptureLegacy(Plan);
+    UE_LOG(LogBuildingSkills,Display,TEXT("Saving rail plans: %d."),RailPlans.Num());
     bool Changed = false;
     const int32 PreviousCount = Groups.Num();
     for (auto& G : Groups)
@@ -408,6 +410,8 @@ void ABSGroupSubsystem::PreSaveGame_Implementation(int32, int32)
 
 void ABSGroupSubsystem::PostLoadGame_Implementation(int32, int32)
 {
+    for (auto& Plan:RailPlans) FBSPlanOwnership::CaptureLegacy(Plan);
+    UE_LOG(LogBuildingSkills,Display,TEXT("Loaded rail plans: %d."),RailPlans.Num());
     LightweightLookup.Empty(); LightweightCounts.Empty();
     // Do not resolve buildings here: vanilla actors and lightweight records may still be loading.
     for (auto& G : Groups) for (auto& B : G.Buildings) B.RuntimeIndex = INDEX_NONE;

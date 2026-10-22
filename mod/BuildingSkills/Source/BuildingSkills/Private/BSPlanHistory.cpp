@@ -33,7 +33,7 @@ bool FBSPlanHistory::Restore(FBSRailPlan& Plan,bool Forward,int32 Revision,int32
     if (Source.IsEmpty()) { Error=Forward ? TEXT("Nothing to redo in this plan.") : TEXT("Nothing to undo in this plan."); return false; }
     Destination.Add(Plan); auto Previous=Source.Pop();
     Plan.Nodes=MoveTemp(Previous.Nodes); Plan.Edges=MoveTemp(Previous.Edges); Plan.Parallels=MoveTemp(Previous.Parallels);
-    Plan.SegmentLength=Previous.SegmentLength; Plan.Remainder=Previous.Remainder;
+    Plan.SegmentLength=Previous.SegmentLength; Plan.Remainder=Previous.Remainder; Plan.SyncParallelsInTurns=Previous.SyncParallelsInTurns;
     Plan.PlaceBlockSignal=Previous.PlaceBlockSignal; Plan.SignalEvery=Previous.SignalEvery; Plan.LeftSideSignal=Previous.LeftSideSignal;
     Plan.ParallelReversed=MoveTemp(Previous.ParallelReversed); Plan.ReversedEdges=MoveTemp(Previous.ReversedEdges);
     Plan.ParallelNodeOffsets=MoveTemp(Previous.ParallelNodeOffsets); Plan.ParallelStartOffsets=MoveTemp(Previous.ParallelStartOffsets);

@@ -89,10 +89,11 @@ bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& 
         for (auto* Port:ExistingPorts) if (FMath::Abs(FVector::DotProduct(Port->GetConnectorNormal(),Forward))>.999)
             if (Port->GetConnectorLocation().Equals(Node.Position,.5)) Junctions.Add(Node.Id);
     }
-    TArray<FBSPlanPath> Paths;
-    if (!FBSPlanSegments::Paths(Plan,Paths,Error,true,Junctions)) return false;
-    for (const auto& Path:Paths)
+    TArray<FBSPlanSegmentedPath> Paths;
+    if (!FBSPlanSegments::Prepare(Plan,MinimumLength(),Max,Paths,Error,Junctions)) return false;
+    for (const auto& Segmented:Paths)
     {
+        const auto& Path=Segmented.Path;
         const auto& Curve=Path.Points;
         if (Curve.Num()<2) { Error=TEXT("A path has no usable curve."); return false; }
         if ((Path.Start.IsValid() && FMath::Abs(FVector::DotProduct(Curve[0].LeaveTangent.GetSafeNormal(),FBSPlanMath::ConnectionDirection(Plan,Path.Start)))<.999) ||
@@ -101,8 +102,7 @@ bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& 
         for (int32 I=1;I<Curve.Num();++I) for (int32 Sample=0;Sample<=32;++Sample)
             if (!FBSPlanMath::ShapeValid(Curve[I-1],Curve[I],double(Sample)/32,Limits.X,Limits.Y))
             { Error=TEXT("A red section exceeds the rail curvature or grade limit. Adjust it before building."); return false; }
-        TArray<TArray<FSplinePointData>> Parts;
-        if (!FBSPlanSegments::Split(Curve,Plan.SegmentLength,Plan.Remainder,MinimumLength(),Max,Parts,Error)) return false;
+        const auto& Parts=Segmented.Parts;
         if (Holograms.Num()+Parts.Num()>2049)
         { Error=TEXT("This plan exceeds the build limit of 2048 rail segments."); return false; }
         const int32 FirstIndex=Holograms.Num();

@@ -166,6 +166,7 @@ public:
     static void InstallHooks();
     static bool IsEditDescriptor(TSubclassOf<UFGBuildGunModeDescriptor> Mode);
     void InitializeInput(UEnhancedInputComponent* Input);
+    bool EnterPlanBuildState();
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* Function) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     void RefreshTransformReferences(const TArray<FBSNativeTransform>& Changes);

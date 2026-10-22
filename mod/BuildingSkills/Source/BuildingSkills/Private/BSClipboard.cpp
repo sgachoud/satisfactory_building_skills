@@ -8,6 +8,7 @@
 #include "FGBlueprintSubsystem.h"
 #include "FGBlueprintSettings.h"
 #include "FGCharacterPlayer.h"
+#include "FGConstructionMessageInterface.h"
 #include "FGPlayerController.h"
 #include "FGRecipe.h"
 #include "FGRecipeManager.h"
@@ -341,18 +342,24 @@ void UBSClipboard::InstallHooks()
                     State->SetActiveBlueprintDescriptor(Clipboard->Descriptor);
             Scope.Cancel();
         });
-    SUBSCRIBE_UOBJECT_METHOD(AFGBlueprintHologram, PostConstructMessageDeserialization,
-        [](auto& Scope, AFGBlueprintHologram* Hologram)
+    // The decoder is called through a secondary C++ interface. Its incoming
+    // pointer is not the actor address: use the interface ABI for both the hook
+    // and its trampoline, and let the compiler adjust it before reading fields.
+    SUBSCRIBE_METHOD_VIRTUAL(IFGConstructionMessageInterface::PostConstructMessageDeserialization,
+        static_cast<const IFGConstructionMessageInterface*>(GetDefault<AFGBlueprintHologram>()),
+        [](auto& Scope, IFGConstructionMessageInterface* Self)
         {
+            auto* Hologram = Cast<AFGBlueprintHologram>(static_cast<AFGHologram*>(Self));
+            if (!Hologram) return;
             auto* Clipboard = Find(Hologram->GetWorld(), Hologram->mBlueprintDescName);
             auto* System = AFGBlueprintSubsystem::Get(Hologram->GetWorld());
             if (!Clipboard || !System) return;
-            // The shipping binary inlines descriptor lookup here. Expose the
-            // descriptor only while the native message decoder uses that array.
+            // Keep transient clipboard descriptors available to native decode
+            // work without permanently adding them to the blueprint library.
             auto Descriptors = System->mAllBlueprintDescriptors;
             Descriptors.AddUnique(Clipboard->Descriptor);
             TGuardValue<decltype(Descriptors)> Guard(System->mAllBlueprintDescriptors, MoveTemp(Descriptors));
-            Scope(Hologram);
+            Scope(Self);
         });
     SUBSCRIBE_METHOD(AFGBlueprintHologram::OnRep_BlueprintDescName,
         [](auto& Scope, AFGBlueprintHologram* Hologram)

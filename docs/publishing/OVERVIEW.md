@@ -69,7 +69,7 @@ Draw and edit a route, then build it with parallel tracks and block signals.
 
 ## Before you install
 
-**Early access · 0.10.9 · SML 3.12.** Back up important saves before large edits.
+**Early access · 0.10.14 · SML 3.12.** Back up important saves before large edits.
 In multiplayer, the server and every client need the same mod version.
 Windows Steam/Epic clients and Windows/Linux dedicated-server packages are included.
 

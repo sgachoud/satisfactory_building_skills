@@ -17,6 +17,7 @@
 #include "FGCustomizationRecipe.h"
 #include "FGFactoryColoringTypes.h"
 #include "FGCharacterPlayer.h"
+#include "FGConstructionMessageInterface.h"
 #include "FGInventoryComponent.h"
 #include "FGInventoryLibrary.h"
 #include "FGDismantleInterface.h"
@@ -33,6 +34,34 @@
 
 namespace
 {
+    using FBlueprintSerializeInvoker = HookInvoker<decltype(&IFGConstructionMessageInterface::SerializeConstructMessage),
+        &IFGConstructionMessageInterface::SerializeConstructMessage>;
+    using FBlueprintSerializeFunction = void (*)(IFGConstructionMessageInterface*, FArchive&, FNetConstructionID);
+    FBlueprintSerializeFunction NativeBlueprintSerialize = nullptr;
+    THandlerLists<FBlueprintSerializeInvoker::Handler, FBlueprintSerializeInvoker::HandlerAfter>* BlueprintSerializeHandlers = nullptr;
+
+    void DispatchBlueprintSerialize(IFGConstructionMessageInterface* Self, FArchive& Ar, FNetConstructionID Id)
+    {
+        FBlueprintSerializeInvoker::ScopeType Scope(&BlueprintSerializeHandlers->HandlersBefore, NativeBlueprintSerialize);
+        Scope(Self, Ar, Id);
+        for (const auto& Handler : BlueprintSerializeHandlers->HandlersAfter) (*Handler)(Self, Ar, Id);
+    }
+
+    void SubscribeBlueprintSerialize(FBlueprintSerializeInvoker::HandlerAfter Handler)
+    {
+        // SML's template caches one implementation per member-function pointer.
+        // Stick already uses the interface template for AFGBuildableHologram;
+        // register this override separately so neither hook redirects the other.
+        // Resolve through the interface vtable on both Windows and Linux.
+        void* Address = FNativeHookManagerInternal::RegisterHookFunction(
+            TEXT("AFGBlueprintHologram::SerializeConstructMessage(interface)"),
+            ConvertFunctionPointer(&IFGConstructionMessageInterface::SerializeConstructMessage),
+            static_cast<const IFGConstructionMessageInterface*>(GetDefault<AFGBlueprintHologram>()),
+            reinterpret_cast<void*>(&DispatchBlueprintSerialize), reinterpret_cast<void**>(&NativeBlueprintSerialize));
+        BlueprintSerializeHandlers = CreateHandlerLists<FBlueprintSerializeInvoker::Handler, FBlueprintSerializeInvoker::HandlerAfter>(Address);
+        BlueprintSerializeHandlers->HandlersAfter.Add(MakeShared<FBlueprintSerializeInvoker::HandlerAfter>(MoveTemp(Handler)));
+    }
+
     using FBlueprintCostInvoker = HookInvoker<decltype(&AFGBlueprintHologram::GetBaseCost), &AFGBlueprintHologram::GetBaseCost>;
 #if PLATFORM_LINUX
     // SML 3.12's member aggregate-return helper puts `this` before the hidden
@@ -336,9 +365,13 @@ void FBSDeduplication::Install()
             }
             Scope.Override(Cached.Cost);
         });
-    SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBlueprintHologram, SerializeConstructMessage,
-        [](AFGBlueprintHologram* Hologram, FArchive& Ar, FNetConstructionID)
+    // Like the post-decode hook, this method receives the secondary interface
+    // address. Preserve that ABI and adjust to the actor before reading state.
+    SubscribeBlueprintSerialize(
+        [](IFGConstructionMessageInterface* Self, FArchive& Ar, FNetConstructionID)
         {
+            auto* Hologram = Cast<AFGBlueprintHologram>(static_cast<AFGHologram*>(Self));
+            if (!Hologram) return;
             uint8 Value = uint8(Mode(Hologram)); Ar << Value;
             if (Ar.IsLoading())
             {

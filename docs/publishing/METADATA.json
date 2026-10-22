@@ -2,7 +2,7 @@
   "name": "Building Skills",
   "mod_reference": "BuildingSkills",
   "short_description": "Group, move, copy and mirror your factory. Plan rail networks, extend spline placement, and undo construction or dismantling.",
-  "version": "0.10.9",
+  "version": "0.10.14",
   "stability": "Early access",
   "author": "sgachoud",
   "source_url": "https://github.com/sgachoud/satisfactory_building_skills",

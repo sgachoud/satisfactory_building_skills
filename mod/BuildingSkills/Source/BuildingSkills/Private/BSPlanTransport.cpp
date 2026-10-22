@@ -6,31 +6,33 @@
 #include "FGRailroadTrackConnectionComponent.h"
 #include "TimerManager.h"
 #include "BSTransform.h"
+#include "BuildingSkills.h"
 
 namespace
 {
-    bool Visible(const FBSRailPlan& P,AFGPlayerState* Owner) { return Owner && (P.Shared || P.Owner==Owner); }
+    bool Visible(const FBSRailPlan& P,AFGPlayerState* Owner) { return Owner && (P.Shared || FBSPlanOwnership::Owns(P,Owner)); }
 }
 void UBSGroupRemoteCallObject::Server_PlanCommand_Implementation(const FBSPlanCommand& C)
 {
     auto* P=GetOwnerPlayerCharacter(); auto* Store=ABSGroupSubsystem::Get(GetWorld());
     auto* Owner=P ? P->GetPlayerState<AFGPlayerState>() : nullptr;
     if (!Store || !Owner) { Client_PlanResult({},TEXT("Plan storage is not ready.")); return; }
+    for (auto& Plan:Store->RailPlans) FBSPlanOwnership::CaptureLegacy(Plan);
     FString Error; FGuid Id=C.Plan;
     const float ConfigLimit=FBSTransformSettings::Get(GetWorld()).ActionHistorySize;
     const int32 HistoryLimit=FMath::IsFinite(ConfigLimit) ? FMath::Clamp(FMath::RoundToInt(ConfigLimit),0,256) : 32;
     if (C.Action==EBSPlanAction::New)
     {
         const FString Name=C.Name.TrimStartAndEnd();
-        int32 Owned=0; for (const auto& Plan:Store->RailPlans) Owned+=Plan.Owner==Owner;
+        int32 Owned=0; for (const auto& Plan:Store->RailPlans) Owned+=FBSPlanOwnership::Owns(Plan,Owner);
         if (Name.IsEmpty() || Name.Len()>80 || Owned>=32 || Store->RailPlans.Num()>=256) Error=TEXT("Use a name of 1–80 characters. Limit: 32 plans per player.");
         else if (!FMath::IsFinite(C.SegmentLength) || C.SegmentLength<FBSPlanBuild::MinimumLength() || C.SegmentLength>FBSPlanBuild::MaximumLength() ||
             uint8(C.Remainder)>2 || C.SignalEvery<1 || C.SignalEvery>2048)
             Error=TEXT("The new plan's build defaults are outside the supported limits.");
         else
         {
-            auto& Plan=Store->RailPlans.AddDefaulted_GetRef(); Plan.Id=FGuid::NewGuid(); Plan.Name=Name; Plan.Owner=Owner; Id=Plan.Id;
-            Plan.SegmentLength=C.SegmentLength; Plan.Remainder=C.Remainder;
+            auto& Plan=Store->RailPlans.AddDefaulted_GetRef(); Plan.Id=FGuid::NewGuid(); Plan.Name=Name; FBSPlanOwnership::Assign(Plan,Owner); Id=Plan.Id;
+            Plan.SegmentLength=C.SegmentLength; Plan.Remainder=C.Remainder; Plan.SyncParallelsInTurns=C.SyncParallelsInTurns;
             Plan.PlaceBlockSignal=C.PlaceBlockSignal; Plan.LeftSideSignal=C.LeftSideSignal;
             Plan.SignalEvery=C.SignalEvery;
         }
@@ -38,7 +40,7 @@ void UBSGroupRemoteCallObject::Server_PlanCommand_Implementation(const FBSPlanCo
     else if (C.Action==EBSPlanAction::Duplicate)
     {
         const auto* Source=Store->RailPlans.FindByPredicate([&](const auto& V) { return V.Id==C.Plan && Visible(V,Owner); });
-        int32 Owned=0; for (const auto& Plan:Store->RailPlans) Owned+=Plan.Owner==Owner;
+        int32 Owned=0; for (const auto& Plan:Store->RailPlans) Owned+=FBSPlanOwnership::Owns(Plan,Owner);
         if (!Source) Error=TEXT("This plan is not available to you.");
         else if (!FBSPlanMath::Valid(*Source)) Error=TEXT("The source plan is invalid and cannot be duplicated.");
         else if (Source->Revision!=C.Revision) Error=TEXT("The plan changed. Review its latest version before duplicating.");
@@ -47,7 +49,7 @@ void UBSGroupRemoteCallObject::Server_PlanCommand_Implementation(const FBSPlanCo
         {
             // Copy before growing storage, and give the independent graph new identities.
             auto Copy=*Source;
-            Copy.Id=FGuid::NewGuid(); Copy.Owner=Owner; Copy.Shared=false; Copy.Revision=0;
+            Copy.Id=FGuid::NewGuid(); FBSPlanOwnership::Assign(Copy,Owner); Copy.Shared=false; Copy.Revision=0;
             Copy.Name=Source->Name.Left(73)+TEXT(" (copy)");
             TMap<FGuid,FGuid> Nodes;
             for (auto& Node:Copy.Nodes) { const FGuid Old=Node.Id; Node.Id=FGuid::NewGuid(); Nodes.Add(Old,Node.Id); }
@@ -89,22 +91,34 @@ void UBSGroupRemoteCallObject::Server_PlanCommand_Implementation(const FBSPlanCo
     }
     Client_PlanResult(Id,Error);
     // Supersede any older snapshot. Each response is bounded and acknowledged.
-    PlanTransfer.Invalidate(); DeliveredPlanHash=0; LastPlanPoll=-100; Server_PlanSnapshot_Implementation();
+    PlanTransfer.Invalidate(); DeliveredPlanHash=0; LastPlanPoll=-100; Server_PlanSnapshot_Implementation(false);
 }
-void UBSGroupRemoteCallObject::Server_PlanSnapshot_Implementation()
+void UBSGroupRemoteCallObject::Server_PlanSnapshot_Implementation(bool Force)
 {
     const double Now=GetWorld()->GetRealTimeSeconds();
+    if (Force)
+    {
+        DeliveredPlanHash=0;
+        if (Now-LastPlanPoll>=.25) PlanTransfer.Invalidate();
+    }
     if ((PlanTransfer.IsValid() && Now<PlanTransferDeadline) || Now-LastPlanPoll<.25) return;
     auto* P=GetOwnerPlayerCharacter(); auto* Store=ABSGroupSubsystem::Get(GetWorld());
     auto* Owner=P ? P->GetPlayerState<AFGPlayerState>() : nullptr;
     if (!Store || !Owner) return;
+    for (auto& Plan:Store->RailPlans) FBSPlanOwnership::CaptureLegacy(Plan);
     LastPlanPoll=Now;
     uint32 Hash=17;
     for (const auto& Plan:Store->RailPlans) if (Visible(Plan,Owner)) { Hash=HashCombine(Hash,GetTypeHash(Plan.Id)); Hash=HashCombine(Hash,GetTypeHash(Plan.Revision)); Hash=HashCombine(Hash,Plan.Shared); }
     if (Hash==DeliveredPlanHash) return;
     OutgoingPlanHash=Hash; OutgoingPlans.Reset();
-    for (const auto& Plan:Store->RailPlans) if (Visible(Plan,Owner)) { OutgoingPlans.Add(Plan); OutgoingPlans.Last().Owner=nullptr; }
-    PlanTransfer=FGuid::NewGuid(); PlanSequence=PlanIndex=PlanNodeIndex=PlanEdgeIndex=0; SendPlanChunk();
+    for (const auto& Plan:Store->RailPlans) if (Visible(Plan,Owner))
+    {
+        OutgoingPlans.Add(Plan); OutgoingPlans.Last().Owner=nullptr;
+        OutgoingPlans.Last().OwnerIdentity={};
+    }
+    UE_LOG(LogBuildingSkills,Display,TEXT("Plan snapshot: stored=%d visible=%d forced=%d."),Store->RailPlans.Num(),OutgoingPlans.Num(),Force);
+    PlanTransfer=FGuid::NewGuid(); PlanTransferFinal=false;
+    PlanSequence=PlanIndex=PlanNodeIndex=PlanEdgeIndex=0; SendPlanChunk();
 }
 void UBSGroupRemoteCallObject::SendPlanChunk()
 {
@@ -116,6 +130,7 @@ void UBSGroupRemoteCallObject::SendPlanChunk()
         if (Chunk.Start)
         {
             Chunk.Plan.Parallels=P.Parallels; Chunk.Plan.SegmentLength=P.SegmentLength; Chunk.Plan.Remainder=P.Remainder;
+            Chunk.Plan.SyncParallelsInTurns=P.SyncParallelsInTurns;
             Chunk.Plan.PlaceBlockSignal=P.PlaceBlockSignal; Chunk.Plan.SignalEvery=P.SignalEvery; Chunk.Plan.LeftSideSignal=P.LeftSideSignal;
             Chunk.Plan.ParallelReversed=P.ParallelReversed;
             Chunk.Plan.ParallelNodeOffsets=P.ParallelNodeOffsets; Chunk.Plan.ParallelStartOffsets=P.ParallelStartOffsets;
@@ -126,12 +141,18 @@ void UBSGroupRemoteCallObject::SendPlanChunk()
         if (PlanNodeIndex==P.Nodes.Num() && PlanEdgeIndex==P.Edges.Num()) { ++PlanIndex; PlanNodeIndex=PlanEdgeIndex=0; }
     }
     Chunk.Final=PlanIndex==OutgoingPlans.Num(); PlanTransferDeadline=GetWorld()->GetRealTimeSeconds()+15;
+    PlanTransferFinal=Chunk.Final;
     Client_PlanChunk(Chunk);
-    if (Chunk.Final) { PlanTransfer.Invalidate(); OutgoingPlans.Reset(); DeliveredPlanHash=OutgoingPlanHash; }
 }
 void UBSGroupRemoteCallObject::Server_PlanNext_Implementation(FGuid Transfer,int32 Sequence)
 {
-    if (Transfer!=PlanTransfer || Sequence!=PlanSequence+1 || GetWorld()->GetRealTimeSeconds()>PlanTransferDeadline) return;
+    const auto* World=GetWorld();
+    if (!World || !PlanTransfer.IsValid() || Transfer!=PlanTransfer || Sequence!=PlanSequence+1 || World->GetRealTimeSeconds()>PlanTransferDeadline) return;
+    if (PlanTransferFinal)
+    {
+        DeliveredPlanHash=OutgoingPlanHash; PlanTransfer.Invalidate(); OutgoingPlans.Reset(); PlanTransferFinal=false;
+        return;
+    }
     ++PlanSequence; SendPlanChunk();
 }
 void UBSGroupRemoteCallObject::Client_PlanChunk_Implementation(const FBSPlanChunk& C)
@@ -152,8 +173,13 @@ void UBSGroupRemoteCallObject::Client_PlanChunk_Implementation(const FBSPlanChun
     if (C.Final)
     {
         for (const auto& P:IncomingPlans) if (!FBSPlanMath::Valid(P)) return;
-        if (auto* Plan=UBSPlanComponent::Find(GetOwnerPlayerCharacter())) Plan->Receive(MoveTemp(IncomingPlans),{},FString());
+        auto* Plan=UBSPlanComponent::Find(GetOwnerPlayerCharacter());
+        if (!Plan) return; // No acknowledgement: retry after the transfer deadline.
+        // Receive may synchronously send a queued command in standalone. Do not
+        // invalidate the newer transfer that such a command can start.
         ReceivingPlanTransfer.Invalidate();
+        if (!Plan->Receive(MoveTemp(IncomingPlans),{},FString())) return;
+        Server_PlanNext(C.Transfer,C.Sequence+1);
     }
     else
     {

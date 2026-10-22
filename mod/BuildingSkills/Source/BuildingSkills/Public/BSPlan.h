@@ -3,6 +3,7 @@
 #include "Components/ActorComponent.h"
 #include "Components/SplineComponent.h"
 #include "FGBuildGunModeDescriptor.h"
+#include "Online/ClientIdentification.h"
 #include "UI/FGInteractWidget.h"
 #include "BSPlan.generated.h"
 
@@ -53,8 +54,10 @@ struct BUILDINGSKILLS_API FBSRailPlan
     GENERATED_BODY()
     UPROPERTY(SaveGame) FGuid Id;
     UPROPERTY(SaveGame) FString Name;
-    // Native saved player-state identity survives reconnects without name matching.
+    // Retain the actor reference to migrate existing saves. Identity is the
+    // durable owner when native loading/reconnection replaces that actor.
     UPROPERTY(SaveGame) TObjectPtr<class AFGPlayerState> Owner;
+    UPROPERTY(SaveGame) FClientIdentityInfo OwnerIdentity;
     UPROPERTY(SaveGame) bool Shared = false;
     UPROPERTY(SaveGame) int32 Revision = 0;
     UPROPERTY(SaveGame) TArray<FBSPlanNode> Nodes;
@@ -67,6 +70,7 @@ struct BUILDINGSKILLS_API FBSRailPlan
     // Zero uses the native maximum. Length is measured along entire paths.
     UPROPERTY(SaveGame) double SegmentLength = 8000;
     UPROPERTY(SaveGame) EBSPlanRemainder Remainder = EBSPlanRemainder::Reduce;
+    UPROPERTY(SaveGame) bool SyncParallelsInTurns = false;
     UPROPERTY(SaveGame) bool PlaceBlockSignal = false;
     UPROPERTY(SaveGame) int32 SignalEvery = 1;
     UPROPERTY(SaveGame) bool LeftSideSignal = false;
@@ -75,6 +79,14 @@ struct BUILDINGSKILLS_API FBSRailPlan
 };
 UENUM()
 enum class EBSPlanAction : uint8 { New, Rename, Share, Place, Move, Edge, Parallels, Delete, Build, Undo, Redo, Node, Segments, ReverseDirection, ReverseSpline, Duplicate };
+struct BUILDINGSKILLS_API FBSPlanOwnership
+{
+    static bool HasIdentity(const FClientIdentityInfo& Identity);
+    static bool Matches(const FClientIdentityInfo& Saved, const FClientIdentityInfo& Current);
+    static bool Owns(const FBSRailPlan& Plan, class AFGPlayerState* Player);
+    static void Assign(FBSRailPlan& Plan, class AFGPlayerState* Player);
+    static void CaptureLegacy(FBSRailPlan& Plan);
+};
 // Server-owned, session-only history. Sharing and ownership are never restored
 // from an old geometry snapshot.
 USTRUCT()
@@ -107,6 +119,7 @@ struct FBSPlanCommand
     UPROPERTY() double SplitTime = 0;
     UPROPERTY() double SegmentLength = 0;
     UPROPERTY() EBSPlanRemainder Remainder = EBSPlanRemainder::Reduce;
+    UPROPERTY() bool SyncParallelsInTurns = false;
     UPROPERTY() bool PlaceBlockSignal = false;
     UPROPERTY() int32 SignalEvery = 1;
     UPROPERTY() bool LeftSideSignal = false;
@@ -130,8 +143,8 @@ struct BUILDINGSKILLS_API FBSPlanMath
     static bool Valid(const FBSRailPlan& Plan);
     static bool Apply(FBSRailPlan& Plan, const FBSPlanCommand& Command, FString& Error);
     static TArray<FSplinePointData> Curve(const FBSRailPlan& Plan, const FBSPlanEdge& Edge);
-    static TArray<FSplinePointData> Offset(const TArray<FSplinePointData>& Curve, FVector Offset, double StartRoll=0, double EndRoll=0);
-    static TArray<FSplinePointData> ParallelCurve(const FBSRailPlan& Plan, const FBSPlanEdge& Edge, int32 Parallel, bool Forward=true);
+    static TArray<FSplinePointData> Offset(const TArray<FSplinePointData>& Curve, FVector Offset, double StartRoll=0, double EndRoll=0, TArray<double>* MainKeys=nullptr);
+    static TArray<FSplinePointData> ParallelCurve(const FBSRailPlan& Plan, const FBSPlanEdge& Edge, int32 Parallel, bool Forward=true, TArray<double>* MainKeys=nullptr);
     static bool Closest(const TArray<FSplinePointData>& Curve, FVector Position, int32& Segment, double& Time, FVector& Point);
     static FRotator Rotation(const FBSPlanNode& Node);
     static FVector ControlDirection(const FBSRailPlan& Plan, const FBSPlanEdge& Edge, int32 Index);
@@ -150,15 +163,24 @@ struct FBSPlanPath
     // Linked node markers remain present even when the start is trimmed.
     TArray<FBSPlanNode> Nodes;
     TArray<int32> NodePointIndices;
+    // Untrimmed curve correspondence, populated only for synchronized splitting.
+    TArray<double> MainKeys;
     double StartOffset = 0;
     bool PlacementValid = true;
     bool SignalReverse = false;
 };
+struct FBSPlanSegmentedPath
+{
+    FBSPlanPath Path;
+    TArray<TArray<FSplinePointData>> Parts;
+};
 struct BUILDINGSKILLS_API FBSPlanSegments
 {
-    static bool Paths(const FBSRailPlan& Plan, TArray<FBSPlanPath>& Paths, FString& Error, bool CheckContinuity=true, const TSet<FGuid>& ForcedEndpoints={});
+    static bool Paths(const FBSRailPlan& Plan, TArray<FBSPlanPath>& Paths, FString& Error, bool CheckContinuity=true, const TSet<FGuid>& ForcedEndpoints={}, bool Untrimmed=false);
     static bool Split(const TArray<FSplinePointData>& Points, double Requested, EBSPlanRemainder Policy,
-        double Minimum, double Maximum, TArray<TArray<FSplinePointData>>& Parts, FString& Error);
+        double Minimum, double Maximum, TArray<TArray<FSplinePointData>>& Parts, FString& Error, TArray<double>* EndKeys=nullptr);
+    static bool Prepare(const FBSRailPlan& Plan, double Minimum, double Maximum,
+        TArray<FBSPlanSegmentedPath>& Paths, FString& Error, const TSet<FGuid>& ForcedEndpoints={});
     static bool OffsetStart(TArray<FSplinePointData>& Points, double Offset, FString& Error);
 };
 class BUILDINGSKILLS_API FBSPlanBuild
@@ -207,7 +229,7 @@ public:
     void Send(FBSPlanCommand Command);
     void QueueMenu(FBSPlanCommand Command);
     UPROPERTY(Transient) TArray<FBSPlanCommand> MenuCommands;
-    void Receive(TArray<FBSRailPlan> Plans, FGuid Preferred, const FString& Message);
+    bool Receive(TArray<FBSRailPlan> Plans, FGuid Preferred, const FString& Message);
     FBSRailPlan* Current();
     const FBSRailPlan* Current() const;
     void Load(FGuid Id);
@@ -241,6 +263,8 @@ private:
     FVector LastPlacedPosition = FVector::ZeroVector;
     double DragDistance = 0, NextPoll = 0, NextDraw = 0, NextMove = 0, EnteredAt = 0;
     bool HaveAim = false;
+    bool Entering = false;
+    bool TryEnter();
     bool PendingCreate = false;
     bool MultiHeld = false, RemovingSelection = false;
     TSet<FGuid> Swept;
@@ -276,6 +300,7 @@ private:
     TArray<double> ParallelNodeOffsetsDraft, ParallelStartOffsetsDraft;
     double SegmentLengthDraft = 0;
     EBSPlanRemainder RemainderDraft = EBSPlanRemainder::Reduce;
+    bool SyncParallelsInTurnsDraft = false;
     bool PlaceBlockSignalDraft = false, LeftSideSignalDraft = false;
     int32 SignalEveryDraft = 1;
     TArray<bool> ParallelReversedDraft;
@@ -287,9 +312,12 @@ private:
     FGuid ListedPlan;
     int32 ListedRevision = -1;
     bool DetailsRefreshPending = false;
+    bool RefreshAfterAction = false;
     TMap<FName,TSharedPtr<class SExpandableArea>> Sections;
     TSharedRef<SWidget> Section(FName Id, const TCHAR* Title, TSharedRef<SWidget> Body);
     void RebuildDetails();
+    void SubmitAction(FBSPlanCommand Command);
+    void ChangeParallelCount(bool Add);
     void SaveNode(FGuid Id);
     void SaveEdge();
     void SaveParallels();

@@ -10,6 +10,8 @@
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedPlayerInput.h"
 #include "Equipment/FGBuildGun.h"
+#include "Equipment/FGBuildGunBuild.h"
+#include "Hologram/FGHologram.h"
 #include "Equipment/FGBuildGunDismantle.h"
 #include "Equipment/FGBuildGunPaint.h"
 #include "FGCustomizationRecipe.h"
@@ -130,8 +132,7 @@ void UBSEditModeComponent::InstallHooks()
         // Enter its native state directly after clearing the cached recipe so
         // BeginState cannot recreate a previous construction hologram.
         Scope.Cancel();
-        if (auto* Build=Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD))) Build->SetActiveRecipe(nullptr);
-        Gun->GotoState(EBuildGunState::BGS_BUILD);
+        if (auto* Edit=ForGun(Gun)) Edit->EnterPlanBuildState();
     });
     SUBSCRIBE_METHOD(AFGBuildGun::OnPrimaryFirePressed, [](auto& Scope, AFGBuildGun* Gun)
     {
@@ -502,6 +503,34 @@ void UBSEditModeComponent::InstallHooks()
             if (IsEditDescriptor(State->GetBuildGun()->GetCurrentBuildGunMode()) || (Edit && Edit->EditGun.IsValid())) Scope.Override(false);
         });
     }
+}
+
+bool UBSEditModeComponent::EnterPlanBuildState()
+{
+    auto* Player=Cast<AFGCharacterPlayer>(GetOwner());
+    auto* Gun=Player ? Player->GetBuildGun() : nullptr;
+    auto* Plan=UBSPlanComponent::Find(Player);
+    // Multiplayer equips asynchronously. IsBuildGunEquipped alone can become
+    // true before Equip has assigned the gun's instigator and initialized UI.
+    if (!Plan || !Plan->Active || !Player->IsLocallyControlled() ||
+        !Player->IsBuildGunEquipped() || !IsValid(Gun) || Gun->GetInstigatorCharacter()!=Player) return false;
+    auto* Build=Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD));
+    if (!Build) return false;
+    // SetActiveRecipe(nullptr) destroys the previous hologram but leaves
+    // mHologram pointing to it until GC. Remove it through native cleanup first,
+    // which also clears the pointer; never invoke cleanup twice on a dead actor.
+    if (IsValid(Build->mHologram) && !Build->mHologram->IsActorBeingDestroyed())
+        Build->RemoveHologram(Build->mHologram);
+    else
+        Build->mHologram=nullptr;
+    // An inactive Build state can retain a pending recipe even when its active
+    // recipe is already null (the native setter then returns early).
+    Build->mPendingRecipe=nullptr;
+    Build->SetActiveRecipe(nullptr);
+    // Plan deliberately has no construction recipe. Do not call the native
+    // GotoBuildState wrapper, which rejects nullptr before entering the state.
+    Gun->GotoState(EBuildGunState::BGS_BUILD);
+    return Gun->GetCurrentState()==Build && !Build->GetActiveRecipe() && !Build->GetHologram();
 }
 
 void UBSEditModeComponent::InitializeInput(UEnhancedInputComponent* Input)

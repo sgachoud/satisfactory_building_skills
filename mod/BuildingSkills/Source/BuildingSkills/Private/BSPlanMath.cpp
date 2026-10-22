@@ -84,7 +84,7 @@ bool FBSPlanMath::Apply(FBSRailPlan& P,const FBSPlanCommand& C,FString& Error)
     { Draft.Name=C.Name.TrimStartAndEnd(); }
     else if (C.Action==EBSPlanAction::Share) Draft.Shared=true;
     else if (C.Action==EBSPlanAction::Segments)
-    { Draft.SegmentLength=C.SegmentLength; Draft.Remainder=C.Remainder; Draft.PlaceBlockSignal=C.PlaceBlockSignal; Draft.SignalEvery=C.SignalEvery; Draft.LeftSideSignal=C.LeftSideSignal; }
+    { Draft.SegmentLength=C.SegmentLength; Draft.Remainder=C.Remainder; Draft.SyncParallelsInTurns=C.SyncParallelsInTurns; Draft.PlaceBlockSignal=C.PlaceBlockSignal; Draft.SignalEvery=C.SignalEvery; Draft.LeftSideSignal=C.LeftSideSignal; }
     else if (C.Action==EBSPlanAction::ReverseSpline)
     {
         if (C.Selection.Num()!=1) { Error=TEXT("Select exactly one spline to reverse."); return false; }
@@ -304,9 +304,14 @@ TArray<FSplinePointData> FBSPlanMath::Curve(const FBSRailPlan& P,const FBSPlanEd
     }
     return Out;
 }
-TArray<FSplinePointData> FBSPlanMath::Offset(const TArray<FSplinePointData>& In,FVector Offset,double StartRoll,double EndRoll)
+TArray<FSplinePointData> FBSPlanMath::Offset(const TArray<FSplinePointData>& In,FVector Offset,double StartRoll,double EndRoll,TArray<double>* MainKeys)
 {
-    if (Offset.IsNearlyZero()) return In;
+    if (MainKeys) MainKeys->Reset();
+    if (Offset.IsNearlyZero())
+    {
+        if (MainKeys) for (int32 I=0;I<In.Num();++I) MainKeys->Add(I);
+        return In;
+    }
     TArray<FSplinePointData> Out;
     for (int32 I=1;I<In.Num();++I)
     {
@@ -324,7 +329,7 @@ TArray<FSplinePointData> FBSPlanMath::Offset(const TArray<FSplinePointData>& In,
             const double T=double(J)/Steps, L=FMath::Max(0.0,T-.0001), R=FMath::Min(1.0,T+.0001);
             const FVector D=(At(R)-At(L))/((R-L)*Steps);
             if (J==0 && !Out.IsEmpty()) Out.Last().LeaveTangent=D;
-            else Out.Emplace(At(T),D);
+            else { Out.Emplace(At(T),D); if (MainKeys) MainKeys->Add(I-1+T); }
         }
     }
     // Boundary transitions keep adjacent parallel paths tangent-continuous,
@@ -337,7 +342,7 @@ TArray<FSplinePointData> FBSPlanMath::Offset(const TArray<FSplinePointData>& In,
     return Out;
 }
 
-TArray<FSplinePointData> FBSPlanMath::ParallelCurve(const FBSRailPlan& P,const FBSPlanEdge& E,int32 Parallel,bool Forward)
+TArray<FSplinePointData> FBSPlanMath::ParallelCurve(const FBSRailPlan& P,const FBSPlanEdge& E,int32 Parallel,bool Forward,TArray<double>* MainKeys)
 {
     auto Points=Curve(P,E);
     if (Points.Num()<2 || !P.Parallels.IsValidIndex(Parallel)) return Points;
@@ -352,7 +357,7 @@ TArray<FSplinePointData> FBSPlanMath::ParallelCurve(const FBSRailPlan& P,const F
             Point.ArriveTangent=-Point.ArriveTangent; Point.LeaveTangent=-Point.LeaveTangent;
         }
     }
-    Points=Offset(Points,P.Parallels[Parallel],A->Roll,B->Roll);
+    Points=Offset(Points,P.Parallels[Parallel],A->Roll,B->Roll,MainKeys);
     const double Amount=P.ParallelNodeOffsets.IsValidIndex(Parallel) ? P.ParallelNodeOffsets[Parallel] : 0;
     if (Amount==0) return Points;
     // Shift only the replicated endpoints along their local X, then smoothly

@@ -4,6 +4,7 @@
 #include "HAL/FileManager.h"
 #include "BSBlueprintSave.h"
 #include "BSBlueprintBounds.h"
+#include "BSBlueprintScale.h"
 #include "BuildingSkills.h"
 #include "FGBlueprintSubsystem.h"
 #include "FGBlueprintSettings.h"
@@ -18,8 +19,190 @@
 #include "FGRecipeManager.h"
 #include "FGRecipe.h"
 #include "FGPlayerController.h"
+#include "FGPlayerState.h"
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildableFoundation.h"
+#include "FGConstructionMessageInterface.h"
+#include "FGConstructDisqualifier.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
+#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
+#include "Containers/Ticker.h"
+#include "Engine/Engine.h"
+#include "EngineUtils.h"
+#include "UObject/UObjectIterator.h"
+#include "UObject/ScriptInterface.h"
+#include "Equipment/FGBuildGun.h"
+#include "Equipment/FGBuildGunBuild.h"
+
+namespace
+{
+    // Explicit loopback-only integration test. Use the native server manager and
+    // build-gun click path, including its real package map and reliable RPC.
+    // No dependency on FactoryDedicatedClient is needed in server builds.
+    struct FIssue1NetworkRegression
+    {
+        double Started = FPlatformTime::Seconds();
+        int32 Phase = 0;
+        int32 WaitTicks = 0;
+        TWeakObjectPtr<UObject> ActivatedServer;
+        TSet<TWeakObjectPtr<AFGBlueprintProxy>> Existing;
+
+        bool Tick(float)
+        {
+            if (FPlatformTime::Seconds() - Started > 240)
+            {
+                UE_LOG(LogBuildingSkills, Error, TEXT("ISSUE1 NETWORK: FAIL timeout phase=%d"), Phase);
+                FPlatformMisc::RequestExit(false); return false;
+            }
+            if (!GEngine) return true;
+            if (Phase == 0)
+            {
+                auto* ManagerClass = FindObject<UClass>(nullptr, TEXT("/Script/FactoryDedicatedClient.FGServerManager"));
+                if (++WaitTicks % 15 == 0) UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: waiting for native join manager=%d activated=%d"), ManagerClass != nullptr, ActivatedServer.IsValid());
+                if (!ManagerClass) return true;
+                for (TObjectIterator<UObject> It; It; ++It)
+                {
+                    if (!It->IsA(ManagerClass) || It->HasAnyFlags(RF_ClassDefaultObject)) continue;
+                    auto* Find = It->FindFunction(TEXT("GetServerByHostname"));
+                    if (!Find) continue;
+                    struct { FString Hostname = TEXT("127.0.0.1"); int32 Port = 17777; UObject* Result = nullptr; } Query;
+                    It->ProcessEvent(Find, &Query);
+                    if (!Query.Result) continue;
+                    if (ActivatedServer.Get() != Query.Result)
+                    {
+                        // Native discovery only polls entries with a state listener.
+                        // The abstract native listener's default callbacks are empty;
+                        // registering it does not construct or operate any UI.
+                        auto* ListenerClass = FindObject<UClass>(nullptr, TEXT("/Script/FactoryDedicatedClient.FGAbstractServerWidget"));
+                        auto* ListenerInterface = FindObject<UClass>(nullptr, TEXT("/Script/FactoryDedicatedClient.FGServerStateListener"));
+                        auto* Register = Query.Result->FindFunction(TEXT("RegisterStateListener"));
+                        if (!ListenerClass || !ListenerInterface || !Register) continue;
+                        auto* ListenerObject = ListenerClass->GetDefaultObject();
+                        FScriptInterface Listener;
+                        Listener.SetObject(ListenerObject);
+                        Listener.SetInterface(ListenerObject->GetInterfaceAddress(ListenerInterface));
+                        Query.Result->ProcessEvent(Register, &Listener);
+                        ActivatedServer = Query.Result;
+                        if (auto* Activate = Query.Result->FindFunction(TEXT("OnServerActivated"))) Query.Result->ProcessEvent(Activate, nullptr);
+                        if (auto* Connect = Query.Result->FindFunction(TEXT("AttemptServerAPIConnection")))
+                        {
+                            bool Connected = false; Query.Result->ProcessEvent(Connect, &Connected);
+                        }
+                    }
+                    auto* Ready = Query.Result->FindFunction(TEXT("IsServerAPIAvailableAndCompatible"));
+                    bool Available = false;
+                    if (Ready) Query.Result->ProcessEvent(Ready, &Available);
+                    if (!Available) continue;
+                    auto* Join = Query.Result->FindFunction(TEXT("Join"));
+                    bool Accepted = false;
+                    if (Join) Query.Result->ProcessEvent(Join, &Accepted);
+                    UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: native loopback join accepted=%d"), Accepted);
+                    if (Accepted) Phase = 1;
+                    return true;
+                }
+                return true;
+            }
+            for (const auto& Context : GEngine->GetWorldContexts())
+            {
+                auto* World = Context.World();
+                if (!World || World->GetNetMode() != NM_Client || World->URL.Host != TEXT("127.0.0.1") || World->URL.Port != 17777) continue;
+                auto* PC = Cast<AFGPlayerController>(World->GetFirstPlayerController());
+                auto* Player = PC ? Cast<AFGCharacterPlayer>(PC->GetPawn()) : nullptr;
+                auto* System = AFGBlueprintSubsystem::Get(World);
+                if (!Player || !Player->IsLocallyControlled() || !System || !Player->GetBuildGun()) continue;
+                if (!System->GetSessionBlueprintPath().Contains(TEXT("BuildingSkills_Issue1_Test"))) continue;
+                auto* Gun = Player->GetBuildGun();
+                auto* State = Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD));
+                if (!State) continue;
+                if (Phase == 1)
+                {
+                    auto* Descriptor = System->GetBlueprintDescriptorByNameString(TEXT("rest"));
+                    if (!Descriptor) continue;
+                    if (auto* PlayerState = Player->GetPlayerState())
+                        if (auto* NoCost = PlayerState->FindFunction(TEXT("Server_SetNoBuildCost")))
+                        {
+                            bool Enabled = true; PlayerState->ProcessEvent(NoCost, &Enabled);
+                        }
+                    for (TActorIterator<AFGBlueprintProxy> It(World); It; ++It) Existing.Add(*It);
+                    State->SetActiveBlueprintDescriptor(Descriptor);
+                    System->SetActiveBlueprintHologramDescriptor(Descriptor);
+                    Player->HotKeyRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+                    UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: selected rest on remote client"));
+                    Phase = 2; WaitTicks = 0;
+                }
+                else if (Phase == 2 && ++WaitTicks >= 5)
+                {
+                    auto* Hologram = Cast<AFGBlueprintHologram>(State->GetHologram());
+                    if (WaitTicks % 15 == 0) UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: waiting for blueprint equipped=%d hologram=%d name=%s"),
+                        Player->IsBuildGunEquipped(), Hologram != nullptr, Hologram ? *Hologram->mBlueprintDescName : TEXT("none"));
+                    if (!Hologram || Hologram->mBlueprintDescName != TEXT("rest")) continue;
+                    const FVector Aim = Player->GetActorLocation() + FVector(4000, 4000, 0);
+                    FHitResult Hit;
+                    FCollisionQueryParams Trace(SCENE_QUERY_STAT(BuildingSkillsIssue1Ground), false, Player);
+                    Trace.AddIgnoredActor(Hologram);
+                    if (!World->LineTraceSingleByChannel(Hit, Aim + FVector(0,0,50000), Aim - FVector(0,0,50000), ECC_WorldStatic, Trace)) continue;
+                    Hologram->ResetConstructDisqualifiers();
+                    Hologram->PreHologramPlacement(Hit, true);
+                    Hologram->SetHologramLocationAndRotation(Hit);
+                    Hologram->PostHologramPlacement(Hit, true);
+                    Hologram->LockHologramPosition(true);
+                    Hologram->SetDisabled(false);
+                    Hologram->SetActorHiddenInGame(false);
+                    Hologram->ValidatePlacementAndCost(Player->GetInventory());
+                    TArray<TSubclassOf<UFGConstructDisqualifier>> Disqualifiers;
+                    Hologram->GetConstructDisqualifiers(Disqualifiers);
+                    for (auto Reason : Disqualifiers) UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: placement rejection %s"), *GetPathNameSafe(Reason.Get()));
+                    UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: native click canConstruct=%d authority=%d"), Hologram->CanConstruct(), Player->HasAuthority());
+                    State->PrimaryFire_Implementation();
+                    State->PrimaryFireRelease_Implementation();
+                    Phase = 3; WaitTicks = 0;
+                }
+                else if (Phase == 3)
+                {
+                    for (TActorIterator<AFGBlueprintProxy> It(World); It; ++It)
+                    {
+                        if (Existing.Contains(*It) || It->GetBlueprintName().ToString() != TEXT("rest") || !It->AreProxyBuildingsRegisteredAndValid()) continue;
+                        int32 Count = It->GetBuildables().Num();
+                        for (const auto& Bundle : It->GetLightweightClassAndIndices()) Count += Bundle.Indices.Num();
+                        if (Count != 2) continue;
+                        UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: PASS native remote placement replicated both foundations"));
+                        Phase = 4; WaitTicks = 0; break;
+                    }
+                }
+                else if (Phase == 4 && ++WaitTicks >= 5)
+                {
+                    FPlatformMisc::RequestExit(false); return false;
+                }
+            }
+            return true;
+        }
+    };
+
+    const bool Issue1NetworkRegressionInstalled = []
+    {
+        if (WITH_EDITOR || IsRunningDedicatedServer() || !FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsIssue1NetworkTest"))) return false;
+        auto Test = MakeShared<FIssue1NetworkRegression>();
+        FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Test](float Delta) { return Test->Tick(Delta); }), 1.0f);
+        return true;
+    }();
+}
+
+namespace
+{
+    // Keep the call virtual, as it is in Server_ConstructHologram. Calling an
+    // actor method directly can bypass the secondary-interface entry point.
+    FORCENOINLINE void DecodeBlueprintMessage(IFGConstructionMessageInterface* Receiver)
+    {
+        Receiver->PostConstructMessageDeserialization();
+    }
+
+    FORCENOINLINE void SerializeBlueprintMessage(IFGConstructionMessageInterface* Hologram, FArchive& Archive)
+    {
+        if (Archive.IsSaving()) Hologram->PreConstructMessageSerialization();
+        Hologram->SerializeConstructMessage(Archive, FNetConstructionID());
+    }
+}
 
 bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelection& Selection)
 {
@@ -155,6 +338,132 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
     Check(TEXT("Native recipe lookup prices every preview member without a global hook"), CostsPresent);
     Check(TEXT("Pricing restores preview context and leaves live recipe lookup unchanged"), ContextRestored);
     Hologram->SetActorTransform(Placement);
+    if (FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsClipboardDecodeTest")))
+    {
+        // Exercise both branches of the hook with valid input, then construct
+        // from the decoded hologram. This covers the callback ABI and native
+        // construction; the live dedicated-server test covers RPC transport.
+        auto DecodeAndConstruct = [&](UFGBlueprintDescriptor* Descriptor, int32 ExpectedCount, int32 Offset)
+        {
+            if (!Descriptor) return false;
+            auto* Received = Player->GetWorld()->SpawnActorDeferred<AFGBlueprintHologram>(
+                AFGBlueprintHologram::StaticClass(), FTransform::Identity, Player, Player);
+            if (!Received) return false;
+            Received->SetRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+            Received->SetBuildClass(Preview[0]->GetClass());
+            Received->SetConstructionInstigator(Player);
+            // The build gun configures the selected blueprint when spawning
+            // its hologram; the message callback updates placement state.
+            // It is not responsible for selecting/loading the descriptor.
+            Received->SetBlueprintDescriptor(Descriptor);
+            Received->FinishSpawning(FTransform::Identity);
+            Received->mBlueprintDescName = Descriptor->GetBlueprintNameAsString();
+            const bool ValidInput = System->GetBlueprintDescriptorByNameString(Received->mBlueprintDescName) == Descriptor;
+            Check(TEXT("Blueprint callback starts with a valid name and descriptor"), ValidInput);
+            if (!ValidInput) { Received->Destroy(); return false; }
+            TArray<UFGBlueprintDescriptor*> Before;
+            System->GetBlueprintDescriptors_Internal(Before);
+            DecodeBlueprintMessage(static_cast<IFGConstructionMessageInterface*>(Received));
+            const bool DecodedDescriptor = Received->mBlueprintDescriptor == Descriptor;
+            Check(TEXT("Blueprint message callback preserves the selected descriptor"), DecodedDescriptor);
+            TArray<UFGBlueprintDescriptor*> After;
+            System->GetBlueprintDescriptors_Internal(After);
+            Check(TEXT("Blueprint callback restores the native descriptor library"), Before == After);
+            // Send each mode through the real serializer. Change local state
+            // before reading it back so a fallback to local settings cannot pass.
+            bool Transported = true;
+            auto* Edit = Player->FindComponentByClass<UBSEditModeComponent>();
+            if (!Edit) Transported = false;
+            else
+            {
+                TGuardValue<EBSDeduplication> RestoreMode(Edit->Deduplication, EBSDeduplication::Off);
+                auto* Sender = Player->GetWorld()->SpawnActorDeferred<AFGBlueprintHologram>(
+                    AFGBlueprintHologram::StaticClass(), FTransform::Identity, Player, Player);
+                if (!Sender) Transported = false;
+                else
+                {
+                    Sender->SetRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+                    Sender->SetBuildClass(Preview[0]->GetClass()); Sender->SetConstructionInstigator(Player);
+                    Sender->SetBlueprintDescriptor(Descriptor); Sender->FinishSpawning(FTransform::Identity);
+                    for (const auto Mode : {EBSDeduplication::Off, EBSDeduplication::Replace, EBSDeduplication::Skip})
+                    {
+                        Edit->Deduplication = Mode;
+                        TArray<uint8> Bytes;
+                        FMemoryWriter Writer(Bytes); FObjectAndNameAsStringProxyArchive Save(Writer, false);
+                        SerializeBlueprintMessage(static_cast<IFGConstructionMessageInterface*>(Sender), Save);
+                        Edit->Deduplication = Mode == EBSDeduplication::Off ? EBSDeduplication::Skip : EBSDeduplication::Off;
+                        FMemoryReader Reader(Bytes); FObjectAndNameAsStringProxyArchive Load(Reader, true);
+                        SerializeBlueprintMessage(static_cast<IFGConstructionMessageInterface*>(Received), Load);
+                        const bool RoundTrip = !Save.IsError() && !Load.IsError() && Reader.Tell() == Bytes.Num() &&
+                            Received->mBlueprintDescName == Descriptor->GetBlueprintNameAsString() && FBSDeduplication::Mode(Received) == Mode;
+                        Transported &= RoundTrip;
+                        UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 TRANSPORT: mode=%d received=%d bytes=%lld/%d name=%s valid=%d"),
+                            int32(Mode), int32(FBSDeduplication::Mode(Received)), Reader.Tell(), Bytes.Num(), *Received->mBlueprintDescName, RoundTrip);
+                        if (!RoundTrip) break; // Never invoke native decoding on invalid fixture data.
+                        DecodeBlueprintMessage(static_cast<IFGConstructionMessageInterface*>(Received));
+                        Transported &= Received->mBlueprintDescriptor == Descriptor;
+                    }
+                    Sender->Destroy();
+                }
+            }
+            Check(TEXT("Blueprint message round trip preserves name and all deduplication modes"), Transported);
+            Received->SetActorLocation(Player->GetActorLocation() + FVector(15000, Offset * 6000, 3000));
+            TArray<AActor*> DecodedChildren;
+            auto* DecodedProxy = DecodedDescriptor && Transported ? Cast<AFGBlueprintProxy>(Received->Construct(DecodedChildren, FNetConstructionID())) : nullptr;
+            int32 Built = DecodedProxy ? DecodedProxy->GetBuildables().Num() : 0;
+            if (DecodedProxy) for (const auto& Bundle : DecodedProxy->GetLightweightClassAndIndices()) Built += Bundle.Indices.Num();
+            UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 DECODE: name=%s descriptor=%d built=%d expected=%d"),
+                *Descriptor->GetBlueprintNameAsString(), DecodedDescriptor, Built, ExpectedCount);
+            Received->Destroy();
+            return DecodedDescriptor && Transported && Before == After && DecodedProxy && Built == ExpectedCount;
+        };
+        // The source group assertions below expect only their own copy.
+        TGuardValue<TArray<FBSGroup>> RestoreDecodedGroups(Groups->Groups, Groups->Groups);
+        Check(TEXT("Clipboard interface callback constructs all three members"), DecodeAndConstruct(Clipboard->Descriptor, 3, 1));
+        FBlueprintRecord Record;
+        Record.BlueprintName = TEXT("BuildingSkills_Decode_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+        Record.Category = System->GetCategoryForUndefined(); Record.SubCategory = System->GetSubCategoryForUndefined();
+        TArray<AFGBuildable*> SourceActors;
+        for (const auto& Member : Members) if (auto* Actor = Member.ResolveActor(Player->GetWorld())) SourceActors.Add(Actor);
+        auto Header = WriteBuildingSkillsBlueprintForTest(System, Record, Clipboard->SourceOrigin, SourceActors);
+        const bool Written = System->WriteBlueprintToDisk(Record);
+        Check(TEXT("Decoder regression saves a normal blueprint"), Written);
+        if (Written)
+        {
+            System->EnumerateBlueprints();
+            auto* SavedDescriptor = System->CreateBlueprintDescriptor(Record, Header);
+            Check(TEXT("Saved blueprint interface callback constructs all three members"), DecodeAndConstruct(SavedDescriptor, 3, 2));
+            if (SavedDescriptor) System->DeleteBlueprintDescriptor(SavedDescriptor);
+        }
+        // Optionally replay a preserved real-world archive in this disposable
+        // session. Never overwrite an existing blueprint or modify its source.
+        FString Fixture;
+        if (FParse::Value(FCommandLine::Get(), TEXT("BuildingSkillsIssue1Blueprint="), Fixture))
+        {
+            const FString Name = FPaths::GetBaseFilename(Fixture);
+            const FString Destination = System->GetSessionBlueprintPath() / Name;
+            const bool Copied = !IFileManager::Get().FileExists(*(Destination + TEXT(".sbp"))) &&
+                !IFileManager::Get().FileExists(*(Destination + TEXT(".sbpcfg"))) &&
+                IFileManager::Get().Copy(*(Destination + TEXT(".sbp")), *Fixture, false) == COPY_OK &&
+                IFileManager::Get().Copy(*(Destination + TEXT(".sbpcfg")), *FPaths::ChangeExtension(Fixture, TEXT("sbpcfg")), false) == COPY_OK;
+            Check(TEXT("Issue 1 fixture is copied into a separate blueprint session"), Copied);
+            if (Copied)
+            {
+                System->EnumerateBlueprints();
+                auto* SavedDescriptor = System->GetBlueprintDescriptorByNameString(Name);
+                if (!SavedDescriptor && System->ReadBlueprintFromDisc(Name))
+                {
+                    FBlueprintRecord FixtureRecord;
+                    FixtureRecord.BlueprintName = Name;
+                    FixtureRecord.Category = System->GetCategoryForUndefined(); FixtureRecord.SubCategory = System->GetSubCategoryForUndefined();
+                    auto FixtureHeader = System->mStoredBlueprintData.BlueprintHeader;
+                    SavedDescriptor = System->CreateBlueprintDescriptor(FixtureRecord, FixtureHeader);
+                }
+                Check(TEXT("Issue 1 two-foundation blueprint decodes and constructs"), DecodeAndConstruct(SavedDescriptor, 2, 3));
+                if (SavedDescriptor) System->DeleteBlueprintDescriptor(SavedDescriptor);
+            }
+        }
+    }
     // Construction ownership uses the native construction pawn, not Actor.Instigator.
     Hologram->SetInstigator(nullptr);
     TArray<AActor*> Children;

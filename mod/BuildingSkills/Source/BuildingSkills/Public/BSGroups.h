@@ -244,7 +244,7 @@ class BUILDINGSKILLS_API UBSGroupRemoteCallObject : public UFGRemoteCallObject
     GENERATED_BODY()
 public:
     UFUNCTION(Server, Reliable) void Server_PlanCommand(const FBSPlanCommand& Command);
-    UFUNCTION(Server, Reliable) void Server_PlanSnapshot();
+    UFUNCTION(Server, Reliable) void Server_PlanSnapshot(bool Force = false);
     UFUNCTION(Server, Reliable) void Server_PlanNext(FGuid Transfer, int32 Sequence);
     UFUNCTION(Client, Reliable) void Client_PlanChunk(const FBSPlanChunk& Chunk);
     UFUNCTION(Client, Reliable) void Client_PlanResult(FGuid Plan, const FString& Message);
@@ -255,6 +255,7 @@ public:
     int32 PlanSequence=0, PlanIndex=0, PlanNodeIndex=0, PlanEdgeIndex=0, ReceivingPlanSequence=0;
     double PlanTransferDeadline=0, LastPlanPoll=-100, LastPlanCommand=-100;
     uint32 DeliveredPlanHash=0, OutgoingPlanHash=0;
+    bool PlanTransferFinal=false;
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out) const override;
     UPROPERTY(Replicated) bool ReplicationAnchor = true;
     void RequestSelection(uint8 Action, const FBSSelection& Selection, FGuid Request, int32 Revision, const FBSBuildingRef& Anchor = {});

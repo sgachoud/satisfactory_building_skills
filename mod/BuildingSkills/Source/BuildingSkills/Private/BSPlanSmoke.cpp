@@ -34,8 +34,12 @@
 #include "Widgets/Views/SListView.h"
 #include "Misc/ConfigCacheIni.h"
 #include "TimerManager.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Text/STextBlock.h"
 
 bool RunBuildingSkillsPlanMathChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
+bool RunBuildingSkillsPlanOwnershipChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
+bool RunBuildingSkillsPlanParallelChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
 bool RunBuildingSkillsPlanPolishChecks(AFGCharacterPlayer*,TFunctionRef<void(const TCHAR*,bool)> Check);
 
 // Only called by the explicit temporary-world runtime fixture.
@@ -255,14 +259,62 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
         FixtureReady=false;
         Key(EKeys::E,false); Key(EKeys::LeftAlt,false); P->UnequipBuildGun();
         Passed &= RunBuildingSkillsPlanMathChecks(Check);
+        Passed &= RunBuildingSkillsPlanOwnershipChecks(Check);
+        Passed &= RunBuildingSkillsPlanParallelChecks(Check);
         AFGRecipeManager::Get(P->GetWorld())->AddAvailableRecipe(FBSPlanBuild::Recipe());
         PC->SetControlRotation(FRotator::ZeroRotator);
+        auto* PreviousState=P->GetBuildGun()->GetCurrentState();
+        Check(TEXT("Inactive Plan cannot change the native gun state"),!E->EnterPlanBuildState() && P->GetBuildGun()->GetCurrentState()==PreviousState);
+        Plan->Active=true; Plan->Entering=true;
+        Plan->Close(false);
+        Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
+        Check(TEXT("Cancelling pending Plan entry prevents a later state transition"),!Plan->Active && !Plan->Entering && !Plan->Context && P->GetBuildGun()->GetCurrentState()==PreviousState);
     }
     if (Phase==1) { Key(EKeys::LeftAlt,true); Key(EKeys::P,true); }
     if (Phase==2)
     {
         Key(EKeys::P,false); Key(EKeys::LeftAlt,false);
         Check(TEXT("Alt+P opens Plan without a rail hologram or active construction recipe"),Plan->Active && !FBSStick::Active(E) && Cast<UFGBuildGunStateBuild>(P->GetBuildGun()->GetCurrentState()) && !Cast<UFGBuildGunStateBuild>(P->GetBuildGun()->GetCurrentState())->GetActiveRecipe());
+        // Reproduce the client ordering without a server: the player has its
+        // gun, but equipment's replicated owner has not been assigned yet.
+        auto* Gun=P->GetBuildGun();
+        auto* OwnerProperty=FindFProperty<FObjectPropertyBase>(Gun->GetClass(),TEXT("mPlayerCharacter"));
+        Check(TEXT("Delayed equipment-owner fixture is available"),OwnerProperty!=nullptr);
+        if (OwnerProperty)
+        {
+            auto* OriginalOwner=OwnerProperty->GetObjectPropertyValue_InContainer(Gun);
+            Plan->Close(false);
+            Plan->Active=true; Plan->Entering=true;
+            Plan->EnteredAt=P->GetWorld()->GetRealTimeSeconds()-3;
+            OwnerProperty->SetObjectPropertyValue_InContainer(Gun,nullptr);
+            Check(TEXT("Fixture removes the gun instigator during delayed equip"),!Gun->GetInstigatorCharacter());
+            Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
+            Check(TEXT("Plan waits beyond the former two-second grace without input or a context"),Plan->Active && Plan->Entering && !Plan->Allowed() && !Plan->Context);
+            OwnerProperty->SetObjectPropertyValue_InContainer(Gun,OriginalOwner);
+            Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
+            const auto* Build=Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState());
+            Check(TEXT("Delayed owner assignment completes Plan entry without a construction hologram"),Plan->Active && !Plan->Entering && Plan->Context && Build && !Build->GetActiveRecipe() && !Build->GetHologram());
+        }
+        // A fresh gun has no cached preview. Exercise the reported failure after
+        // normal building as well, both with a live preview and with the dangling
+        // reference left by the native null-recipe setter, before any GC runs.
+        for (int32 Case=0;Case<3;++Case)
+        {
+            Plan->Close(false);
+            Gun->GotoBuildState(FBSPlanBuild::Recipe());
+            auto* Build=Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState());
+            auto* Preview=Build ? Build->GetHologram() : nullptr;
+            Check(TEXT("Reentry fixture starts with a live native construction hologram"),IsValid(Preview));
+            if (!Build || !IsValid(Preview)) continue;
+            if (Case==1) Build->SetActiveRecipe(nullptr);
+            Plan->Active=true; Plan->Entering=true; Plan->EnteredAt=P->GetWorld()->GetRealTimeSeconds();
+            Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
+            Check(*FString::Printf(TEXT("Plan reentry case %d clears the preview reference and enables controls without GC"),Case),
+                Plan->Active && !Plan->Entering && Plan->Context && Plan->Allowed() &&
+                Gun->GetCurrentState()==Build && !Build->GetActiveRecipe() && !Build->GetHologram() && !IsValid(Preview));
+            Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
+            Check(TEXT("Completed Plan reentry remains active on the next tick"),Plan->Active && !Plan->Entering && Plan->Allowed());
+        }
         E->StickMode=EBSStickMode::Default; E->StickDistance=64;
     }
     if (Phase==3) { Check(TEXT("A personal draft is created"),Plan->Current() && !Plan->Current()->Shared); Key(EKeys::LeftMouseButton,true); }
@@ -359,6 +411,44 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
             Plan->CloseSettings(); Plan->Settings();
             W=Plan->Window.Get();
             Check(TEXT("Reopened menu restores collapsed sections from disk"),W && W->Sections.Num()==6 && !W->Sections[TEXT("Plans")]->IsExpanded() && !W->Sections[TEXT("Stick")]->IsExpanded() && W->Sections[TEXT("Selection")]->IsExpanded() && W->Sections[TEXT("Parallels")]->IsExpanded());
+            if (W && Plan->Current())
+            {
+                TFunction<bool(TSharedRef<SWidget>,const FString&)> HasText;
+                HasText=[&](TSharedRef<SWidget> Widget,const FString& Label) {
+                    if (Widget->GetTypeAsString()==TEXT("STextBlock") && StaticCastSharedRef<STextBlock>(Widget)->GetText().ToString()==Label) return true;
+                    auto* Children=Widget->GetChildren();
+                    for (int32 I=0;I<Children->Num();++I) if (HasText(Children->GetChildAt(I),Label)) return true;
+                    return false;
+                };
+                auto Click=[&](const FString& Label) {
+                    TSharedPtr<SButton> Button;
+                    TFunction<void(TSharedRef<SWidget>)> Find=[&](TSharedRef<SWidget> Widget) {
+                        if (Button) return;
+                        if (Widget->GetTypeAsString()==TEXT("SButton") && HasText(Widget,Label)) { Button=StaticCastSharedRef<SButton>(Widget); return; }
+                        auto* Children=Widget->GetChildren();
+                        for (int32 I=0;I<Children->Num();++I) Find(Children->GetChildAt(I));
+                    };
+                    Find(W->TakeWidget());
+                    Check(*FString::Printf(TEXT("Plan menu exposes the %s button"),*Label),Button.IsValid());
+                    if (Button)
+                    {
+                        const FKeyEvent Accept(EKeys::Enter,FModifierKeysState(),0,false,0,0);
+                        Button->OnKeyDown(Button->GetCachedGeometry(),Accept);
+                        Button->OnKeyUp(Button->GetCachedGeometry(),Accept);
+                    }
+                };
+                const int32 Count=Plan->Current()->Parallels.Num();
+                Click(TEXT("Add parallel"));
+                Check(TEXT("Add parallel preserves the open menu and old row bindings while refreshing"),Plan->Window==W && Plan->Current()->Parallels.Num()==Count+1 && W->ParallelDraft.Num()==Count);
+                W->NativeTick(W->GetCachedGeometry(),.01f);
+                Check(TEXT("Server-confirmed parallel is editable without reopening the menu"),W->ParallelDraft.Num()==Count+1 && !W->RefreshAfterAction);
+                Click(TEXT("Remove last parallel")); W->NativeTick(W->GetCachedGeometry(),.01f);
+                Check(TEXT("Removing a parallel refreshes rows without closing the menu"),Plan->Window==W && Plan->Current()->Parallels.Num()==Count && W->ParallelDraft.Num()==Count);
+                Click(TEXT("Undo")); W->NativeTick(W->GetCachedGeometry(),.01f);
+                Check(TEXT("Undo keeps the menu open and restores parallel controls"),Plan->Window==W && W->ParallelDraft.Num()==Count+1);
+                Click(TEXT("Redo")); W->NativeTick(W->GetCachedGeometry(),.01f);
+                Check(TEXT("Redo keeps the menu open and updates parallel controls"),Plan->Window==W && W->ParallelDraft.Num()==Count);
+            }
         }
         else Check(TEXT("All five collapsible Plan sections exist"),false);
         FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsPlanSettings.png"),true,false);
@@ -639,6 +729,7 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
         Link.Route.Emplace(FSplinePointData(A.Position,FVector(12000,0,0))); Link.Route.Emplace(FSplinePointData(B.Position,FVector(0,12000,0)));
         Fixture.Nodes={A,B}; Fixture.Edges={Link}; Store->RailPlans={Fixture};
         Store->RailPlans[0].SegmentLength=FBSPlanBuild::MaximumLength()*.5; Store->RailPlans[0].Remainder=EBSPlanRemainder::Last;
+        Store->RailPlans[0].SyncParallelsInTurns=true;
         ExtensionPlan=Fixture.Id; ExtensionNode=B.Id; ExtensionPosition=B.Position;
         R->DeliveredPlanHash=0; R->LastPlanPoll=-100; Plan->Toggle(); Plan->Load(ExtensionPlan); Plan->SetMode(false); E->StickMode=EBSStickMode::Off; E->StickTiltSet=false;
         P->SetActorLocation(ExtensionPosition+FVector(0,-3000,-100));
@@ -646,6 +737,7 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
     if (Phase==49)
     {
         Check(TEXT("Plan snapshot transmits segment settings"),Plan->Current() && Plan->Current()->SegmentLength==FBSPlanBuild::MaximumLength()*.5 && Plan->Current()->Remainder==EBSPlanRemainder::Last);
+        Check(TEXT("Plan snapshot transmits synchronized parallels"),Plan->Current() && Plan->Current()->SyncParallelsInTurns);
         FVector Eye; FRotator View; PC->GetPlayerViewPoint(Eye,View); PC->SetControlRotation((ExtensionPosition-Eye).Rotation());
         FTimerHandle Click;
         P->GetWorldTimerManager().SetTimer(Click,[Weak=TWeakObjectPtr<UEnhancedPlayerInput>(Input)]() {
@@ -690,6 +782,7 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
         if (auto* Window=Plan->Window.Get()) for (const auto& Section:Window->Sections) Section.Value->SetExpanded(Section.Key==TEXT("Segments"));
         auto* W=Plan->Window.Get();
         Check(TEXT("Build specification exposes length, remainder and signal defaults"),W && W->Sections.Contains(TEXT("Segments")) && W->SegmentLengthDraft==FBSPlanBuild::MaximumLength()*.5 && W->RemainderDraft==EBSPlanRemainder::Last && !W->PlaceBlockSignalDraft && W->SignalEveryDraft==1 && !W->LeftSideSignalDraft);
+        Check(TEXT("Build specification exposes the saved synchronization checkbox"),W && W->SyncParallelsInTurnsDraft);
         FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsPlanBuildSpecification.png"),true,false);
         if (const auto* Source=Plan->Current())
         {
@@ -703,9 +796,10 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
     {
         if (auto* W=Plan->Window.Get())
         {
-            W->SegmentLengthDraft=8000; W->SignalEveryDraft=3; W->SaveSpecification();
+            W->SegmentLengthDraft=8000; W->SignalEveryDraft=3; W->SyncParallelsInTurnsDraft=false; W->SaveSpecification();
             const auto* Saved=Store->RailPlans.FindByPredicate([&](const auto& V) { return V.Id==Plan->CurrentId; });
             Check(TEXT("Menu field commit saves the build specification without an Apply button"),Saved && Saved->SegmentLength==8000 && Saved->SignalEvery==3);
+            Check(TEXT("Synchronization checkbox saves without closing the menu"),Saved && !Saved->SyncParallelsInTurns && Plan->Window==W);
         }
         Plan->Close(true); Passed &= RunBuildingSkillsPlanPolishChecks(P,Check); Store->RailPlans.Reset(); Store->PlanHistories.Reset();
     }

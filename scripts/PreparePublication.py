@@ -46,7 +46,18 @@ def git(*args):
     return subprocess.check_output(["git", "-C", str(ROOT), *args])
 
 
+def validate_version(descriptor):
+    version = descriptor["SemVersion"]
+    require(version == descriptor["VersionName"], "Version fields differ")
+    major = version.split(".", 1)[0]
+    require(major.isascii() and major.isdecimal(), "Invalid SemVersion major")
+    require(type(descriptor.get("Version")) is int and
+            descriptor["Version"] == int(major),
+            "SemVer major version should match Version")
+
+
 def validate(archive, descriptor):
+    validate_version(descriptor)
     files = archive.namelist()
     require(len(set(n.lower() for n in files)) == len(files), "Duplicate archive paths")
     for name in files:
@@ -59,6 +70,7 @@ def validate(archive, descriptor):
         prefix = platform + "/"
         require(prefix + "BuildingSkills.uplugin" in files, f"{platform}: missing descriptor")
         packaged = json.loads(archive.read(prefix + "BuildingSkills.uplugin"))
+        validate_version(packaged)
         for key, value in descriptor.items():
             require(packaged.get(key) == value, f"{platform}: descriptor differs for {key}")
         require(packaged.get("GameFeature") is True, f"{platform}: missing GameFeature marker")
@@ -102,7 +114,7 @@ def main():
     args = parser.parse_args()
     descriptor = json.loads((PLUGIN / "BuildingSkills.uplugin").read_text(encoding="utf-8-sig"))
     version = descriptor["SemVersion"]
-    require(version == descriptor["VersionName"], "Version fields differ")
+    validate_version(descriptor)
     metadata = json.loads((ROOT / "docs/publishing/METADATA.json").read_text(encoding="utf-8"))
     require(metadata["version"] == version, "Publication metadata has stale version")
     require((ROOT / "LICENSE").read_bytes() == (PLUGIN / "Resources/LICENSE.txt").read_bytes(),
@@ -161,6 +173,7 @@ def main():
             "Three target folders; Steam and Epic binaries both present",
             "Every packaged native binary matches its local compiled output",
             "Matching source descriptors and SML module manifests",
+            "SemVersion major matches integer Version in every target descriptor",
             "Required Edit and Plan cooked filenames present",
             "Cooked pak/ucas payloads present",
             "License notices and icon match source resources",

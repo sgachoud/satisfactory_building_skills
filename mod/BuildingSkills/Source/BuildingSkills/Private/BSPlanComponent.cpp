@@ -1,4 +1,5 @@
 #include "BSPlan.h"
+#include "BuildingSkills.h"
 #include "BSGroups.h"
 #include "BSStick.h"
 #include "BSEditModeComponent.h"
@@ -85,7 +86,7 @@ void UBSPlanComponent::Initialize(UEnhancedInputComponent* Input)
     const TCHAR* Names[]={TEXT("Forward"),TEXT("Backward"),TEXT("Left"),TEXT("Right"),TEXT("Up"),TEXT("Down")};
     for (int32 I=0;I<6;++I) if (auto* A=LoadObject<UInputAction>(nullptr,*FString::Printf(TEXT("/BuildingSkills/Inputs/IA_Move%s.IA_Move%s"),Names[I],Names[I]))) Input->BindAction(A,ETriggerEvent::Triggered,this,&ThisClass::Move,I);
 }
-bool UBSPlanComponent::Allowed() const { auto* E=Edit(this); return Active && E && E->InputAllowed(); }
+bool UBSPlanComponent::Allowed() const { auto* E=Edit(this); return Active && !Entering && E && E->InputAllowed(); }
 FBSRailPlan* UBSPlanComponent::Current() { return Plans.FindByPredicate([&](const auto& P) { return P.Id==CurrentId; }); }
 const FBSRailPlan* UBSPlanComponent::Current() const { return Plans.FindByPredicate([&](const auto& P) { return P.Id==CurrentId; }); }
 void UBSPlanComponent::Toggle()
@@ -93,25 +94,34 @@ void UBSPlanComponent::Toggle()
     auto* E=Edit(this); if (!E || !E->InputAllowed()) return;
     if (Active) { Close(true); return; }
     auto* P=Player(this); auto* PC=Cast<APlayerController>(P->GetController());
-    if (!PC || !PC->GetLocalPlayer() || !FBSPlanBuild::Recipe()) return;
-    E->LeaveEditMode(false); Active=true; Editing=false; EnteredAt=GetWorld()->GetRealTimeSeconds();
+    if (!PC || !PC->GetLocalPlayer() || !IsValid(P->GetBuildGun()) || !FBSPlanBuild::Recipe()) return;
+    E->LeaveEditMode(false); Active=true; Entering=true; Editing=false; EnteredAt=GetWorld()->GetRealTimeSeconds();
+    LastNode.Invalidate(); Selection.Reset(); Swept.Reset(); MultiHeld=false; NextPoll=0;
     if (!P->IsBuildGunEquipped()) P->ToggleBuildGun();
-    // The Plan-scoped transition clears the recipe and enters the native state
-    // directly; the shipped GotoBuildState wrapper rejects a null recipe.
-    P->GetBuildGun()->GotoBuildState(nullptr);
+    // Finish on a later tick, after the native equipment transition. Its menu
+    // state and instigator setup can be deferred on a multiplayer client.
+    UE_LOG(LogBuildingSkills,Display,TEXT("Plan mode requested; waiting for equipped build gun (net mode %d)."),int32(GetWorld()->GetNetMode()));
+}
+bool UBSPlanComponent::TryEnter()
+{
+    auto* E=Edit(this);
+    if (!Active || !Entering || !E || !E->EnterPlanBuildState()) return false;
+    auto* P=Player(this); auto* PC=Cast<APlayerController>(P->GetController());
+    Entering=false;
     SetMode(false);
     if (auto* Source=LoadObject<UInputMappingContext>(nullptr,TEXT("/BuildingSkills/Inputs/Runtime/MC_Plan.MC_Plan")))
     {
         Context=DuplicateObject<UInputMappingContext>(Source,this);
         PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>()->AddMappingContext(Context,1010);
     }
-    LastNode.Invalidate(); Selection.Reset(); Swept.Reset(); MultiHeld=false; NextPoll=0;
-    if (auto* R=Remote(this)) R->Server_PlanSnapshot();
+    if (auto* R=Remote(this)) R->Server_PlanSnapshot(true);
+    UE_LOG(LogBuildingSkills,Display,TEXT("Plan mode active without a construction recipe (net mode %d)."),int32(GetWorld()->GetNetMode()));
+    return true;
 }
 void UBSPlanComponent::Close(bool Unequip)
 {
     if (!Active) return;
-    FinishDrag(); CloseSettings(); Active=false; HaveAim=false; LastNode.Invalidate(); MultiHeld=false; Swept.Reset();
+    FinishDrag(); CloseSettings(); Active=false; Entering=false; HaveAim=false; LastNode.Invalidate(); MultiHeld=false; Swept.Reset();
     auto* P=Player(this); auto* PC=P ? Cast<APlayerController>(P->GetController()) : nullptr;
     if (Context && PC && PC->GetLocalPlayer()) PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>()->RemoveMappingContext(Context);
     Context=nullptr;
@@ -154,10 +164,10 @@ void UBSPlanComponent::Send(FBSPlanCommand C)
         Waiting=true; NextPoll=GetWorld()->GetRealTimeSeconds()+15; R->Server_PlanCommand(C);
     }
 }
-void UBSPlanComponent::Receive(TArray<FBSRailPlan> Incoming,FGuid Preferred,const FString& Feedback)
+bool UBSPlanComponent::Receive(TArray<FBSRailPlan> Incoming,FGuid Preferred,const FString& Feedback)
 {
     // Never replace a locally dragged preview until its gesture is submitted.
-    if (DragNode.IsValid() || DragEdge.IsValid()) return;
+    if (DragNode.IsValid() || DragEdge.IsValid()) return false;
     for (const auto& Command:MenuCommands)
     {
         const auto* Before=Plans.FindByPredicate([&](const auto& V) { return V.Id==Command.Plan; });
@@ -178,6 +188,7 @@ void UBSPlanComponent::Receive(TArray<FBSRailPlan> Incoming,FGuid Preferred,cons
     { const auto* N=P->Nodes.FindByPredicate([&](const auto& V) { return V.Position.Equals(LastPlacedPosition,1); }); LastNode=N ? N->Id : FGuid(); }
     NextPoll=GetWorld()->GetRealTimeSeconds()+1; NextDraw=0; ResetStart();
     if (!MenuCommands.IsEmpty()) { auto Next=MenuCommands[0]; MenuCommands.RemoveAt(0); Send(Next); }
+    return true;
 }
 void UBSPlanComponent::Load(FGuid Id) { FinishDrag(); CurrentId=Id; LastNode.Invalidate(); Selection.Reset(); Message.Reset(); ResetStart(); Refresh(); }
 void UBSPlanComponent::Refresh() { NextDraw=0; DrawHash=0; }
@@ -461,13 +472,33 @@ void UBSPlanComponent::AimAndHit()
 void UBSPlanComponent::TickComponent(float Delta,ELevelTick Type,FActorComponentTickFunction* Function)
 {
     Super::TickComponent(Delta,Type,Function); if (!Active) return;
+    if (Entering)
+    {
+        if (GetWorld()->GetRealTimeSeconds()-EnteredAt>5)
+        {
+            auto* Owner=Player(this); auto* PendingGun=Owner ? Owner->GetBuildGun() : nullptr;
+            auto* PendingBuild=PendingGun ? Cast<UFGBuildGunStateBuild>(PendingGun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD)) : nullptr;
+            UE_LOG(LogBuildingSkills,Warning,TEXT("Plan entry timed out: equipped=%d instigator=%s state=%s recipe=%s hologram=%s hologramValid=%d."),
+                Owner && Owner->IsBuildGunEquipped(),*GetNameSafe(PendingGun ? PendingGun->GetInstigatorCharacter() : nullptr),
+                *GetNameSafe(PendingGun ? PendingGun->GetCurrentState() : nullptr),
+                *GetNameSafe(PendingBuild ? PendingBuild->GetActiveRecipe().Get() : nullptr),
+                *GetNameSafe(PendingBuild ? PendingBuild->GetHologram() : nullptr),PendingBuild && IsValid(PendingBuild->GetHologram()));
+            Close(false); return;
+        }
+        if (!TryEnter()) return;
+    }
     auto* P=Player(this); auto* Gun=P ? P->GetBuildGun() : nullptr;
     auto* Build=Gun ? Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState()) : nullptr;
     if ((!P || !P->IsBuildGunEquipped() || !Build || Build->GetActiveRecipe()) && GetWorld()->GetRealTimeSeconds()-EnteredAt>2) { Close(false); return; }
     if (!Build) return;
     if (PendingCreate && !Waiting) { PendingCreate=false; FBSPlanCommand C; C.Action=EBSPlanAction::New; C.Name=TEXT("Untitled plan"); Send(C); }
-    if (GetWorld()->GetRealTimeSeconds()>NextPoll && !Window && !DragNode.IsValid() && !DragEdge.IsValid())
-    { Waiting=false; NextPoll=GetWorld()->GetRealTimeSeconds()+2; if (auto* R=Remote(this)) R->Server_PlanSnapshot(); }
+    if (GetWorld()->GetRealTimeSeconds()>NextPoll && (!Window || Waiting) && !DragNode.IsValid() && !DragEdge.IsValid())
+    {
+        // A missing response must not leave an open menu disabled forever.
+        // Keep the command pending until an authoritative snapshot is accepted.
+        NextPoll=GetWorld()->GetRealTimeSeconds()+(Waiting ? 15 : 2);
+        if (auto* R=Remote(this)) R->Server_PlanSnapshot(Waiting);
+    }
     if (Allowed())
     {
         const bool Held=Multi(this);

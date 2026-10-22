@@ -5,7 +5,7 @@ ficsit.app); Satisfactory Mod Manager (SMM) distributes versions from there.
 
 ## Files
 
-The generated `Saved/Publication/0.10.9` folder contains the upload archive,
+The generated `Saved/Publication/0.10.14` folder contains the upload archive,
 listing, metadata, changelog, artwork, source snapshot and verification report.
 Only **BuildingSkills.zip** is the mod version upload. Do not upload a
 development platform ZIP, source snapshot, or the complete publication folder
@@ -25,7 +25,7 @@ as the mod version.
   not a gameplay screenshot.
 - `verification.json`: exact archive validation and target/build evidence.
 - `SHA256SUMS.txt`: hashes for the prepared deliverables.
-- `BuildingSkills-0.10.9-source.zip`: source, assets, scripts, documentation and
+- `BuildingSkills-0.10.14-source.zip`: source, assets, scripts, documentation and
   notices, excluding local saves, references, logs, caches, SDK and binaries.
 
 ## Create the page and version
@@ -37,15 +37,16 @@ as the mod version.
    **BuildingSkills**. Paste the short/full descriptions and add the icon.
 4. Complete **Network Activity Transparency** and **AI Usage Transparency** using
    the prepared text. Keep these separate from the feature description.
-5. Use the source/support URLs in `METADATA.json`. The supplied public GitHub
-   repository exists and has issues enabled, but was empty when checked during
-   preparation. Upload the reviewed source before publishing those links.
+5. Use the source URL in `METADATA.json`. The support URL is already included
+   as the overview's “Report a bug” link; SMR has no separate support field.
+   The public GitHub repository has issues enabled and the initial release
+   source is published. Push the reviewed update source before its release.
    Include `docs/publishing/media/` on branch `main`: the overview embeds these
    GIFs through raw GitHub URLs. Until the source is pushed, those public image
    links will not resolve. Alternatively upload the GIFs to SMR's media service
    and replace the image URLs before submission.
    Suggested tags must be selected from the site's actual list.
-6. Create New Version, select **BuildingSkills.zip**, verify version **0.10.9**,
+6. Create New Version, select **BuildingSkills.zip**, verify version **0.10.14**,
    target platforms and the SML/game requirements, and paste the changelog.
 7. Choose early-access/beta wording rather than claiming a stable release.
    Do not mark an untested game branch as working just because it compiled.
@@ -53,11 +54,14 @@ as the mod version.
 
 No page, remote repository, release or public upload is created by preparing
 this kit. The login and final publication happen on the publisher's account.
-The supplied SSH remote is configured as `origin`. On this machine an SSH
-host-key mismatch currently blocks GitHub SSH access; no host verification
-settings were weakened. Public repository checks succeeded over HTTPS.
+The supplied SSH remote is configured as `origin`, with `main` as the branch.
 
 ## Recreating the package
+
+The descriptor's integer `Version` must equal the major component of
+`SemVersion`: for `0.10.9`, use `Version: 0`. It is not a build counter.
+`VersionName` must match `SemVersion`. The publication validator checks this
+in the source descriptor and every packaged target.
 
 Follow `docs/SETUP.md` for the pinned SDK. All platform variants must be built:
 Steam and Epic clients, Windows Server and Linux Server. `Mod.ps1 Release`
@@ -78,8 +82,12 @@ targets, cooked content, licenses, and unsafe archive entries. It removes debug
 symbols from the upload while retaining the original local Alpakit archive.
 
 Keep the final report honest: archive checks are not multiplayer gameplay tests.
-The latest installed build's focused configuration regression passed, but no new
-gameplay test is implied by publication preparation.
+The 0.10.9 configuration regression passed before publication. All 28 Editor
+automation tests passed for 0.10.13, including synchronized parallel geometry,
+offsets and length limits. Packaged construction, menu actions, Plan entry,
+native owner-identity serialization and live multiplayer reload still need
+confirmation after updating both client and server through SMM. The SDK editor
+cannot test the native identity APIs because their editor implementations are stubs.
 
 ## References
 

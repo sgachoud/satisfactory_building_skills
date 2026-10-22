@@ -1,5 +1,6 @@
 #include "BSPlan.h"
 #include "Algo/Reverse.h"
+#include "Algo/BinarySearch.h"
 
 namespace
 {
@@ -10,6 +11,23 @@ namespace
             Curve->AddPoint(FSplinePoint(I,Points[I].Location,Points[I].ArriveTangent,Points[I].LeaveTangent,
                 FRotator::ZeroRotator,FVector::OneVector,ESplinePointType::CurveCustomTangent),false);
         Curve->UpdateSpline(); return Curve;
+    }
+    TArray<FSplinePointData> SlicePlanCurve(const TArray<FSplinePointData>& Points,double A,double B)
+    {
+        TArray<double> Keys{A};
+        for (int32 K=FMath::FloorToInt(A)+1;K<B-1.e-7;++K) Keys.Add(K);
+        Keys.Add(B); TArray<FSplinePointData> Part;
+        for (int32 K=0;K<Keys.Num();++K)
+        {
+            const double Key=Keys[K]; const int32 Index=FMath::Clamp(FMath::FloorToInt(Key),0,Points.Num()-2);
+            const int32 Knot=FMath::RoundToInt(Key); FVector Location,Arrive,Leave;
+            if (FMath::IsNearlyEqual(Key,double(Knot),1.e-6))
+            { Location=Points[Knot].Location; Arrive=Points[Knot].ArriveTangent; Leave=Points[Knot].LeaveTangent; }
+            else
+            { Location=FBSPlanMath::Point(Points[Index],Points[Index+1],Key-Index); Arrive=Leave=FBSPlanMath::Tangent(Points[Index],Points[Index+1],Key-Index); }
+            Part.Emplace(Location,Arrive*(K ? Key-Keys[K-1] : Keys[1]-Key),Leave*(K+1<Keys.Num() ? Keys[K+1]-Key : Key-Keys[K-1]));
+        }
+        return Part;
     }
 }
 bool FBSPlanSegments::OffsetStart(TArray<FSplinePointData>& Points,double Offset,FString& Error)
@@ -37,7 +55,7 @@ bool FBSPlanSegments::OffsetStart(TArray<FSplinePointData>& Points,double Offset
     return true;
 }
 
-bool FBSPlanSegments::Paths(const FBSRailPlan& Plan,TArray<FBSPlanPath>& Out,FString& Error,bool CheckContinuity,const TSet<FGuid>& ForcedEndpoints)
+bool FBSPlanSegments::Paths(const FBSRailPlan& Plan,TArray<FBSPlanPath>& Out,FString& Error,bool CheckContinuity,const TSet<FGuid>& ForcedEndpoints,bool Untrimmed)
 {
     Out.Reset();
     if (!FBSPlanMath::Valid(Plan)) { Error=TEXT("The plan is invalid."); return false; }
@@ -68,23 +86,34 @@ bool FBSPlanSegments::Paths(const FBSRailPlan& Plan,TArray<FBSPlanPath>& Out,FSt
             for (auto& Step:Chain) Step.Value=!Step.Value;
             Swap(Start,At);
         }
+        TArray<FSplinePointData> MainPoints;
+        const bool NeedKeys=Untrimmed || Plan.SyncParallelsInTurns;
         for (int32 Parallel=0;Parallel<Offsets.Num();++Parallel)
         {
             FBSPlanPath Path; Path.Start=Start; Path.End=At; Path.Parallel=Parallel;
             Path.StartOffset=Parallel>0 && Plan.ParallelStartOffsets.IsValidIndex(Parallel-1) ? Plan.ParallelStartOffsets[Parallel-1] : 0;
             int32 FirstEdge=MAX_int32;
+            int32 MainPoint=0;
             for (const auto& Step:Chain)
             {
                 const auto& E=Plan.Edges[Step.Key];
                 Path.Edges.Add(E.Id); FirstEdge=FMath::Min(FirstEdge,Step.Key);
                 auto Points=FBSPlanMath::Curve(Plan,E);
                 if (Points.Num()<2) { Error=TEXT("A path has no usable curve."); return false; }
-                if (Parallel>0) Points=FBSPlanMath::ParallelCurve(Plan,E,Parallel-1,Step.Value);
+                const int32 MainSpans=Points.Num()-1;
+                TArray<double> Keys;
+                if (Parallel>0) Points=FBSPlanMath::ParallelCurve(Plan,E,Parallel-1,Step.Value,NeedKeys ? &Keys : nullptr);
                 else if (!Step.Value)
                 {
                     TArray<FSplinePointData> Reversed;
                     for (int32 I=Points.Num()-1;I>=0;--I) Reversed.Emplace(Points[I].Location,-Points[I].LeaveTangent,-Points[I].ArriveTangent);
                     Points=MoveTemp(Reversed);
+                }
+                if (NeedKeys)
+                {
+                    if (Parallel==0) for (int32 I=0;I<Points.Num();++I) Keys.Add(I);
+                    for (int32 I=Path.MainKeys.IsEmpty() ? 0 : 1;I<Keys.Num();++I) Path.MainKeys.Add(MainPoint+Keys[I]);
+                    MainPoint+=MainSpans;
                 }
                 if (Path.Nodes.IsEmpty())
                 {
@@ -106,14 +135,33 @@ bool FBSPlanSegments::Paths(const FBSRailPlan& Plan,TArray<FBSPlanPath>& Out,FSt
                 Path.Points.Append(Points);
             }
             Path.SignalReverse=Plan.ReversedEdges.Contains(Plan.Edges[FirstEdge].Id) ^ (Parallel>0 && Plan.ParallelReversed.IsValidIndex(Parallel-1) && Plan.ParallelReversed[Parallel-1]);
+            if (Untrimmed) { Out.Add(MoveTemp(Path)); continue; }
+            if (Parallel==0 && Plan.SyncParallelsInTurns) MainPoints=Path.Points;
             // Apply a placement offset once to the whole connected path. Live
             // rail intersections still force joints, but do not restart the gap.
             int32 Begin=0; double RemainingOffset=Path.StartOffset;
+            if (Plan.SyncParallelsInTurns && Parallel>0 && RemainingOffset>0)
+            {
+                auto* Reference=MeasurePlanCurve(MainPoints);
+                if (RemainingOffset>=Reference->GetSplineLength()-.001)
+                {
+                    if (CheckContinuity) { Error=TEXT("The parallel placement offset consumes the whole main path. Nothing was built."); return false; }
+                    Path.PlacementValid=false;
+                }
+                else
+                {
+                    const double Key=Reference->GetInputKeyValueAtDistanceAlongSpline(RemainingOffset);
+                    const int32 A=FMath::Clamp(Algo::UpperBound(Path.MainKeys,Key)-1,0,Path.MainKeys.Num()-2);
+                    const double ParallelKey=A+(Key-Path.MainKeys[A])/(Path.MainKeys[A+1]-Path.MainKeys[A]);
+                    RemainingOffset=MeasurePlanCurve(Path.Points)->GetDistanceAlongSplineAtSplineInputKey(ParallelKey);
+                }
+            }
             for (int32 End=1;End<Path.Nodes.Num();++End)
             {
                 if (End+1<Path.Nodes.Num() && !ForcedEndpoints.Contains(Path.Nodes[End].Id)) continue;
                 FBSPlanPath Piece; Piece.Start=Path.Nodes[Begin].Id; Piece.End=Path.Nodes[End].Id;
                 Piece.Parallel=Parallel; Piece.SignalReverse=Path.SignalReverse;
+                Piece.PlacementValid=Path.PlacementValid;
                 Piece.Nodes.Append(Path.Nodes.GetData()+Begin,End-Begin+1);
                 Piece.Edges.Append(Path.Edges.GetData()+Begin,End-Begin);
                 const int32 FirstPoint=Path.NodePointIndices[Begin],LastPoint=Path.NodePointIndices[End];
@@ -143,9 +191,10 @@ bool FBSPlanSegments::Paths(const FBSRailPlan& Plan,TArray<FBSPlanPath>& Out,FSt
 }
 
 bool FBSPlanSegments::Split(const TArray<FSplinePointData>& Points,double Requested,EBSPlanRemainder Policy,
-    double Minimum,double Maximum,TArray<TArray<FSplinePointData>>& Out,FString& Error)
+    double Minimum,double Maximum,TArray<TArray<FSplinePointData>>& Out,FString& Error,TArray<double>* EndKeys)
 {
     Out.Reset();
+    if (EndKeys) EndKeys->Reset();
     auto Fail=[&](const TCHAR* Reason) { Error=FString(Reason)+TEXT(" Nothing was built. Change the segment length or remainder policy."); return false; };
     if (Points.Num()<2 || !FMath::IsFinite(Requested) || Requested<0 || !FMath::IsFinite(Maximum) || Maximum<=Minimum || uint8(Policy)>2)
         return Fail(TEXT("Invalid rail segment settings."));
@@ -186,19 +235,165 @@ bool FBSPlanSegments::Split(const TArray<FSplinePointData>& Points,double Reques
         const double A=I==0 ? 0 : Curve->GetInputKeyValueAtDistanceAlongSpline(Distance);
         Distance+=Lengths[I];
         const double B=I==Lengths.Num()-1 ? Points.Num()-1 : Curve->GetInputKeyValueAtDistanceAlongSpline(Distance);
-        TArray<double> Keys{A};
-        for (int32 K=FMath::FloorToInt(A)+1;K<B-1.e-7;++K) Keys.Add(K);
-        Keys.Add(B); auto& Part=Parts.AddDefaulted_GetRef();
-        for (int32 K=0;K<Keys.Num();++K)
-        {
-            const double Key=Keys[K]; const int32 Index=FMath::Clamp(FMath::FloorToInt(Key),0,Points.Num()-2);
-            const int32 Knot=FMath::RoundToInt(Key); FVector Location,Arrive,Leave;
-            if (FMath::IsNearlyEqual(Key,double(Knot),1.e-6))
-            { Location=Points[Knot].Location; Arrive=Points[Knot].ArriveTangent; Leave=Points[Knot].LeaveTangent; }
-            else
-            { Location=FBSPlanMath::Point(Points[Index],Points[Index+1],Key-Index); Arrive=Leave=FBSPlanMath::Tangent(Points[Index],Points[Index+1],Key-Index); }
-            Part.Emplace(Location,Arrive*(K ? Key-Keys[K-1] : Keys[1]-Key),Leave*(K+1<Keys.Num() ? Keys[K+1]-Key : Key-Keys[K-1]));
-        }
+        Parts.Add(SlicePlanCurve(Points,A,B));
+        if (EndKeys) EndKeys->Add(B);
     }
     Out=MoveTemp(Parts); return true;
+}
+
+bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maximum,
+    TArray<FBSPlanSegmentedPath>& Out,FString& Error,const TSet<FGuid>& ForcedEndpoints)
+{
+    Out.Reset();
+    TArray<FBSPlanSegmentedPath> Prepared;
+    TArray<FBSPlanPath> PathsToSplit;
+    const bool Sync=Plan.SyncParallelsInTurns && !Plan.Parallels.IsEmpty();
+    if (!Paths(Plan,PathsToSplit,Error,true,ForcedEndpoints,Sync)) return false;
+    auto Fail=[&](const TCHAR* Reason) { Error=FString(Reason)+TEXT(" Nothing was built."); return false; };
+    if (!FMath::IsFinite(Minimum) || !FMath::IsFinite(Maximum) || Minimum<=0 || Maximum<=Minimum)
+        return Fail(TEXT("Invalid native rail length limits."));
+    int32 TotalParts=0;
+    if (!Sync)
+    {
+        for (auto& Path:PathsToSplit)
+        {
+            auto& Result=Prepared.AddDefaulted_GetRef(); Result.Path=MoveTemp(Path);
+            if (!Split(Result.Path.Points,Plan.SegmentLength,Plan.Remainder,Minimum,Maximum,Result.Parts,Error)) return false;
+            TotalParts+=Result.Parts.Num();
+            if (TotalParts>2048) return Fail(TEXT("This plan exceeds the build limit of 2048 rail segments."));
+        }
+        Out=MoveTemp(Prepared); return true;
+    }
+    // Each group is one connected main path followed by its parallel paths.
+    // Mapping uses spline parameters carried by Offset, never a closest-point
+    // search (which would confuse crossings, loops and neighbouring turns).
+    for (int32 First=0;First<PathsToSplit.Num();)
+    {
+        int32 Last=First+1;
+        while (Last<PathsToSplit.Num() && PathsToSplit[Last].Parallel!=0) ++Last;
+        const auto& Main=PathsToSplit[First];
+        auto* MainCurve=MeasurePlanCurve(Main.Points);
+        const double MainLength=MainCurve->GetSplineLength();
+        if (!FMath::IsFinite(MainLength) || MainLength<Minimum)
+            return Fail(TEXT("A synchronized main path is shorter than the minimum rail length."));
+        TArray<int32> SectionEnds;
+        for (int32 I=1;I<Main.Nodes.Num();++I)
+            if (I+1==Main.Nodes.Num() || ForcedEndpoints.Contains(Main.Nodes[I].Id)) SectionEnds.Add(Main.NodePointIndices[I]);
+        struct FParallelMeasure
+        {
+            TArray<FSplinePointData> Points;
+            USplineComponent* Curve=nullptr;
+            int32 Leading=0;
+        };
+        TArray<FParallelMeasure> Measures;
+        for (int32 I=First;I<Last;++I)
+        {
+            const auto& Path=PathsToSplit[I]; auto& M=Measures.AddDefaulted_GetRef(); M.Points=Path.Points;
+            if (Path.MainKeys.Num()!=Path.Points.Num() || Path.StartOffset>=MainLength-.001)
+                return Fail(TEXT("A parallel placement offset consumes the whole main path."));
+            if (Path.StartOffset<0)
+            {
+                if (!OffsetStart(M.Points,Path.StartOffset,Error)) return false;
+                M.Leading=1;
+            }
+            M.Curve=MeasurePlanCurve(M.Points);
+        }
+        auto KeyAt=[&](int32 Index,double Station) -> double {
+            const auto& Path=PathsToSplit[First+Index]; const auto& M=Measures[Index];
+            if (Station<0) return (Station-Path.StartOffset)/(-Path.StartOffset);
+            const double Key=Station>=MainLength ? Main.Points.Num()-1 : MainCurve->GetInputKeyValueAtDistanceAlongSpline(FMath::Max(0.0,Station));
+            const int32 A=FMath::Clamp(Algo::UpperBound(Path.MainKeys,Key)-1,0,Path.MainKeys.Num()-2);
+            const double T=(Key-Path.MainKeys[A])/(Path.MainKeys[A+1]-Path.MainKeys[A]);
+            return M.Leading+A+FMath::Clamp(T,0.0,1.0);
+        };
+        double Target=Plan.SegmentLength==0 ? Maximum : Plan.SegmentLength;
+        bool Fitted=false;
+        for (int32 Attempt=0;Attempt<128 && !Fitted;++Attempt)
+        {
+            TArray<double> ReferenceCuts{0}; int32 Begin=0;
+            for (int32 End:SectionEnds)
+            {
+                TArray<FSplinePointData> Section; Section.Append(Main.Points.GetData()+Begin,End-Begin+1);
+                TArray<TArray<FSplinePointData>> Ignored; TArray<double> Keys;
+                if (!Split(Section,Target,Plan.Remainder,Minimum,Maximum,Ignored,Error,&Keys)) return false;
+                for (double Key:Keys) ReferenceCuts.Add(MainCurve->GetDistanceAlongSplineAtSplineInputKey(Begin+Key));
+                Begin=End;
+            }
+            ReferenceCuts.Last()=MainLength;
+            // Negative offsets extend a parallel before the main start. Keep
+            // the reference spacing going past the main end so that the whole
+            // longer parallel still receives joints, even for a large stagger.
+            double ReferenceEnd=MainLength;
+            for (int32 I=First;I<Last;++I) ReferenceEnd=FMath::Max(ReferenceEnd,MainLength-PathsToSplit[I].StartOffset);
+            const double EndSpacing=ReferenceCuts.Last()-ReferenceCuts[ReferenceCuts.Num()-2];
+            if (ReferenceEnd>MainLength+.001)
+            {
+                if (EndSpacing<=.001 || (ReferenceEnd-MainLength)/EndSpacing>2048)
+                    return Fail(TEXT("The parallel extension exceeds the rail segment limit."));
+                for (double At=MainLength+EndSpacing;At<ReferenceEnd-.001;At+=EndSpacing) ReferenceCuts.Add(At);
+                ReferenceCuts.Add(ReferenceEnd);
+            }
+            TArray<TArray<double>> AllKeys;
+            double Longest=0; bool TooShort=false; int32 Count=0;
+            for (int32 I=0;I<Measures.Num();++I)
+            {
+                const auto& Path=PathsToSplit[First+I]; const auto& M=Measures[I];
+                struct FCut { double Station; bool Required; };
+                TArray<FCut> Cuts{{Path.StartOffset,true},{MainLength,true}};
+                for (double At:ReferenceCuts)
+                {
+                    const double Shifted=At+Path.StartOffset;
+                    if (Shifted>Path.StartOffset+.001 && Shifted<MainLength-.001) Cuts.Add({Shifted,false});
+                }
+                // Existing connections are mandatory joints, including ones
+                // inside a path. Offsets never erase or shift these joints.
+                for (int32 N=0;N<Main.Nodes.Num();++N) if (ForcedEndpoints.Contains(Main.Nodes[N].Id))
+                {
+                    const double At=MainCurve->GetDistanceAlongSplineAtSplineInputKey(Main.NodePointIndices[N]);
+                    if (At>Path.StartOffset+.001 && At<MainLength-.001) Cuts.Add({At,true});
+                }
+                Cuts.Sort([](const FCut& A,const FCut& B) { return A.Station<B.Station; });
+                for (int32 K=Cuts.Num()-1;K>0;--K) if (FMath::Abs(Cuts[K].Station-Cuts[K-1].Station)<.001)
+                { Cuts[K-1].Required |= Cuts[K].Required; Cuts.RemoveAt(K); }
+                auto Size=[&](int32 A,int32 B) {
+                    return double(M.Curve->GetDistanceAlongSplineAtSplineInputKey(KeyAt(I,Cuts[B].Station)))-
+                        M.Curve->GetDistanceAlongSplineAtSplineInputKey(KeyAt(I,Cuts[A].Station));
+                };
+                // A stagger may leave a tiny terminal remainder. Merge that
+                // optional last joint, then include the enlarged tail in the
+                // shared maximum-length check; never remove a live junction.
+                while (Cuts.Num()>2 && !Cuts[Cuts.Num()-2].Required && Size(Cuts.Num()-2,Cuts.Num()-1)<Minimum-.01)
+                    Cuts.RemoveAt(Cuts.Num()-2);
+                auto& Keys=AllKeys.AddDefaulted_GetRef();
+                for (int32 K=0;K<Cuts.Num();++K)
+                {
+                    Keys.Add(KeyAt(I,Cuts[K].Station));
+                    if (K>0) { const double Length=Size(K-1,K); Longest=FMath::Max(Longest,Length); TooShort |= Length<Minimum-.01; }
+                }
+                Count+=Keys.Num()-1;
+            }
+            if (TotalParts+Count>2048) return Fail(TEXT("Synchronized parallels exceed the build limit of 2048 rail segments."));
+            if (Longest>Maximum+.01)
+            {
+                // Remainder policies still choose the cuts, but use a shorter
+                // shared target when the outside track would be too long.
+                const double Reduced=FMath::Max(Minimum,Target*FMath::Min(.95,Maximum/Longest*.999));
+                if (Reduced>=Target-.001) return Fail(TEXT("The parallel offsets cannot fit within the rail length limits."));
+                Target=Reduced; continue;
+            }
+            if (TooShort) return Fail(TEXT("Synchronizing these offsets produces a rail below the minimum length. Adjust the offsets or segment length, or disable synchronization."));
+            for (int32 I=0;I<Measures.Num();++I)
+            {
+                auto& Result=Prepared.AddDefaulted_GetRef(); Result.Path=PathsToSplit[First+I];
+                const auto& Keys=AllKeys[I]; const auto& Points=Measures[I].Points;
+                Result.Path.Points=SlicePlanCurve(Points,Keys[0],Keys.Last());
+                if (Result.Path.StartOffset!=0) Result.Path.Start.Invalidate();
+                for (int32 K=1;K<Keys.Num();++K) Result.Parts.Add(SlicePlanCurve(Points,Keys[K-1],Keys[K]));
+            }
+            TotalParts+=Count; Fitted=true;
+        }
+        if (!Fitted) return Fail(TEXT("Could not fit synchronized rail segments within the native length limits."));
+        First=Last;
+    }
+    Out=MoveTemp(Prepared); return true;
 }

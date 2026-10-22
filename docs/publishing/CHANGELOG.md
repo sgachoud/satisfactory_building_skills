@@ -1,30 +1,26 @@
-# 0.10.9 — Initial public release candidate
+# 0.10.14 — Blueprint construction crash
 
-Building Skills brings together:
+- Fixes a server crash in blueprint construction caused by treating a construction-message interface pointer as a hologram actor.
+- Corrects the same pointer handling in blueprint deduplication serialization and keeps its hook separate from Stick's serializer.
+- Adds regressions for Copy, saved blueprints, Off/Replace/Skip message round trips and placement through a real multiplayer construction RPC.
 
-- Edit Gun with persistent nested groups and shared Normal, Blueprint, Group,
-  Connected and Volume selection.
-- Movement, rotation, scaling, configurable frames and pivots, and transform history.
-- Saving selections as blueprints, clipboard placement, alignment anchors,
-  blueprint scale preservation and duplicate handling.
-- Ordered mirror/rotation transformers with live previews and matching edit,
-  paint and dismantle actions.
-- Connected painting and construction/dismantle undo and redo.
-- Stick endpoint placement with configurable distance, tilt, slope, radius and
-  subdivision for long routes.
-- Plan Gun with saved personal/shared rail plans, editable curves, linked
-  parallel nodes, rail offsets, segment-length policies and block signals.
+Update both client and server. See the verification report for completed checks.
 
-Recent fixes and refinements:
+# 0.10.13 — Synchronized parallel rail joints
 
-- Saved defaults now populate Stick, Volume and Transform configuration through
-  SML's reflection bridge, including Connected, history and planner defaults.
-- Existing rail-plan geometry keeps its orientation when extending a terminal.
-- Added shape-preserving reversal of an individual plan spline.
-- Added signed parallel node offsets and rail start offsets.
-- Saved plans load on selection, support double-click renaming, and can be duplicated.
+- Adds **Sync parallels in turns** under Plan's **K → Build specification**, off by default.
+- Uses corresponding main-curve positions for parallel rail joints, including signed rail placement offsets.
+- Reduces shared segment spacing when an outer rail would exceed the native maximum. Large backward extensions receive additional joints.
+- Keeps live intersections as mandatory joints and checks minimum lengths before construction.
+- Saves the checkbox with the plan and supports multiplayer, duplication and undo/redo.
 
-This release is early access. Windows and Linux builds and focused configuration
-automation have been checked; these do not establish that every feature works in
-every game, mod combination or multiplayer setup. See the accompanying release
-verification report for exactly which targets and checks were completed.
+Update both client and server. See the verification report for completed checks.
+
+# 0.10.12 — Personal plans and Plan menu fixes
+
+- Personal plans now retain a saved owner identity across PlayerState replacement on reload or reconnect. Existing owner references are migrated when available.
+- Opening Plan requests a fresh snapshot; delivery is acknowledged only after the client accepts it.
+- Plan menu actions keep the window open and refresh controls after the server confirms the edit.
+- Retains the Plan activation fixes from 0.10.11.
+
+Update both client and server. Existing plans can be recovered only if their data and an identifiable owner remain in the save. See the verification report for completed checks.
