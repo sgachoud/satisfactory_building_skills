@@ -1,6 +1,11 @@
 #include "BSPlan.h"
 #include "BSStick.h"
+#include "FGFactoryConnectionComponent.h"
+#include "FGPipeConnectionComponent.h"
+#include "FGPipeConnectionComponentHyper.h"
+#include "Algo/Reverse.h"
 #include "EngineUtils.h"
+#include "Engine/OverlapResult.h"
 #include "Hologram/HologramHelpers.h"
 #include "FGCharacterPlayer.h"
 #include "FGRecipe.h"
@@ -12,6 +17,7 @@
 #include "Resources/FGItemDescriptor.h"
 #include "FGDismantleInterface.h"
 #include "Hologram/FGRailroadTrackHologram.h"
+#include "Hologram/FGPipelineHologram.h"
 #include "Hologram/FGRailroadSignalHologram.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "Buildables/FGBuildableRailroadSignal.h"
@@ -21,24 +27,132 @@
 #include "BuildingSkills.h"
 #include "FGConstructDisqualifier.h"
 
-TSubclassOf<UFGRecipe> FBSPlanBuild::Recipe()
-{ return LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Recipes/Buildings/Recipe_RailroadTrack.Recipe_RailroadTrack_C")); }
-double FBSPlanBuild::MaximumLength()
+namespace
 {
-    const auto Class=AFGBuildable::GetBuildableClassFromRecipe(Recipe());
-    const auto Hologram=Class ? Class.GetDefaultObject()->mHologramClass : nullptr;
-    auto* H=Hologram ? Cast<AFGRailroadTrackHologram>(Hologram.GetDefaultObject()) : nullptr;
-    // Native validation rejects the exact float boundary. Expose a usable
-    // maximum at the menu's centimeter precision instead of an unbuildable value.
+    AFGSplineHologram* PlanDefaults(EBSPlanBuildable Type)
+    {
+        const auto Class=AFGBuildable::GetBuildableClassFromRecipe(FBSPlanBuild::Recipe(Type));
+        const auto Hologram=Class ? Class.GetDefaultObject()->mHologramClass : nullptr;
+        return Hologram ? Cast<AFGSplineHologram>(Hologram.GetDefaultObject()) : nullptr;
+    }
+    int32 PlanFamily(EBSPlanBuildable Type)
+    { return Type==EBSPlanBuildable::Rail ? 0 : Type==EBSPlanBuildable::Hypertube ? 3 : Type==EBSPlanBuildable::Pipe || Type==EBSPlanBuildable::PipeMk2 ? 1 : 2; }
+    struct FPlanPort
+    {
+        USceneComponent* Component=nullptr;
+        int32 Family=0;
+        bool SnapOnly() const
+        {
+            if (auto* C=Cast<UFGFactoryConnectionComponent>(Component)) return C->GetDirection()==EFactoryConnectionDirection::FCD_SNAP_ONLY;
+            if (auto* C=Cast<UFGPipeConnectionComponentBase>(Component)) return C->GetPipeConnectionType()==EPipeConnectionType::PCT_SNAP_ONLY;
+            return false;
+        }
+        bool Occupied() const
+        {
+            if (auto* C=Cast<UFGFactoryConnectionComponent>(Component)) return C->IsConnected();
+            if (auto* C=Cast<UFGPipeConnectionComponentBase>(Component)) return C->GetConnection()!=nullptr;
+            return false;
+        }
+        FVector Position() const { const auto* R=Cast<UFGRailroadTrackConnectionComponent>(Component); return R ? R->GetConnectorLocation() : Component->GetComponentLocation(); }
+        FVector Normal() const { const auto* R=Cast<UFGRailroadTrackConnectionComponent>(Component); return R ? R->GetConnectorNormal() : Component->GetForwardVector(); }
+    };
+    struct FPlanPortIndex
+    {
+        TMap<FIntVector,TArray<int32>> Cells;
+        static FIntVector Cell(FVector P) { return FIntVector(FMath::FloorToInt(P.X/100),FMath::FloorToInt(P.Y/100),FMath::FloorToInt(P.Z/100)); }
+        void Add(const FPlanPort& Port,int32 Index) { Cells.FindOrAdd(Cell(Port.Position())).Add(Index); }
+        explicit FPlanPortIndex(const TArray<FPlanPort>& Ports)
+        { for (int32 I=0;I<Ports.Num();++I) Cells.FindOrAdd(Cell(Ports[I].Position())).Add(I); }
+        TArray<int32> Near(FVector P) const
+        {
+            TArray<int32> Result; const auto A=Cell(P-FVector(.5)),B=Cell(P+FVector(.5));
+            for (int32 X=A.X;X<=B.X;++X) for (int32 Y=A.Y;Y<=B.Y;++Y) for (int32 Z=A.Z;Z<=B.Z;++Z)
+                if (const auto* Items=Cells.Find(FIntVector(X,Y,Z))) Result.Append(*Items);
+            return Result;
+        }
+    };
+    void PlanPorts(AActor* Actor,TArray<FPlanPort>& Ports)
+    {
+        TInlineComponentArray<UFGRailroadTrackConnectionComponent*> Rails(Actor);
+        for (auto* C:Rails) Ports.Add({C,0});
+        TInlineComponentArray<UFGFactoryConnectionComponent*> Belts(Actor);
+        for (auto* C:Belts) Ports.Add({C,2});
+        TInlineComponentArray<UFGPipeConnectionComponentBase*> Pipes(Actor);
+        for (auto* C:Pipes) Ports.Add({C,C->IsA<UFGPipeConnectionComponentHyper>() ? 3 : 1});
+    }
+    bool ConnectPlanPorts(const FPlanPort& A,const FPlanPort& B)
+    {
+        if (auto* X=Cast<UFGRailroadTrackConnectionComponent>(A.Component))
+        {
+            auto* Y=CastChecked<UFGRailroadTrackConnectionComponent>(B.Component);
+            if (!X->GetConnections().Contains(Y) && X->CanConnectTo(Y)) X->AddConnection(Y);
+            return X->GetConnections().Contains(Y) && Y->GetConnections().Contains(X);
+        }
+        if (auto* X=Cast<UFGFactoryConnectionComponent>(A.Component))
+        {
+            auto* Y=CastChecked<UFGFactoryConnectionComponent>(B.Component);
+            if (X->GetConnection()==Y && Y->GetConnection()==X) return true;
+            if (X->IsConnected() || Y->IsConnected() || !X->CanConnectTo(Y)) return false;
+            X->SetConnection(Y); return X->GetConnection()==Y && Y->GetConnection()==X;
+        }
+        auto* X=CastChecked<UFGPipeConnectionComponentBase>(A.Component);
+        auto* Y=CastChecked<UFGPipeConnectionComponentBase>(B.Component);
+        if (X->GetConnection()==Y && Y->GetConnection()==X) return true;
+        if (X->GetConnection() || Y->GetConnection() || !X->CanConnectTo(Y)) return false;
+        X->SetConnection(Y); return X->GetConnection()==Y && Y->GetConnection()==X;
+    }
+}
+const TCHAR* FBSPlanBuild::Name(EBSPlanBuildable Type)
+{
+    const TCHAR* Names[]={TEXT("Rail"),TEXT("Pipe Mk.1"),TEXT("Pipe Mk.2"),TEXT("Belt Mk.1"),TEXT("Belt Mk.2"),TEXT("Belt Mk.3"),TEXT("Belt Mk.4"),TEXT("Belt Mk.5"),TEXT("Belt Mk.6"),TEXT("Hypertube")};
+    return uint8(Type)<UE_ARRAY_COUNT(Names) ? Names[uint8(Type)] : TEXT("Unknown");
+}
+TSubclassOf<UFGRecipe> FBSPlanBuild::Recipe(EBSPlanBuildable Type)
+{
+    const TCHAR* Names[]={TEXT("Recipe_RailroadTrack"),TEXT("Recipe_Pipeline"),TEXT("Recipe_PipelineMK2"),TEXT("Recipe_ConveyorBeltMk1"),TEXT("Recipe_ConveyorBeltMk2"),TEXT("Recipe_ConveyorBeltMk3"),TEXT("Recipe_ConveyorBeltMk4"),TEXT("Recipe_ConveyorBeltMk5"),TEXT("Recipe_ConveyorBeltMk6"),TEXT("Recipe_PipeHyper")};
+    if (uint8(Type)>=UE_ARRAY_COUNT(Names)) return nullptr;
+    static TMap<EBSPlanBuildable,TWeakObjectPtr<UClass>> Cache;
+    if (auto* Cached=Cache.Find(Type); Cached && Cached->IsValid()) return Cached->Get();
+    const auto* N=Names[uint8(Type)];
+    auto* Class=LoadClass<UFGRecipe>(nullptr,*FString::Printf(TEXT("/Game/FactoryGame/Recipes/Buildings/%s.%s_C"),N,N));
+    if (Class) Cache.Add(Type,Class); return Class;
+}
+double FBSPlanBuild::MaximumLength(EBSPlanBuildable Type)
+{
+    auto* H=PlanDefaults(Type);
+    // Native validation rejects the exact floating-point boundary.
     return H ? FMath::FloorToDouble(FBSStick::MaxLength(H)-.1) : 0;
 }
-double FBSPlanBuild::MinimumLength()
+double FBSPlanBuild::MinimumLength(EBSPlanBuildable Type)
 {
-    const auto Class=AFGBuildable::GetBuildableClassFromRecipe(Recipe());
+    if (PlanFamily(Type)==1 || PlanFamily(Type)==3) return AFGPipelineHologram::MINIMUM_HOLOGRAM_LENGTH;
+    if (Type!=EBSPlanBuildable::Rail) return 100;
+    const auto Class=AFGBuildable::GetBuildableClassFromRecipe(Recipe(Type));
     const auto* Track=Class ? Cast<AFGBuildableRailroadTrack>(Class.GetDefaultObject()) : nullptr;
-    // Native BeginPlay initializes mMinLength from the buildable mesh length.
-    // The hologram CDO still has zero, so it cannot provide this limit.
     return Track ? FMath::CeilToDouble(Track->GetMeshLength()) : 0;
+}
+FVector FBSPlanBuild::ShapeLimits(EBSPlanBuildable Type)
+{
+    auto Limits=FBSStick::PlanLimits(PlanDefaults(Type)); Limits.Z=MinimumLength(Type); return Limits;
+}
+bool FBSPlanBuild::SnapConnection(UWorld* World,EBSPlanBuildable Type,FVector& Position,FVector& Direction,AActor* Hit)
+{
+    TSet<AFGBuildable*> Actors;
+    if (auto* B=Cast<AFGBuildable>(Hit)) Actors.Add(B);
+    TArray<FOverlapResult> Nearby;
+    World->OverlapMultiByObjectType(Nearby,Position,FQuat::Identity,FCollisionObjectQueryParams::AllObjects,FCollisionShape::MakeSphere(200));
+    for (const auto& Result:Nearby) if (auto* B=Cast<AFGBuildable>(Result.GetActor())) Actors.Add(B);
+    TArray<FPlanPort> Ports; for (auto* A:Actors) if (IsValid(A) && !A->GetIsDismantled()) PlanPorts(A,Ports);
+    double Nearest=200*200; const FVector Target=Position; bool Snapped=false;
+    for (const auto& Port:Ports)
+    {
+        if (Port.Family!=PlanFamily(Type)) continue;
+        if (auto* C=Cast<UFGFactoryConnectionComponent>(Port.Component); C && C->IsConnected()) continue;
+        if (auto* C=Cast<UFGPipeConnectionComponentBase>(Port.Component); C && C->GetConnection()) continue;
+        const double D=FVector::DistSquared(Target,Port.Position()); if (D>=Nearest) continue;
+        Nearest=D; Position=Port.Position(); Direction=Port.Normal(); Snapped=true;
+    }
+    return Snapped;
 }
 void FBSPlanBuild::SnapFoundation(AFGBuildable* Floor,FVector& Position,FVector& Direction)
 {
@@ -51,11 +165,26 @@ void FBSPlanBuild::SnapFoundation(AFGBuildable* Floor,FVector& Position,FVector&
 bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& Error)
 {
     if (!P || !P->HasAuthority() || !FBSPlanMath::Valid(Plan) || Plan.Edges.IsEmpty()) { Error=TEXT("Add a connected path before building."); return false; }
-    auto RecipeClass=Recipe(); auto* Recipes=AFGRecipeManager::Get(P->GetWorld()); auto* Inventory=P->GetInventory();
-    if (!Inventory || !Recipes || !Recipes->IsRecipeAvailable(RecipeClass)) { Error=TEXT("Unlock Railway before building this plan."); return false; }
-    TArray<AFGRailroadTrackHologram*> Holograms;
+    auto* Recipes=AFGRecipeManager::Get(P->GetWorld()); auto* Inventory=P->GetInventory();
+    if (!Inventory || !Recipes) { Error=TEXT("Player inventory or recipes are unavailable."); return false; }
+    TArray<FBSPlanLengthLimits> LineLimits;
+    bool HasRails=false;
+    for (int32 I=0;I<=Plan.Parallels.Num();++I)
+    {
+        const auto Type=Plan.Construction.Line(I); const auto R=Recipe(Type);
+        if (!R || !Recipes->IsRecipeAvailable(R)) { Error=FString::Printf(TEXT("Unlock %s before building this plan."),Name(Type)); return false; }
+        LineLimits.Add({MinimumLength(Type),MaximumLength(Type),Plan.Construction.Length(Type,Plan.SegmentLength)});
+        HasRails |= Type==EBSPlanBuildable::Rail;
+    }
+    TArray<AFGSplineHologram*> Holograms; Holograms.Add(nullptr);
     struct FSignalRequest { int32 Track,End; AFGRailroadSignalHologram* Hologram; };
     TArray<FSignalRequest> Signals;
+    struct FRequiredJoin { int32 A,B; FVector Position; };
+    TArray<FRequiredJoin> RequiredJoins;
+    struct FSupportPair { UObject* Start=nullptr; UObject* End=nullptr; };
+    TArray<FSupportPair> SupportPairs; SupportPairs.Add({});
+    TSet<USceneComponent*> ClaimedWorldPorts;
+    TArray<FPlanPort> Supports; FPlanPortIndex SupportIndex(Supports);
     TArray<AActor*> Built;
     bool Success=false;
     ON_SCOPE_EXIT {
@@ -63,60 +192,102 @@ bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& 
         for (const auto& S:Signals) if (IsValid(S.Hologram)) S.Hologram->Destroy();
         if (!Success) for (int32 I=Built.Num()-1;I>=0;--I) if (auto* A=Built[I]; IsValid(A) && A->Implements<UFGDismantleInterface>()) IFGDismantleInterface::Execute_Dismantle(A);
     };
-    struct FEndpoint { int32 Hologram; int32 End; FGuid Node; int32 Parallel; };
-    TArray<FEndpoint> Ends;
     TArray<FItemAmount> Cost;
     TSubclassOf<UFGRecipe> SignalRecipe;
-    if (Plan.PlaceBlockSignal)
+    if (Plan.PlaceBlockSignal && HasRails)
     {
         SignalRecipe=LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Buildable/Factory/Train/Signal/Recipe_RailroadBlockSignal.Recipe_RailroadBlockSignal_C"));
         if (!SignalRecipe || !Recipes->IsRecipeAvailable(SignalRecipe)) { Error=TEXT("Unlock Block Signals before building this specification."); return false; }
     }
-    auto* Template=Cast<AFGRailroadTrackHologram>(AFGHologram::SpawnHologramFromRecipe(RecipeClass,P->GetBuildGun(),Plan.Nodes[0].Position,P));
-    if (!Template) { Error=TEXT("Could not create the rail preview."); return false; }
-    Holograms.Add(Template); const FVector Limits=FBSStick::PlanLimits(Template); const double Max=FMath::FloorToDouble(FBSStick::MaxLength(Template)-.1);
-    // Discover the current world at build time. Plans store geometry, never
-    // references to the rails from which it was sampled.
+    // Resolve world connections at build time; no plan stores live actors.
+    TArray<FPlanPort> Existing;
     TArray<UFGRailroadTrackConnectionComponent*> ExistingPorts;
-    for (TActorIterator<AFGBuildableRailroadTrack> It(P->GetWorld());It;++It)
-        if (IsValid(*It) && !It->GetIsDismantled()) for (int32 End=0;End<2;++End) if (auto* Port=It->GetConnection(End)) ExistingPorts.Add(Port);
+    for (TActorIterator<AFGBuildable> It(P->GetWorld());It;++It)
+        if (IsValid(*It) && !It->GetIsDismantled() && !It->GetIsLightweightTemporary() && !It->GetBlueprintDesigner()) PlanPorts(*It,Existing);
+    for (const auto& Port:Existing) if (Port.Family==0) ExistingPorts.Add(CastChecked<UFGRailroadTrackConnectionComponent>(Port.Component));
+    const FPlanPortIndex ExistingIndex(Existing);
     TSet<FGuid> Junctions;
     TArray<FBSPlanPath> PreviewPaths;
     if (!FBSPlanSegments::Paths(Plan,PreviewPaths,Error,false)) return false;
     for (const auto& Path:PreviewPaths) for (const auto& Node:Path.Nodes)
     {
         const FVector Forward=FBSPlanMath::ConnectionDirection(Plan,Node.Id);
-        for (auto* Port:ExistingPorts) if (FMath::Abs(FVector::DotProduct(Port->GetConnectorNormal(),Forward))>.999)
-            if (Port->GetConnectorLocation().Equals(Node.Position,.5)) Junctions.Add(Node.Id);
+        for (int32 Index:ExistingIndex.Near(Node.Position))
+        {
+            const auto& Port=Existing[Index];
+            if (Port.Family==PlanFamily(Plan.Construction.Line(Path.Parallel)) && FMath::Abs(FVector::DotProduct(Port.Normal(),Forward))>.999 && Port.Position().Equals(Node.Position,.5)) Junctions.Add(Node.Id);
+        }
     }
     TArray<FBSPlanSegmentedPath> Paths;
-    if (!FBSPlanSegments::Prepare(Plan,MinimumLength(),Max,Paths,Error,Junctions)) return false;
+    if (!FBSPlanSegments::Prepare(Plan,LineLimits[0].Minimum,LineLimits[0].Maximum,Paths,Error,Junctions,LineLimits)) return false;
     for (const auto& Segmented:Paths)
     {
         const auto& Path=Segmented.Path;
+        const auto Type=Plan.Construction.Line(Path.Parallel);
+        const auto RecipeClass=Recipe(Type); const FVector Limits=ShapeLimits(Type);
         const auto& Curve=Path.Points;
         if (Curve.Num()<2) { Error=TEXT("A path has no usable curve."); return false; }
         if ((Path.Start.IsValid() && FMath::Abs(FVector::DotProduct(Curve[0].LeaveTangent.GetSafeNormal(),FBSPlanMath::ConnectionDirection(Plan,Path.Start)))<.999) ||
             (Path.End.IsValid() && FMath::Abs(FVector::DotProduct(Curve.Last().ArriveTangent.GetSafeNormal(),FBSPlanMath::ConnectionDirection(Plan,Path.End)))<.999))
-        { Error=TEXT("A rail does not meet its node tangent continuously. Use Curve or Free, or adjust the nodes."); return false; }
+        { Error=TEXT("A path does not meet its node tangent continuously. Use Curve or Free, or adjust the nodes."); return false; }
         for (int32 I=1;I<Curve.Num();++I) for (int32 Sample=0;Sample<=32;++Sample)
             if (!FBSPlanMath::ShapeValid(Curve[I-1],Curve[I],double(Sample)/32,Limits.X,Limits.Y))
-            { Error=TEXT("A red section exceeds the rail curvature or grade limit. Adjust it before building."); return false; }
+            { Error=TEXT("A red section exceeds the selected building type's curvature or grade limit. Adjust it before building."); return false; }
         const auto& Parts=Segmented.Parts;
         if (Holograms.Num()+Parts.Num()>2049)
-        { Error=TEXT("This plan exceeds the build limit of 2048 rail segments."); return false; }
+        { Error=TEXT("This plan exceeds the build limit of 2048 segments."); return false; }
         const int32 FirstIndex=Holograms.Num();
         for (int32 I=0;I<Parts.Num();++I)
         {
-            auto* H=Cast<AFGRailroadTrackHologram>(AFGHologram::SpawnHologramFromRecipe(RecipeClass,P->GetBuildGun(),Parts[I][0].Location,P));
-            if (!H) { Error=TEXT("Could not prepare every rail segment."); return false; }
+            auto Points=Parts[I];
+            if (PlanFamily(Type)==2 && Path.SignalReverse)
+            { Algo::Reverse(Points); for (auto& Point:Points) { Swap(Point.ArriveTangent,Point.LeaveTangent); Point.ArriveTangent*=-1; Point.LeaveTangent*=-1; } }
+            auto* H=Cast<AFGSplineHologram>(AFGHologram::SpawnHologramFromRecipe(RecipeClass,P->GetBuildGun(),Points[0].Location,P));
+            if (!H) { Error=TEXT("Could not prepare every segment."); return false; }
             const int32 Index=Holograms.Add(H);
-            FBSStick::PlanGeometry(H,Parts[I]);
+            if (I>0) RequiredJoins.Add({Index-1,Index,Parts[I][0].Location});
+            FBSStick::PlanGeometry(H,Points);
+            FSupportPair Pair;
+            if (Type!=EBSPlanBuildable::Rail) for (int32 End=0;End<2;++End)
+            {
+                const FVector At=End==0 ? Points[0].Location : Points.Last().Location;
+                const FVector Normal=(End==0 ? -Points[0].LeaveTangent : Points.Last().ArriveTangent).GetSafeNormal();
+                UObject* Target=nullptr;
+                // Prefer a real transport connection over a decorative support.
+                for (bool SnapOnly:{false,true}) for (int32 PortIndex:ExistingIndex.Near(At))
+                {
+                    const auto& Port=Existing[PortIndex];
+                    if (!Target && Port.Family==PlanFamily(Type) && Port.SnapOnly()==SnapOnly && Port.Position().Equals(At,.5) &&
+                        (SnapOnly || FVector::DotProduct(Port.Normal(),Normal)<-.999)) Target=Port.Component;
+                }
+                if (Target)
+                {
+                    const FPlanPort Port{CastChecked<USceneComponent>(Target),PlanFamily(Type)};
+                    if (!Port.SnapOnly())
+                    {
+                        // Reject before native Construct can touch a live
+                        // network. One transport port accepts one new endpoint.
+                        if (Port.Occupied() || ClaimedWorldPorts.Contains(Port.Component))
+                        { Error=TEXT("An existing connection is occupied or requested more than once. Nothing was built."); return false; }
+                        ClaimedWorldPorts.Add(Port.Component);
+                    }
+                }
+                if (!Target) for (int32 PortIndex:SupportIndex.Near(At))
+                {
+                    const auto& Port=Supports[PortIndex];
+                    if (Port.Family==PlanFamily(Type) && Port.Position().Equals(At,.5)) { Target=Port.Component; break; }
+                }
+                UObject* Support=FBSStick::PlanSupport(H,End,Target);
+                if (!Support) { Error=TEXT("Could not prepare a native spline support. Nothing was built."); return false; }
+                if (!Target)
+                { const int32 Added=Supports.Add({CastChecked<USceneComponent>(Support),PlanFamily(Type)}); SupportIndex.Add(Supports[Added],Added); }
+                (End==0 ? Pair.Start : Pair.End)=Support;
+            }
+            SupportPairs.Add(Pair);
             Cost.Append(H->GetCost(true));
-            Ends.Add({Index,0,I==0 ? Path.Start : FGuid(),Path.Parallel});
-            Ends.Add({Index,1,I==Parts.Num()-1 ? Path.End : FGuid(),Path.Parallel});
         }
-        if (Plan.PlaceBlockSignal) for (int32 I=Plan.SignalEvery-1;I<Parts.Num();I+=Plan.SignalEvery)
+        if (Path.Start.IsValid() && Path.Start==Path.End && Parts.Num()>1) RequiredJoins.Add({FirstIndex,Holograms.Num()-1,Parts[0][0].Location});
+        if (Plan.PlaceBlockSignal && Type==EBSPlanBuildable::Rail) for (int32 I=Plan.SignalEvery-1;I<Parts.Num();I+=Plan.SignalEvery)
         {
             if (I==Parts.Num()-1 && Path.Start!=Path.End)
             {
@@ -155,49 +326,44 @@ bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& 
     }
     for (int32 I=1;I<Holograms.Num();++I)
     {
-        auto* H=Holograms[I]; H->ResetConstructDisqualifiers(); H->ValidatePlacementAndCost(Inventory);
-        if (!H->CanConstruct())
+        auto* H=Holograms[I];
+        if (!FBSStick::ValidatePlan(H,Inventory,SupportPairs[I].Start,SupportPairs[I].End))
         {
             TArray<TSubclassOf<UFGConstructDisqualifier>> Reasons; H->GetConstructDisqualifiers(Reasons);
-            for (const auto& Reason:Reasons) UE_LOG(LogBuildingSkills,Display,TEXT("Plan rail validation: %s"),*GetNameSafe(Reason.Get()));
-            Error=TEXT("A rail segment fails native placement or affordability checks. Nothing was built."); return false;
+            for (const auto& Reason:Reasons) UE_LOG(LogBuildingSkills,Display,TEXT("Plan spline validation: %s"),*GetNameSafe(Reason.Get()));
+            Error=TEXT("A segment fails native placement or affordability checks. Nothing was built."); return false;
         }
     }
-    TArray<AFGBuildableRailroadTrack*> Tracks; Tracks.SetNum(Holograms.Num());
+    TArray<AFGBuildable*> Tracks; Tracks.SetNum(Holograms.Num());
     for (int32 I=1;I<Holograms.Num();++I)
     {
-        TArray<AActor*> Children; auto* Track=Cast<AFGBuildableRailroadTrack>(Holograms[I]->Construct(Children,FNetConstructionID()));
+        TArray<AActor*> Children; auto* Track=Cast<AFGBuildable>(Holograms[I]->Construct(Children,FNetConstructionID()));
         Built.Append(Children); if (Track) Built.AddUnique(Track); Tracks[I]=Track;
         if (!Track) { Error=TEXT("Construction failed; the incomplete plan was removed."); return false; }
     }
-    // Link coincident opposing ports, including split joins and branching nodes.
-    // Same-facing branch ports must not connect directly to one another.
-    for (int32 I=0;I<Ends.Num();++I)
+    // Connect exact endpoints within each native family, including world
+    // fittings. An occupied or incompatible join rolls back the whole build.
+    for (const auto& Joint:RequiredJoins) if (!FBSStick::Connect(Tracks[Joint.A],Tracks[Joint.B],Joint.Position))
+    { Error=TEXT("An internal spline join could not connect. The incomplete plan was removed."); return false; }
+    TArray<FPlanPort> NewPorts;
+    for (auto* Track:Tracks) if (Track) PlanPorts(Track,NewPorts);
+    const FPlanPortIndex NewIndex(NewPorts);
+    auto Join=[&](const FPlanPort& A,const FPlanPort& B) {
+        if (!IsValid(A.Component) || !IsValid(B.Component)) return true;
+        if (A.SnapOnly() || B.SnapOnly() || A.Family!=B.Family || A.Component->GetOwner()==B.Component->GetOwner() ||
+            !A.Position().Equals(B.Position(),.5) || FVector::DotProduct(A.Normal(),B.Normal())>-.999) return true;
+        return ConnectPlanPorts(A,B);
+    };
+    for (int32 I=0;I<NewPorts.Num();++I)
     {
-        const auto& E=Ends[I]; auto* Port=Tracks[E.Hologram]->GetConnection(E.End);
-        for (int32 J=0;J<I;++J)
-        {
-            const auto& Other=Ends[J]; auto* Target=Tracks[Other.Hologram]->GetConnection(Other.End);
-            if (E.Hologram==Other.Hologram || !Port->GetConnectorLocation().Equals(Target->GetConnectorLocation(),.5) ||
-                FVector::DotProduct(Port->GetConnectorNormal(),Target->GetConnectorNormal())>-.999) continue;
-            if (!Port->GetConnections().Contains(Target) && Port->CanConnectTo(Target)) Port->AddConnection(Target);
-            if (!Port->GetConnections().Contains(Target) || !Target->GetConnections().Contains(Port))
-            { Error=TEXT("A rail join could not be connected; the incomplete plan was removed."); return false; }
-        }
-        // Check every generated endpoint, including joins at interior nodes.
-        // Only matching position AND opposing tangent can form a native joint.
-        for (auto* Target:ExistingPorts)
-        {
-            if (!IsValid(Target) || !Port->GetConnectorLocation().Equals(Target->GetConnectorLocation(),.5) ||
-                FVector::DotProduct(Port->GetConnectorNormal(),Target->GetConnectorNormal())>-.999) continue;
-            if (!Port->GetConnections().Contains(Target) && Port->CanConnectTo(Target)) Port->AddConnection(Target);
-            if (!Port->GetConnections().Contains(Target) || !Target->GetConnections().Contains(Port))
-            { Error=TEXT("An existing rail could not be connected; the incomplete plan was removed."); return false; }
-        }
+        for (int32 J:NewIndex.Near(NewPorts[I].Position())) if (J<I && !Join(NewPorts[I],NewPorts[J]))
+        { Error=TEXT("A planned join cannot connect. Belts and tubes need fittings for branches. The incomplete plan was removed."); return false; }
+        for (int32 Index:ExistingIndex.Near(NewPorts[I].Position())) if (!Join(NewPorts[I],Existing[Index]))
+        { Error=TEXT("An existing connection is occupied or incompatible. The incomplete plan was removed."); return false; }
     }
     for (const auto& S:Signals)
     {
-        auto* Port=Tracks[S.Track]->GetConnection(S.End); auto* H=S.Hologram;
+        auto* Port=CastChecked<AFGBuildableRailroadTrack>(Tracks[S.Track])->GetConnection(S.End); auto* H=S.Hologram;
         if (Port->GetFacingSignal()) { Error=TEXT("A requested signal position already has a signal. The incomplete plan was removed."); return false; }
         // Configure the native connection-snap path. No track is split here:
         // every signal lies on an already constructed segment endpoint.
@@ -220,5 +386,5 @@ bool FBSPlanBuild::Build(AFGCharacterPlayer* P,const FBSRailPlan& Plan,FString& 
         const auto* State=P->GetPlayerState<AFGPlayerState>();
         for (const auto& Item:Cost) UFGInventoryLibrary::GrabItemsFromInventoryAndCentralStorage(Inventory,Central,!State || State->GetTakeFromInventoryBeforeCentralStorage(),Item.ItemClass,Item.Amount);
     }
-    Success=true; Error=FString::Printf(TEXT("Built %d rail segments and %d block signals. The plan is retained."),Tracks.Num()-1,Signals.Num()); return true;
+    Success=true; Error=FString::Printf(TEXT("Built %d segments and %d block signals. The plan is retained."),Tracks.Num()-1,Signals.Num()); return true;
 }

@@ -8,6 +8,7 @@ param(
     [switch]$VolumeOnly,
     [switch]$StickOnly,
     [switch]$PlanOnly,
+    [switch]$PlanConstructionOnly,
     [switch]$PolishOnly,
     [switch]$TransformersOnly,
     [switch]$ARSDoubleTest,
@@ -40,6 +41,7 @@ if ($ConnectedOnly) { $arguments += '-BuildingSkillsConnectedTest' }
 if ($VolumeOnly) { $arguments += '-BuildingSkillsVolumeTest' }
 if ($StickOnly) { $arguments += '-BuildingSkillsStickTest' }
 if ($PlanOnly) { $arguments += '-BuildingSkillsPlanTest' }
+if ($PlanConstructionOnly) { $arguments += '-BuildingSkillsPlanConstructionTest' }
 if ($TransformersOnly) { $arguments += '-BuildingSkillsTransformersTest' }
 if ($PolishOnly) { $arguments += '-BuildingSkillsPolishTest' }
 if ($ARSDoubleTest) { $arguments += '-BuildingSkillsARSDoubleTest' }
@@ -65,7 +67,7 @@ while (-not $testProcess.WaitForExit(30000)) {
         throw "Runtime test timed out. See $log"
     }
 }
-if ($Render -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $BlueprintsOnly -and -not $PooledVisualsOnly) {
+if ($Render -and -not $PlanConstructionOnly -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $BlueprintsOnly -and -not $PooledVisualsOnly) {
     $screenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsRuntimeTest.png'
     if ((Test-Path -LiteralPath $screenshot) -and (Get-Item -LiteralPath $screenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $screenshot -Destination (Join-Path $saved 'RuntimeTest.png') -Force

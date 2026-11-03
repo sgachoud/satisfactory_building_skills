@@ -3,9 +3,9 @@
 Tools for editing your factory and planning what comes next.
 
 Group buildings, move whole selections, copy layouts, repeat construction with
-mirrors and rotations, and design rail networks before building them.
+mirrors and rotations, and design rail, pipe, belt and hypertube networks before building them.
 
-**Early-access release: 0.10.9.** Back up an important save before large editing
+**Early-access release: 0.11.0.** Back up an important save before large editing
 operations. Some recent planner changes still need broader player testing.
 
 ## Start here
@@ -92,24 +92,28 @@ routes are divided into connected segments while retaining native placement
 validation. Nearby endpoints can snap using the game's configured snapping
 modifier behavior.
 
-## Plan rail networks
+## Plan transport networks
 
-**Alt+P** opens the rail planner. Place connected nodes, edit their positions and
+**Alt+P** opens the planner. Place connected nodes, edit their positions and
 directions, split curves, and add parallel tracks. Curve, Straight, Free
 through-point and Free Bézier modes cover different editing needs.
 
 Plans are visible only while the Plan Gun is open. Personal plans belong to
 their player; shared plans can be edited and built by everyone. Plans are saved
 with the world. The K menu supports automatic loading on selection, duplication,
-renaming, parallel offsets, segment lengths and automatic block signals.
+renaming, deletion with confirmation, parallel offsets and construction settings.
+Choose rails, pipes, belts or hypertubes independently for the main line and each
+parallel, with separate segment lengths for each type. Block signals apply only
+to rail lines.
 
-Use **Build full plan** to validate the routes and construct rails with normal
+Use **Build full plan** to validate the routes and construct the selected line types with normal
 inventory/Dimensional Depot costs. Planning itself consumes no materials.
 
 ## Painting and undo
 
 In the Customizer, **R** switches spread between Default and Connected. **K**
-configures matching and the object limit; the default is 64.
+configures matching and the object limit; the default is 64. Connected selection
+and painting also find buildings inside blueprint designers.
 
 **Ctrl+Z / Ctrl+Y** undo and redo construction in Build, deletion in Dismantle,
 and plan edits in Plan. Transform has its own **Z / Y** history. Histories count
@@ -122,7 +126,7 @@ actions rather than individual objects and last for the session.
 - Windows client and dedicated-server target availability is shown on the release.
 - A selection is limited to **2,048 buildings**. Larger operations are rejected.
 - Exact overlapping lightweight buildings may be ambiguous for grouping or undo.
-- Groups and rail plans are mod save data. Removing the mod is not a verified
+- Groups and plans are mod save data. Removing the mod is not a verified
   lossless migration; keep a backup if you intend to uninstall it.
 - This is a building toolkit. Skill progression is not implemented.
 

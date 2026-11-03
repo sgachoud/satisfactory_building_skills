@@ -2,11 +2,11 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, Group, Connected and Volume selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.10.14`.
+The mod reference is `BuildingSkills`; the development version is `0.11.0`.
 
-The **Plan** gun designs rail paths before construction, with named personal or
-shared plans, editable nodes and curves, parallel tracks, configurable segment
-lengths and automatic block signals. See [Plan gun](docs/PLAN.md).
+The **Plan** gun designs rail, pipe, belt and hypertube paths before construction, with named personal or
+shared plans, editable nodes and curves, mixed parallel lines, configurable segment
+lengths per type and automatic block signals on rails. See [Plan gun](docs/PLAN.md).
 
 ## Controls
 
@@ -141,7 +141,7 @@ the native saved transforms directly. Mutations are validated on the server; all
 peers need the mod. Group renaming and skill progression are not implemented.
 
 The mod's own world-save fields contain the group hierarchy, member references,
-pivots, schema versions and named personal/shared rail plans with their geometry
+pivots, schema versions and named personal/shared plans with their geometry
 and build specifications. Building positions, rotations, scales and edited network
 geometry live in native building records. Selection, undo/redo history, replication
 snapshots, copy clipboards and blueprint Save sessions are transient. Blueprints are separate files;
@@ -219,7 +219,7 @@ connection updates and undo/redo, input/output-aware mirror orientation, and
 lift deletion archive safeguards, bounded selection uploads and replies, and
 large-selection regression coverage, split-rail endpoint connection checks,
 and blueprint conveyor-chain isolation with an imported-blueprint regression,
-plus named personal/shared rail plans, node and curve editing, parallel paths,
+plus named personal/shared plans, node and curve editing, parallel paths,
 and server-validated plan construction.
 Release preparation also covered packaging checks, listing text, an original
 geometric icon and banner, the gameplay-video shot list, and trimming/converting

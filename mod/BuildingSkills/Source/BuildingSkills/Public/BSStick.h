@@ -81,6 +81,8 @@ public:
     static void PlanStart(class AFGSplineHologram* Hologram, const struct FBSPlanNode* Node);
     static class UFGRailroadTrackConnectionComponent* PlanEnd(class AFGSplineHologram* Hologram);
     static void PlanGeometry(class AFGSplineHologram* Hologram, const TArray<FSplinePointData>& WorldPoints);
+    static class UObject* PlanSupport(class AFGSplineHologram* Hologram, int32 End, class UObject* Target);
+    static bool ValidatePlan(class AFGSplineHologram* Hologram, class UFGInventoryComponent* Inventory, class UObject* Start, class UObject* End);
     static FVector PlanLimits(class AFGSplineHologram* Hologram);
 };
 

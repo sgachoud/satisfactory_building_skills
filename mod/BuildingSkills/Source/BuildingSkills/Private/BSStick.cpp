@@ -6,6 +6,8 @@
 #include "Hologram/FGPipelineHologram.h"
 #include "Hologram/FGRailroadTrackHologram.h"
 #include "Hologram/FGPoleHologram.h"
+#include "Hologram/FGPipelinePoleHologram.h"
+#include "Hologram/FGConveyorPoleHologram.h"
 #include "Equipment/FGBuildGun.h"
 #include "Equipment/FGBuildGunBuild.h"
 #include "FGCharacterPlayer.h"
@@ -118,13 +120,59 @@ void FBSStick::PlanStart(AFGSplineHologram* Base,const FBSPlanNode* N)
 void FBSStick::PlanGeometry(AFGSplineHologram* H,const TArray<FSplinePointData>& World)
 {
     H->Tags.AddUnique(TEXT("BuildingSkillsPlanConstruction"));
-    H->SetActorTransform(FTransform(World[0].Location)); H->mBuildStep=ESplineHologramBuildStep::SHBS_PlacePoleOrSnapEnding; H->mActivePointIdx=World.Num()-1;
+    H->SetActorTransform(FTransform(World[0].Location)); H->mBuildStep=ESplineHologramBuildStep::SHBS_AdjustPole; H->mActivePointIdx=World.Num()-1;
+    if (!H->IsA<AFGRailroadTrackHologram>()) for (auto* Child:H->GetHologramChildren()) Child->SetDisabled(true);
     auto Local=World; for (auto& P:Local) P.Location-=World[0].Location;
+    if (auto* Belt=Cast<AFGConveyorBeltHologram>(H))
+    { Belt->mConnectionComponents[0]->SetDirection(EFactoryConnectionDirection::FCD_INPUT); Belt->mConnectionComponents[1]->SetDirection(EFactoryConnectionDirection::FCD_OUTPUT); }
     SetPoints(H,Local); H->SetActorHiddenInGame(false);
     if (auto* R=Cast<AFGRailroadTrackHologram>(H)) { R->mFloorData.Reset(); for (const auto& P:Local) R->mFloorData.Add(P.Location); }
 }
+UObject* FBSStick::PlanSupport(AFGSplineHologram* H,int32 End,UObject* Target)
+{
+    if (H->IsA<AFGRailroadTrackHologram>()) return nullptr;
+    // Real world snaps survive into construction. Shared preview supports are
+    // borrowed during validation only; no hologram pointer enters a buildable.
+    if (Target)
+    {
+        auto* Component=Cast<USceneComponent>(Target);
+        Snap(H,End,Component && !Component->GetOwner()->IsA<AFGHologram>() ? Target : nullptr);
+        return Target;
+    }
+    AFGPoleHologram* Pole=nullptr; USceneComponent* Port=nullptr; USceneComponent* ParentPort=nullptr;
+    if (auto* Pipe=Cast<AFGPipelineHologram>(H)) if (auto* Support=Pipe->mChildPoleHologram[End].Get())
+    {
+        Pole=Support; ParentPort=Pipe->mConnectionComponents[End];
+        Support->SetDisabled(false); Support->SetActorHiddenInGame(false);
+        Support->SnapToConnection(Pipe->mConnectionComponents[End],Pipe); Port=Support->GetSnapConnection();
+    }
+    if (auto* Belt=Cast<AFGConveyorBeltHologram>(H)) if (auto* Support=Belt->mChildPoleHologram[End].Get())
+    {
+        Pole=Support; ParentPort=Belt->mConnectionComponents[End];
+        Support->SetDisabled(false); Support->SetActorHiddenInGame(false);
+        Support->SnapToConnection(Belt->mConnectionComponents[End],Belt); Port=Support->GetSnapConnection();
+    }
+    if (!Pole || !Port || !ParentPort) return nullptr;
+    Pole->SetActorLocation(Pole->GetActorLocation()+ParentPort->GetComponentLocation()-Port->GetComponentLocation());
+    Pole->ResetConstructDisqualifiers();
+    return Port;
+}
+bool FBSStick::ValidatePlan(AFGSplineHologram* H,UFGInventoryComponent* Inventory,UObject* Start,UObject* End)
+{
+    UObject* Saved[]={Snap(H,0),Snap(H,1)};
+    ON_SCOPE_EXIT { Snap(H,0,Saved[0]); Snap(H,1,Saved[1]); };
+    UObject* Targets[]={Start,End};
+    for (int32 I=0;I<2;++I) if (auto* C=Cast<USceneComponent>(Targets[I]))
+        if (auto* Owner=Cast<AFGHologram>(C->GetOwner()); Owner && Owner->GetParentHologram()!=H) Snap(H,I,C);
+    H->ResetConstructDisqualifiers(); H->ValidatePlacementAndCost(Inventory); return H->CanConstruct();
+}
 FVector FBSStick::PlanLimits(AFGSplineHologram* H)
-{ auto* R=Cast<AFGRailroadTrackHologram>(H); return R ? FVector(R->mMinBendRadius,R->mMaxGrade,R->mMinLength) : FVector(2000,35,100); }
+{
+    if (auto* R=Cast<AFGRailroadTrackHologram>(H)) return FVector(R->mMinBendRadius,R->mMaxGrade,R->mMinLength);
+    if (auto* B=Cast<AFGConveyorBeltHologram>(H)) return FVector(B->mBendRadius,B->mMaxIncline,100);
+    if (auto* P=Cast<AFGPipelineHologram>(H)) return FVector(P->mMinBendRadius,90,AFGPipelineHologram::MINIMUM_HOLOGRAM_LENGTH);
+    return FVector(2000,35,100);
+}
 
 AFGSplineHologram* FBSStick::Active(UBSEditModeComponent* E)
 {
@@ -407,7 +455,8 @@ void FBSStick::Install()
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildableHologram,CheckValidFloor,[](auto& Scope,AFGBuildableHologram* H) {
         // Stick deliberately permits floating support poles. Keep floor checks
         // for ordinary placement and every unrelated building unchanged.
-        if (H->IsA<AFGPoleHologram>() && StickRoot(H->GetParentHologram())) Scope.Cancel();
+        if (H->IsA<AFGPoleHologram>() && (StickRoot(H->GetParentHologram()) ||
+            (H->GetParentHologram() && H->GetParentHologram()->ActorHasTag(TEXT("BuildingSkillsPlanConstruction"))))) Scope.Cancel();
     });
     auto CompleteSnappedRoute=[](auto& Scope,auto* H,bool Released) {
         const auto* State=States.Find(H);

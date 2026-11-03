@@ -10,6 +10,10 @@ touching at faces, edges or corners. Each visited box expands on all sides by th
 gap in meters, plus 0.1 cm for placement rounding. Only that reference box expands;
 the gap is not doubled. Rotation and scale contribute to the world bounding box.
 There is no layer filter, so touching floors above/below can be reached too.
+Inside a blueprint designer, the same search uses that designer's replicated
+contents list. Actor-backed foundations and machines are included even when they
+are absent from the normal world spatial index. The same touching, gap and filter rules apply across the designer boundary.
+The same membership is used for selection, paint previews and authoritative paint.
 
 The settings apply to all three entry points for the current player session:
 

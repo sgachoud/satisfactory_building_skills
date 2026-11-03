@@ -197,9 +197,9 @@ bool FBSPlanSegments::Split(const TArray<FSplinePointData>& Points,double Reques
     if (EndKeys) EndKeys->Reset();
     auto Fail=[&](const TCHAR* Reason) { Error=FString(Reason)+TEXT(" Nothing was built. Change the segment length or remainder policy."); return false; };
     if (Points.Num()<2 || !FMath::IsFinite(Requested) || Requested<0 || !FMath::IsFinite(Maximum) || Maximum<=Minimum || uint8(Policy)>2)
-        return Fail(TEXT("Invalid rail segment settings."));
+        return Fail(TEXT("Invalid spline segment settings."));
     const double Target=Requested==0 ? Maximum : Requested;
-    if (Target<Minimum || Target>Maximum) return Fail(TEXT("The requested length is outside the native rail limits."));
+    if (Target<Minimum || Target>Maximum) return Fail(TEXT("The requested length is outside the native spline limits."));
     auto* Curve=NewObject<USplineComponent>(); Curve->ReparamStepsPerSegment=128; Curve->ClearSplinePoints(false);
     for (int32 I=0;I<Points.Num();++I)
         Curve->AddPoint(FSplinePoint(I,Points[I].Location,Points[I].ArriveTangent,Points[I].LeaveTangent,
@@ -223,11 +223,11 @@ bool FBSPlanSegments::Split(const TArray<FSplinePointData>& Points,double Reques
             if (Remaining<=Maximum+.01) Lengths.Add(Remaining);
             else { Lengths.Add(Remaining*.5); Lengths.Add(Remaining*.5); }
         }
-        else return Fail(TEXT("The full path is shorter than the minimum rail length."));
+        else return Fail(TEXT("The full path is shorter than the minimum spline length."));
     }
     else for (int32 I=0;I<Count;++I) Lengths.Add(Length/Count);
     for (double Size:Lengths) if (Size<Minimum-.01 || Size>Maximum+.01)
-        return Fail(TEXT("The chosen remainder policy produces a segment outside the native rail limits."));
+        return Fail(TEXT("The chosen remainder policy produces a segment outside the native spline limits."));
     TArray<TArray<FSplinePointData>> Parts;
     double Distance=0;
     for (int32 I=0;I<Lengths.Num();++I)
@@ -242,7 +242,7 @@ bool FBSPlanSegments::Split(const TArray<FSplinePointData>& Points,double Reques
 }
 
 bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maximum,
-    TArray<FBSPlanSegmentedPath>& Out,FString& Error,const TSet<FGuid>& ForcedEndpoints)
+    TArray<FBSPlanSegmentedPath>& Out,FString& Error,const TSet<FGuid>& ForcedEndpoints,const TArray<FBSPlanLengthLimits>& LineLimits)
 {
     Out.Reset();
     TArray<FBSPlanSegmentedPath> Prepared;
@@ -251,16 +251,24 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
     if (!Paths(Plan,PathsToSplit,Error,true,ForcedEndpoints,Sync)) return false;
     auto Fail=[&](const TCHAR* Reason) { Error=FString(Reason)+TEXT(" Nothing was built."); return false; };
     if (!FMath::IsFinite(Minimum) || !FMath::IsFinite(Maximum) || Minimum<=0 || Maximum<=Minimum)
-        return Fail(TEXT("Invalid native rail length limits."));
+        return Fail(TEXT("Invalid native spline length limits."));
+    auto Spec=[&](int32 Index) { return LineLimits.IsValidIndex(Index) ? LineLimits[Index] : FBSPlanLengthLimits{Minimum,Maximum,Plan.SegmentLength}; };
+    if (!LineLimits.IsEmpty() && LineLimits.Num()!=Plan.Parallels.Num()+1) return Fail(TEXT("Missing line length settings."));
+    for (const auto& L:LineLimits)
+        if (!FMath::IsFinite(L.Minimum) || !FMath::IsFinite(L.Maximum) || L.Minimum<=0 || L.Maximum<=L.Minimum ||
+            !FMath::IsFinite(L.Requested) || (L.Requested!=0 && (L.Requested<L.Minimum || L.Requested>L.Maximum)))
+            return Fail(TEXT("A segment length is outside its building type's limits."));
+    const auto MainSpec=Spec(0); Minimum=MainSpec.Minimum; Maximum=MainSpec.Maximum;
     int32 TotalParts=0;
     if (!Sync)
     {
         for (auto& Path:PathsToSplit)
         {
             auto& Result=Prepared.AddDefaulted_GetRef(); Result.Path=MoveTemp(Path);
-            if (!Split(Result.Path.Points,Plan.SegmentLength,Plan.Remainder,Minimum,Maximum,Result.Parts,Error)) return false;
+            const auto L=Spec(Result.Path.Parallel);
+            if (!Split(Result.Path.Points,L.Requested,Plan.Remainder,L.Minimum,L.Maximum,Result.Parts,Error)) return false;
             TotalParts+=Result.Parts.Num();
-            if (TotalParts>2048) return Fail(TEXT("This plan exceeds the build limit of 2048 rail segments."));
+            if (TotalParts>2048) return Fail(TEXT("This plan exceeds the build limit of 2048 spline segments."));
         }
         Out=MoveTemp(Prepared); return true;
     }
@@ -275,7 +283,7 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
         auto* MainCurve=MeasurePlanCurve(Main.Points);
         const double MainLength=MainCurve->GetSplineLength();
         if (!FMath::IsFinite(MainLength) || MainLength<Minimum)
-            return Fail(TEXT("A synchronized main path is shorter than the minimum rail length."));
+            return Fail(TEXT("A synchronized main path is shorter than the minimum spline length."));
         TArray<int32> SectionEnds;
         for (int32 I=1;I<Main.Nodes.Num();++I)
             if (I+1==Main.Nodes.Num() || ForcedEndpoints.Contains(Main.Nodes[I].Id)) SectionEnds.Add(Main.NodePointIndices[I]);
@@ -306,7 +314,7 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
             const double T=(Key-Path.MainKeys[A])/(Path.MainKeys[A+1]-Path.MainKeys[A]);
             return M.Leading+A+FMath::Clamp(T,0.0,1.0);
         };
-        double Target=Plan.SegmentLength==0 ? Maximum : Plan.SegmentLength;
+        double Target=MainSpec.Requested==0 ? Maximum : MainSpec.Requested;
         bool Fitted=false;
         for (int32 Attempt=0;Attempt<128 && !Fitted;++Attempt)
         {
@@ -329,15 +337,15 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
             if (ReferenceEnd>MainLength+.001)
             {
                 if (EndSpacing<=.001 || (ReferenceEnd-MainLength)/EndSpacing>2048)
-                    return Fail(TEXT("The parallel extension exceeds the rail segment limit."));
+                    return Fail(TEXT("The parallel extension exceeds the spline segment limit."));
                 for (double At=MainLength+EndSpacing;At<ReferenceEnd-.001;At+=EndSpacing) ReferenceCuts.Add(At);
                 ReferenceCuts.Add(ReferenceEnd);
             }
             TArray<TArray<double>> AllKeys;
-            double Longest=0; bool TooShort=false; int32 Count=0;
+            double WorstRatio=1; bool TooShort=false; int32 Count=0;
             for (int32 I=0;I<Measures.Num();++I)
             {
-                const auto& Path=PathsToSplit[First+I]; const auto& M=Measures[I];
+                const auto& Path=PathsToSplit[First+I]; const auto& M=Measures[I]; const auto L=Spec(Path.Parallel);
                 struct FCut { double Station; bool Required; };
                 TArray<FCut> Cuts{{Path.StartOffset,true},{MainLength,true}};
                 for (double At:ReferenceCuts)
@@ -362,26 +370,26 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
                 // A stagger may leave a tiny terminal remainder. Merge that
                 // optional last joint, then include the enlarged tail in the
                 // shared maximum-length check; never remove a live junction.
-                while (Cuts.Num()>2 && !Cuts[Cuts.Num()-2].Required && Size(Cuts.Num()-2,Cuts.Num()-1)<Minimum-.01)
+                while (Cuts.Num()>2 && !Cuts[Cuts.Num()-2].Required && Size(Cuts.Num()-2,Cuts.Num()-1)<L.Minimum-.01)
                     Cuts.RemoveAt(Cuts.Num()-2);
                 auto& Keys=AllKeys.AddDefaulted_GetRef();
                 for (int32 K=0;K<Cuts.Num();++K)
                 {
                     Keys.Add(KeyAt(I,Cuts[K].Station));
-                    if (K>0) { const double Length=Size(K-1,K); Longest=FMath::Max(Longest,Length); TooShort |= Length<Minimum-.01; }
+                    if (K>0) { const double Length=Size(K-1,K); WorstRatio=FMath::Max(WorstRatio,Length/L.Maximum); TooShort |= Length<L.Minimum-.01; }
                 }
                 Count+=Keys.Num()-1;
             }
-            if (TotalParts+Count>2048) return Fail(TEXT("Synchronized parallels exceed the build limit of 2048 rail segments."));
-            if (Longest>Maximum+.01)
+            if (TotalParts+Count>2048) return Fail(TEXT("Synchronized parallels exceed the build limit of 2048 spline segments."));
+            if (WorstRatio>1.000001)
             {
                 // Remainder policies still choose the cuts, but use a shorter
                 // shared target when the outside track would be too long.
-                const double Reduced=FMath::Max(Minimum,Target*FMath::Min(.95,Maximum/Longest*.999));
-                if (Reduced>=Target-.001) return Fail(TEXT("The parallel offsets cannot fit within the rail length limits."));
+                const double Reduced=FMath::Max(Minimum,Target*FMath::Min(.95,1/WorstRatio*.999));
+                if (Reduced>=Target-.001) return Fail(TEXT("The parallel offsets cannot fit within the spline length limits."));
                 Target=Reduced; continue;
             }
-            if (TooShort) return Fail(TEXT("Synchronizing these offsets produces a rail below the minimum length. Adjust the offsets or segment length, or disable synchronization."));
+            if (TooShort) return Fail(TEXT("Synchronizing these offsets produces a spline below the minimum length. Adjust the offsets or segment length, or disable synchronization."));
             for (int32 I=0;I<Measures.Num();++I)
             {
                 auto& Result=Prepared.AddDefaulted_GetRef(); Result.Path=PathsToSplit[First+I];
@@ -392,7 +400,7 @@ bool FBSPlanSegments::Prepare(const FBSRailPlan& Plan,double Minimum,double Maxi
             }
             TotalParts+=Count; Fitted=true;
         }
-        if (!Fitted) return Fail(TEXT("Could not fit synchronized rail segments within the native length limits."));
+        if (!Fitted) return Fail(TEXT("Could not fit synchronized spline segments within the native length limits."));
         First=Last;
     }
     Out=MoveTemp(Prepared); return true;

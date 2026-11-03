@@ -119,17 +119,36 @@ bool RunBuildingSkillsPlanParallelChecks(TFunctionRef<void(const TCHAR*,bool)> C
     Plan=TurnPlan(); Plan.ParallelStartOffsets={40000};
     Test(TEXT("Offsets consuming the main path fail atomically"),!FBSPlanSegments::Prepare(Plan,100,8000,Built,Error) && Built.IsEmpty());
 
-    Plan=TurnPlan(); Plan.SyncParallelsInTurns=false; const auto Before=Plan;
-    FBSPlanCommand C; C.Action=EBSPlanAction::Segments; C.SegmentLength=8000; C.SyncParallelsInTurns=true;
+    Plan=TurnPlan(); Plan.SyncParallelsInTurns=false;
+    Plan.Construction.Main=EBSPlanBuildable::Rail;
+    Plan.Construction.Parallels={EBSPlanBuildable::PipeMk2,EBSPlanBuildable::BeltMk6};
+    Plan.Construction.PipeLength=2000; Plan.Construction.BeltLength=3000; Plan.Construction.HypertubeLength=4000;
+    const TArray<FBSPlanLengthLimits> MixedLimits{{1000,10000,8000},{100,5600,2000},{100,5600,3000}};
+    bool Mixed=FBSPlanSegments::Prepare(Plan,1000,10000,Built,Error,{},MixedLimits) && Built.Num()==3;
+    if (Mixed) Mixed=Built[1].Parts.Num()>Built[0].Parts.Num() && Built[2].Parts.Num()>Built[0].Parts.Num();
+    Test(TEXT("Mixed lines use independent requested lengths"),Mixed);
+    Plan.SyncParallelsInTurns=true;
+    Mixed=FBSPlanSegments::Prepare(Plan,1000,10000,Built,Error,{},MixedLimits) && Aligned();
+    for (const auto& Path:Built) for (const auto& Part:Path.Parts)
+    { const double L=MeasureParallelTest(Part)->GetSplineLength(); const auto& Limit=MixedLimits[Path.Path.Parallel]; Mixed &= L>=Limit.Minimum-.5 && L<=Limit.Maximum+.5; }
+    Test(TEXT("Mixed synchronized turns respect each type's limits and aligned joints"),Mixed);
+    auto InvalidLimits=MixedLimits; InvalidLimits[1].Requested=6000;
+    Test(TEXT("An over-limit non-rail setting rejects the complete plan"),!FBSPlanSegments::Prepare(Plan,1000,10000,Built,Error,{},InvalidLimits) && Built.IsEmpty());
+    Test(TEXT("Old plans retain rail lines and native non-rail length defaults"),FBSRailPlan{}.Construction.Line(0)==EBSPlanBuildable::Rail && FBSRailPlan{}.Construction.Line(1)==EBSPlanBuildable::Rail && FBSRailPlan{}.Construction.PipeLength==0);
+    auto InvalidPlan=Plan; InvalidPlan.Construction.Main=EBSPlanBuildable(255);
+    Test(TEXT("Unknown construction types are rejected"),!FBSPlanMath::Valid(InvalidPlan));
+    Plan.SyncParallelsInTurns=false; const auto Before=Plan;
+    FBSPlanCommand C; C.Action=EBSPlanAction::Segments; C.SegmentLength=8000; C.SyncParallelsInTurns=true; C.Construction=Plan.Construction; C.Construction.Main=EBSPlanBuildable::Hypertube;
     Test(TEXT("Build specification applies synchronization"),FBSPlanMath::Apply(Plan,C,Error) && Plan.SyncParallelsInTurns);
     FBSPlanHistory History; History.Record(Before,Plan,10);
     Test(TEXT("Undo and redo restore the synchronization option"),History.Restore(Plan,false,Plan.Revision,10,Error) && !Plan.SyncParallelsInTurns &&
-        History.Restore(Plan,true,Plan.Revision,10,Error) && Plan.SyncParallelsInTurns);
+        History.Restore(Plan,true,Plan.Revision,10,Error) && Plan.SyncParallelsInTurns && Plan.Construction.Main==EBSPlanBuildable::Hypertube && Plan.Construction.Parallels==Before.Construction.Parallels);
     TArray<uint8> Bytes; FMemoryWriter Writer(Bytes); FObjectAndNameAsStringProxyArchive Save(Writer,false); Save.ArIsSaveGame=true;
     FBSRailPlan::StaticStruct()->SerializeItem(Save,&Plan,nullptr);
     FMemoryReader Reader(Bytes); FObjectAndNameAsStringProxyArchive Load(Reader,true); Load.ArIsSaveGame=true;
     FBSRailPlan Restored; FBSRailPlan::StaticStruct()->SerializeItem(Load,&Restored,nullptr);
     Test(TEXT("World save retains synchronized parallel settings"),!Save.IsError() && !Load.IsError() && Restored.SyncParallelsInTurns);
+    Test(TEXT("World save retains line types and lengths"),Restored.Construction.Main==EBSPlanBuildable::Hypertube && Restored.Construction.Parallels==Plan.Construction.Parallels && Restored.Construction.PipeLength==2000 && Restored.Construction.BeltLength==3000 && Restored.Construction.HypertubeLength==4000);
     return Passed;
 }
 

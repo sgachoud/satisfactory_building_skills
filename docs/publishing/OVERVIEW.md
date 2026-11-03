@@ -3,7 +3,7 @@
 **Edit your factory. Plan what comes next.**
 
 Group and transform buildings, copy layouts, repeat construction, paint connected
-structures and plan rail networks.
+structures and plan rail, pipe, belt and hypertube networks.
 
 Open the **Edit Gun with Alt+E**, the **Plan Gun with Alt+P**, and the current
 tool's settings with **K**. All shortcuts are configurable.
@@ -47,19 +47,21 @@ connected segments.
 
 ## Paint connected structures
 
-Preview and apply materials or swatches to matching connected buildings.
+Preview and apply materials or swatches to matching connected buildings,
+including those inside blueprint designers.
 
 ![Changing materials across connected foundations](https://raw.githubusercontent.com/sgachoud/satisfactory_building_skills/main/docs/publishing/media/connected_spread.gif)
 
 [Connected selection and painting](https://github.com/sgachoud/satisfactory_building_skills/blob/main/docs/CONNECTED.md)
 
-## Plan rail networks
+## Plan transport networks
 
-Draw and edit a route, then build it with parallel tracks and block signals.
+Draw and edit routes for rails, pipes, belts and hypertubes, with independent
+segment lengths and parallel lines. Rail lines can include block signals.
 
 ![Drawing a rail plan and building the resulting tracks](https://raw.githubusercontent.com/sgachoud/satisfactory_building_skills/main/docs/publishing/media/rail_planning.gif)
 
-[Rail planning guide](https://github.com/sgachoud/satisfactory_building_skills/blob/main/docs/PLAN.md)
+[Planning guide](https://github.com/sgachoud/satisfactory_building_skills/blob/main/docs/PLAN.md)
 
 ## Also included
 
@@ -69,11 +71,11 @@ Draw and edit a route, then build it with parallel tracks and block signals.
 
 ## Before you install
 
-**Early access · 0.10.14 · SML 3.12.** Back up important saves before large edits.
+**Early access · 0.11.0 · SML 3.12.** Back up important saves before large edits.
 In multiplayer, the server and every client need the same mod version.
 Windows Steam/Epic clients and Windows/Linux dedicated-server packages are included.
 
-Groups and rail plans are saved with the world; undo histories and transformers
+Groups and plans are saved with the world; undo histories and transformers
 last for the session. Blueprint scale preservation during placement requires
 Building Skills. Uninstalling is not a verified lossless migration.
 

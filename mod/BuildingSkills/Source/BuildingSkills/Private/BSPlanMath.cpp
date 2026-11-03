@@ -37,8 +37,22 @@ FVector FBSPlanMath::ConnectionDirection(const FBSRailPlan& P, FGuid Id)
     }
     return N->Direction.GetSafeNormal();
 }
+double FBSPlanConstruction::Length(EBSPlanBuildable Type,double RailLength) const
+{
+    if (Type==EBSPlanBuildable::Rail) return RailLength;
+    if (Type==EBSPlanBuildable::Pipe || Type==EBSPlanBuildable::PipeMk2) return PipeLength;
+    return Type==EBSPlanBuildable::Hypertube ? HypertubeLength : BeltLength;
+}
+bool FBSPlanConstruction::Valid(int32 ParallelCount) const
+{
+    if (uint8(Main)>uint8(EBSPlanBuildable::Hypertube) || Parallels.Num()>ParallelCount) return false;
+    for (auto Type:Parallels) if (uint8(Type)>uint8(EBSPlanBuildable::Hypertube)) return false;
+    for (double V:{PipeLength,BeltLength,HypertubeLength}) if (!FMath::IsFinite(V) || V<0 || V>1.e8) return false;
+    return true;
+}
 bool FBSPlanMath::Valid(const FBSRailPlan& P)
 {
+    if (!P.Construction.Valid(P.Parallels.Num())) return false;
     if (!FMath::IsFinite(P.SegmentLength) || P.SegmentLength<0 || P.SegmentLength>1.e8 || uint8(P.Remainder)>2) return false;
     if (P.SignalEvery<1 || P.SignalEvery>2048 || P.ParallelReversed.Num()>P.Parallels.Num() || P.ReversedEdges.Num()>P.Edges.Num()) return false;
     if (P.ParallelNodeOffsets.Num()>P.Parallels.Num() || P.ParallelStartOffsets.Num()>P.Parallels.Num()) return false;
@@ -84,7 +98,7 @@ bool FBSPlanMath::Apply(FBSRailPlan& P,const FBSPlanCommand& C,FString& Error)
     { Draft.Name=C.Name.TrimStartAndEnd(); }
     else if (C.Action==EBSPlanAction::Share) Draft.Shared=true;
     else if (C.Action==EBSPlanAction::Segments)
-    { Draft.SegmentLength=C.SegmentLength; Draft.Remainder=C.Remainder; Draft.SyncParallelsInTurns=C.SyncParallelsInTurns; Draft.PlaceBlockSignal=C.PlaceBlockSignal; Draft.SignalEvery=C.SignalEvery; Draft.LeftSideSignal=C.LeftSideSignal; }
+    { Draft.Construction.Main=C.Construction.Main; Draft.Construction.PipeLength=C.Construction.PipeLength; Draft.Construction.BeltLength=C.Construction.BeltLength; Draft.Construction.HypertubeLength=C.Construction.HypertubeLength; Draft.SegmentLength=C.SegmentLength; Draft.Remainder=C.Remainder; Draft.SyncParallelsInTurns=C.SyncParallelsInTurns; Draft.PlaceBlockSignal=C.PlaceBlockSignal; Draft.SignalEvery=C.SignalEvery; Draft.LeftSideSignal=C.LeftSideSignal; }
     else if (C.Action==EBSPlanAction::ReverseSpline)
     {
         if (C.Selection.Num()!=1) { Error=TEXT("Select exactly one spline to reverse."); return false; }
@@ -255,7 +269,7 @@ bool FBSPlanMath::Apply(FBSRailPlan& P,const FBSPlanCommand& C,FString& Error)
     }
     else if (C.Action==EBSPlanAction::Parallels)
     {
-        Draft.Parallels=C.Parallels; Draft.ParallelReversed=C.ParallelReversed;
+        Draft.Parallels=C.Parallels; Draft.Construction.Parallels=C.Construction.Parallels; Draft.ParallelReversed=C.ParallelReversed;
         Draft.ParallelNodeOffsets=C.ParallelNodeOffsets; Draft.ParallelStartOffsets=C.ParallelStartOffsets;
     }
     else if (C.Action==EBSPlanAction::Delete)

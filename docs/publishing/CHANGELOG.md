@@ -1,3 +1,14 @@
+# 0.11.0 - Mixed transport plans and blueprint designer selection
+
+- Connected selection and material/swatch spreading now work on buildings inside blueprint designers.
+- Adds Delete plan with confirmation in the saved-plans menu.
+- Main and parallel lines can independently build rails, pipes, belts or hypertubes, including native pipe/belt tiers.
+- Adds separate segment lengths for each type, native endpoint connections, and belt flow following direction arrows.
+- Mixed synchronized parallels respect every selected type's length limits; block signals apply only to rail lines.
+- Construction choices persist with plans and participate in duplication and editing undo/redo.
+
+Update both client and server. Validation is recorded in docs/TESTING.md.
+
 # 0.10.14 — Blueprint construction crash
 
 - Fixes a server crash in blueprint construction caused by treating a construction-message interface pointer as a hologram actor.

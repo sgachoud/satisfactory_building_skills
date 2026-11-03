@@ -11,7 +11,6 @@ void UBSPlanComponent::Draw()
 {
     const auto* CurrentPlan=Current();
     auto* E=GetOwner()->FindComponentByClass<UBSEditModeComponent>();
-    const FVector Limits=FBSStick::PlanLimits(FBSStick::Active(E));
     const FLinearColor Colors[]={FLinearColor(.05,.7,1),FLinearColor(1,.03,.03),FLinearColor(1,.85,.05),FLinearColor(.3,.5,.6),FLinearColor(.05,.7,1),FLinearColor(1,.85,.05),FLinearColor(.9,.2,1),FLinearColor(.15,1,.5),FLinearColor(1,.03,.03),FLinearColor(.15,1,.5),FLinearColor(.2,1,.8),FLinearColor(.2,1,.8)};
     while (Visuals.Num()<12)
     {
@@ -39,7 +38,8 @@ void UBSPlanComponent::Draw()
     if (Rebuild) ParallelHoverNodes.Reset();
     if (Rebuild) for (int32 I=0;I<Visuals.Num();++I) if (I<7 || I>=10) Visuals[I]->ClearInstances();
     for (int32 I=7;I<10;++I) Visuals[I]->ClearInstances();
-    auto Curve=[&](const TArray<FSplinePointData>& Points,int32 Color,bool Preview,const FBSPlanNode* A=nullptr,const FBSPlanNode* B=nullptr) {
+    auto Curve=[&](const TArray<FSplinePointData>& Points,int32 Color,bool Preview,const FBSPlanNode* A=nullptr,const FBSPlanNode* B=nullptr,EBSPlanBuildable Type=EBSPlanBuildable::Rail) {
+        const FVector Limits=FBSPlanBuild::ShapeLimits(Type);
         double Length=0;
         for (int32 I=1;I<Points.Num();++I) for (int32 S=0;S<16;++S) Length+=(FBSPlanMath::Point(Points[I-1],Points[I],(S+1)/16.0)-FBSPlanMath::Point(Points[I-1],Points[I],S/16.0)).Size();
         for (int32 I=1;I<Points.Num();++I)
@@ -66,7 +66,7 @@ void UBSPlanComponent::Draw()
             if (Path.Parallel>0)
             {
                 bool Selected=false; for (FGuid Id:Path.Edges) Selected |= Selection.Contains(Id) || HoverEdge==Id;
-                Curve(Path.Points,!Path.PlacementValid ? 1 : !IsCurrent ? 3 : Selected ? 2 : 0,false);
+                Curve(Path.Points,!Path.PlacementValid ? 1 : !IsCurrent ? 3 : Selected ? 2 : 0,false,nullptr,nullptr,P.Construction.Line(Path.Parallel));
                 for (const auto& Node:Path.Nodes)
                 {
                     if (DrawnParallelNodes.FindOrAdd(Path.Parallel).Contains(Node.Id)) continue;
@@ -97,7 +97,7 @@ void UBSPlanComponent::Draw()
         {
             const int32 Color=!IsCurrent ? 3 : Selection.Contains(Edge.Id) || HoverEdge==Edge.Id ? 2 : 0;
             const auto Points=FBSPlanMath::Curve(P,Edge);
-            Curve(Points,Color,false,FBSPlanMath::Node(P,Edge.Start),FBSPlanMath::Node(P,Edge.End));
+            Curve(Points,Color,false,FBSPlanMath::Node(P,Edge.Start),FBSPlanMath::Node(P,Edge.End),P.Construction.Main);
             if (Editing && IsCurrent && (Edge.Trace==EBSPlanTrace::Free || Edge.Trace==EBSPlanTrace::Bezier))
             {
                 FVector Prev=FBSPlanMath::Node(P,Edge.Start)->Position;
@@ -121,7 +121,7 @@ void UBSPlanComponent::Draw()
             if (!FBSPlanMath::Node(Draft,N.Id)) Draft.Nodes.Add(N);
             FBSPlanEdge Edge; Edge.Id=FGuid::NewGuid(); Edge.Start=LastNode; Edge.End=N.Id; for (const auto& Point:AimRoute) Edge.Route.Emplace(Point);
             FBSPlanMath::InheritTangents(Draft,Edge);
-            auto Points=FBSPlanMath::Curve(Draft,Edge); Curve(Points,7,true);
+            auto Points=FBSPlanMath::Curve(Draft,Edge); Curve(Points,7,true,nullptr,nullptr,Draft.Construction.Main);
             if (Edge.Start!=Edge.End)
             {
                 Draft.Edges.Add(Edge);
@@ -129,7 +129,7 @@ void UBSPlanComponent::Draw()
                 if (FBSPlanSegments::Paths(Draft,PreviewPaths,Error,false))
                     for (const auto& Path:PreviewPaths) if (Path.Parallel>0 && Path.Edges.Contains(Edge.Id))
                     {
-                        Curve(Path.Points,Path.PlacementValid ? 7 : 8,true);
+                        Curve(Path.Points,Path.PlacementValid ? 7 : 8,true,nullptr,nullptr,Draft.Construction.Line(Path.Parallel));
                         for (const auto& Node:Path.Nodes) if (Node.Id==N.Id) Sphere(9,Node.Position,35);
                     }
             }

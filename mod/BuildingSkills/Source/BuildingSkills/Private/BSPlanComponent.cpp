@@ -181,7 +181,10 @@ bool UBSPlanComponent::Receive(TArray<FBSRailPlan> Incoming,FGuid Preferred,cons
     if (!Current())
     {
         if (auto* Personal=Plans.FindByPredicate([](const auto& P) { return !P.Shared; })) CurrentId=Personal->Id;
-        else if (Active) PendingCreate=true;
+        else if (!Plans.IsEmpty()) CurrentId=Plans[0].Id;
+        // A valid missing ID was deleted. Keep the list empty until New plan,
+        // rather than immediately replacing a deleted final plan with a draft.
+        else if (Active && !CurrentId.IsValid()) PendingCreate=true;
     }
     Selection.RemoveAll([&](FGuid Id) { const auto* P=Current(); return !P || (!FBSPlanMath::Node(*P,Id) && !P->Edges.ContainsByPredicate([&](const auto& E) { return E.Id==Id; })); });
     if (auto* P=Current(); P && LastNode.IsValid() && !FBSPlanMath::Node(*P,LastNode))
@@ -371,24 +374,8 @@ void UBSPlanComponent::AimAndHit()
         }
     }
     else if (Start) Aim.Direction=FBSStickPath::EndpointDirection(StartDirection,EditState && EditState->StickTiltSet,EditState ? EditState->StickTilt : 0,EditState ? EditState->StickYaw : 0);
-    // Snap to existing native rail connection components near the aim point,
-    // without constructing or updating any rail hologram.
-    if (HaveAim && !Multi(this))
-    {
-        TSet<AFGBuildableRailroadTrack*> Rails;
-        if (auto* Rail=Cast<AFGBuildableRailroadTrack>(HitResult.GetActor())) Rails.Add(Rail);
-        TArray<FOverlapResult> Nearby;
-        GetWorld()->OverlapMultiByObjectType(Nearby,Aim.Position,FQuat::Identity,FCollisionObjectQueryParams::AllObjects,FCollisionShape::MakeSphere(200),FCollisionQueryParams(SCENE_QUERY_STAT(BSPlanSnap),false,Player(this)));
-        for (const auto& Result:Nearby) if (auto* Rail=Cast<AFGBuildableRailroadTrack>(Result.GetActor())) Rails.Add(Rail);
-        double Nearest=200*200;
-        const FVector SnapTarget=Aim.Position;
-        for (auto* Rail:Rails) for (int32 End=0;End<2;++End) if (auto* Port=Rail->GetConnection(End))
-        {
-            const double D=FVector::DistSquared(SnapTarget,Port->GetConnectorLocation());
-            if (D>=Nearest) continue;
-            Nearest=D; Aim.Position=Port->GetConnectorLocation(); Aim.Direction=Port->GetConnectorNormal(); AimRoute.Reset();
-        }
-    }
+    // Snap to the selected main line's native ports without spawning a hologram.
+    if (HaveAim && !Multi(this) && FBSPlanBuild::SnapConnection(GetWorld(),P->Construction.Main,Aim.Position,Aim.Direction,HitResult.GetActor())) AimRoute.Reset();
     const bool Placing=!Editing && !Multi(this);
     const bool StickPlacing=Placing && EditState && EditState->StickMode!=EBSStickMode::Off;
     auto Hit=[&](FVector Pos,double Radius) {

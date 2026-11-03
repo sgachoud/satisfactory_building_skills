@@ -11,6 +11,22 @@ UENUM()
 enum class EBSPlanTrace : uint8 { Curve, Straight, Free, Bezier };
 UENUM()
 enum class EBSPlanRemainder : uint8 { Last, Reduce, Increase };
+UENUM()
+enum class EBSPlanBuildable : uint8 { Rail, Pipe, PipeMk2, BeltMk1, BeltMk2, BeltMk3, BeltMk4, BeltMk5, BeltMk6, Hypertube };
+USTRUCT()
+struct FBSPlanConstruction
+{
+    GENERATED_BODY()
+    UPROPERTY(SaveGame) EBSPlanBuildable Main = EBSPlanBuildable::Rail;
+    UPROPERTY(SaveGame) TArray<EBSPlanBuildable> Parallels;
+    // Centimeters. Zero selects the native maximum for this type.
+    UPROPERTY(SaveGame) double PipeLength = 0;
+    UPROPERTY(SaveGame) double BeltLength = 0;
+    UPROPERTY(SaveGame) double HypertubeLength = 0;
+    EBSPlanBuildable Line(int32 Index) const { return Index==0 ? Main : Parallels.IsValidIndex(Index-1) ? Parallels[Index-1] : EBSPlanBuildable::Rail; }
+    double Length(EBSPlanBuildable Type, double RailLength) const;
+    bool Valid(int32 ParallelCount) const;
+};
 USTRUCT()
 struct FBSPlanPoint
 {
@@ -76,9 +92,10 @@ struct BUILDINGSKILLS_API FBSRailPlan
     UPROPERTY(SaveGame) bool LeftSideSignal = false;
     UPROPERTY(SaveGame) TArray<bool> ParallelReversed;
     UPROPERTY(SaveGame) TArray<FGuid> ReversedEdges;
+    UPROPERTY(SaveGame) FBSPlanConstruction Construction;
 };
 UENUM()
-enum class EBSPlanAction : uint8 { New, Rename, Share, Place, Move, Edge, Parallels, Delete, Build, Undo, Redo, Node, Segments, ReverseDirection, ReverseSpline, Duplicate };
+enum class EBSPlanAction : uint8 { New, Rename, Share, Place, Move, Edge, Parallels, Delete, Build, Undo, Redo, Node, Segments, ReverseDirection, ReverseSpline, Duplicate, DeletePlan };
 struct BUILDINGSKILLS_API FBSPlanOwnership
 {
     static bool HasIdentity(const FClientIdentityInfo& Identity);
@@ -124,6 +141,7 @@ struct FBSPlanCommand
     UPROPERTY() int32 SignalEvery = 1;
     UPROPERTY() bool LeftSideSignal = false;
     UPROPERTY() TArray<bool> ParallelReversed;
+    UPROPERTY() FBSPlanConstruction Construction;
 };
 USTRUCT()
 struct FBSPlanChunk
@@ -174,21 +192,28 @@ struct FBSPlanSegmentedPath
     FBSPlanPath Path;
     TArray<TArray<FSplinePointData>> Parts;
 };
+struct FBSPlanLengthLimits
+{
+    double Minimum = 0, Maximum = 0, Requested = 0;
+};
 struct BUILDINGSKILLS_API FBSPlanSegments
 {
     static bool Paths(const FBSRailPlan& Plan, TArray<FBSPlanPath>& Paths, FString& Error, bool CheckContinuity=true, const TSet<FGuid>& ForcedEndpoints={}, bool Untrimmed=false);
     static bool Split(const TArray<FSplinePointData>& Points, double Requested, EBSPlanRemainder Policy,
         double Minimum, double Maximum, TArray<TArray<FSplinePointData>>& Parts, FString& Error, TArray<double>* EndKeys=nullptr);
     static bool Prepare(const FBSRailPlan& Plan, double Minimum, double Maximum,
-        TArray<FBSPlanSegmentedPath>& Paths, FString& Error, const TSet<FGuid>& ForcedEndpoints={});
+        TArray<FBSPlanSegmentedPath>& Paths, FString& Error, const TSet<FGuid>& ForcedEndpoints={}, const TArray<FBSPlanLengthLimits>& LineLimits={});
     static bool OffsetStart(TArray<FSplinePointData>& Points, double Offset, FString& Error);
 };
 class BUILDINGSKILLS_API FBSPlanBuild
 {
 public:
-    static TSubclassOf<class UFGRecipe> Recipe();
-    static double MaximumLength();
-    static double MinimumLength();
+    static const TCHAR* Name(EBSPlanBuildable Type);
+    static TSubclassOf<class UFGRecipe> Recipe(EBSPlanBuildable Type=EBSPlanBuildable::Rail);
+    static double MaximumLength(EBSPlanBuildable Type=EBSPlanBuildable::Rail);
+    static double MinimumLength(EBSPlanBuildable Type=EBSPlanBuildable::Rail);
+    static FVector ShapeLimits(EBSPlanBuildable Type);
+    static bool SnapConnection(class UWorld* World, EBSPlanBuildable Type, FVector& Position, FVector& Direction, class AActor* Hit);
     static void SnapFoundation(class AFGBuildable* Floor, FVector& Position, FVector& Direction);
     static bool Build(class AFGCharacterPlayer* Player, const FBSRailPlan& Plan, FString& Error);
 };
@@ -299,6 +324,8 @@ private:
     TArray<FVector> ParallelDraft;
     TArray<double> ParallelNodeOffsetsDraft, ParallelStartOffsetsDraft;
     double SegmentLengthDraft = 0;
+    FBSPlanConstruction ConstructionDraft;
+    FGuid ConfirmDeletePlan;
     EBSPlanRemainder RemainderDraft = EBSPlanRemainder::Reduce;
     bool SyncParallelsInTurnsDraft = false;
     bool PlaceBlockSignalDraft = false, LeftSideSignalDraft = false;

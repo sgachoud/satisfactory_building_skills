@@ -37,6 +37,7 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 
+bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer*,TFunctionRef<void(const TCHAR*,bool)> Check);
 bool RunBuildingSkillsPlanMathChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
 bool RunBuildingSkillsPlanOwnershipChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
 bool RunBuildingSkillsPlanParallelChecks(TFunctionRef<void(const TCHAR*,bool)> Check);
@@ -718,7 +719,7 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
         Check(TEXT("Save archive preserves split nodes, roll and manual through-point tangents"),!Save.IsError() && !Load.IsError() && Edge && Edge->ControlDirections.Num()==1 && !Edge->ControlDirections[0].IsNearlyZero() && N && FMath::IsNearlyEqual(N->Roll,13.0));
         Plan->Selection={InsertedId}; Plan->Settings();
     }
-    if (Phase==47) { Passed &= RunPlanPaymentChecks(P,Check); Passed &= RunPlanSegmentChecks(P,Check); Passed &= RunPlanSignalChecks(P,Check); }
+    if (Phase==47) { Passed &= RunBuildingSkillsPlanConstructionChecks(P,Check); Passed &= RunPlanPaymentChecks(P,Check); Passed &= RunPlanSegmentChecks(P,Check); Passed &= RunPlanSignalChecks(P,Check); }
 
     if (Phase==48)
     {

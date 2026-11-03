@@ -5,7 +5,7 @@ ficsit.app); Satisfactory Mod Manager (SMM) distributes versions from there.
 
 ## Files
 
-The generated `Saved/Publication/0.10.14` folder contains the upload archive,
+The generated `Saved/Publication/0.11.0` folder contains the upload archive,
 listing, metadata, changelog, artwork, source snapshot and verification report.
 Only **BuildingSkills.zip** is the mod version upload. Do not upload a
 development platform ZIP, source snapshot, or the complete publication folder
@@ -25,7 +25,7 @@ as the mod version.
   not a gameplay screenshot.
 - `verification.json`: exact archive validation and target/build evidence.
 - `SHA256SUMS.txt`: hashes for the prepared deliverables.
-- `BuildingSkills-0.10.14-source.zip`: source, assets, scripts, documentation and
+- `BuildingSkills-0.11.0-source.zip`: source, assets, scripts, documentation and
   notices, excluding local saves, references, logs, caches, SDK and binaries.
 
 ## Create the page and version
@@ -39,14 +39,14 @@ as the mod version.
    the prepared text. Keep these separate from the feature description.
 5. Use the source URL in `METADATA.json`. The support URL is already included
    as the overview's “Report a bug” link; SMR has no separate support field.
-   The public GitHub repository has issues enabled and the initial release
-   source is published. Push the reviewed update source before its release.
-   Include `docs/publishing/media/` on branch `main`: the overview embeds these
-   GIFs through raw GitHub URLs. Until the source is pushed, those public image
-   links will not resolve. Alternatively upload the GIFs to SMR's media service
-   and replace the image URLs before submission.
+   The public GitHub repository has issues enabled. Commit and push the reviewed
+   0.11.0 source and documentation before publishing this version. The source
+   snapshot in the kit includes the current working tree, even before committing.
+   Keep `docs/publishing/media/` on branch `main`: the overview embeds the six
+   existing GIFs through raw GitHub URLs. Alternatively upload the GIFs to SMR's
+   media service and replace the image URLs before submission.
    Suggested tags must be selected from the site's actual list.
-6. Create New Version, select **BuildingSkills.zip**, verify version **0.10.14**,
+6. Create New Version, select **BuildingSkills.zip**, verify version **0.11.0**,
    target platforms and the SML/game requirements, and paste the changelog.
 7. Choose early-access/beta wording rather than claiming a stable release.
    Do not mark an untested game branch as working just because it compiled.
@@ -59,7 +59,7 @@ The supplied SSH remote is configured as `origin`, with `main` as the branch.
 ## Recreating the package
 
 The descriptor's integer `Version` must equal the major component of
-`SemVersion`: for `0.10.9`, use `Version: 0`. It is not a build counter.
+`SemVersion`: for `0.11.0`, use `Version: 0`. It is not a build counter.
 `VersionName` must match `SemVersion`. The publication validator checks this
 in the source descriptor and every packaged target.
 
@@ -82,12 +82,13 @@ targets, cooked content, licenses, and unsafe archive entries. It removes debug
 symbols from the upload while retaining the original local Alpakit archive.
 
 Keep the final report honest: archive checks are not multiplayer gameplay tests.
-The 0.10.9 configuration regression passed before publication. All 28 Editor
-automation tests passed for 0.10.13, including synchronized parallel geometry,
-offsets and length limits. Packaged construction, menu actions, Plan entry,
-native owner-identity serialization and live multiplayer reload still need
-confirmation after updating both client and server through SMM. The SDK editor
-cannot test the native identity APIs because their editor implementations are stubs.
+For 0.11.0, all 28 Editor tests and 121 focused Steam runtime assertions passed.
+The runtime checks covered all ten native spline recipes, connected endpoints,
+supports, mixed lines, plan deletion and Connected painting inside designers.
+The author also reported that the installed test version works well. This is
+not a platform-specific multiplayer certification; Epic and dedicated-server
+builds still require broader player testing. See `docs/TESTING.md` for the exact
+checks, retained evidence and limitations.
 
 ## References
 

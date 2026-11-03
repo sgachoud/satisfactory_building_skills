@@ -1,6 +1,7 @@
 #include "BSConnected.h"
 #include "BSBlueprintBounds.h"
 #include "Buildables/FGBuildable.h"
+#include "Buildables/FGBuildableBlueprintDesigner.h"
 #include "FGBuildableSubsystem.h"
 #include "FGLightweightBuildableSubsystem.h"
 #include "FGBlueprintFunctionLibrary.h"
@@ -215,6 +216,30 @@ TArray<FBSBuildingRef> FBSConnected::Find(UWorld* World, const FBSBuildingRef& S
     // Query the game's maintained indices as the component grows. A small
     // selection must not rescan/rebuild a bounds tree for the entire factory.
     auto* System = AFGBuildableSubsystem::Get(World);
+    // Designers keep their contents as actors outside the ordinary spatial
+    // index. Lazily index each encountered designer once for this search;
+    // the normal touching/gap/filter rules still apply across its boundary.
+    struct FDesignerIndex
+    {
+        TArray<FBSBuildingRef> Members;
+        TArray<FBox> Boxes;
+        TUniquePtr<FBoundsTree> Tree;
+        explicit FDesignerIndex(AFGBuildableBlueprintDesigner* Designer)
+        {
+            for (auto* Actor:Designer->GetBuildablesInBlueprintDesigner())
+            {
+                if (!IsValid(Actor) || Actor->GetIsDismantled() || Actor->GetIsLightweightTemporary()) continue;
+                Members.Add(FBSBuildingRef::FromActor(Actor));
+                FBox Box(ForceInit); TArray<FVector> Points;
+                BSBlueprintBounds::AppendActorGeometry(Actor,Points);
+                for (const auto& Point:Points) Box+=Point;
+                Boxes.Add(Box);
+            }
+            Tree=MakeUnique<FBoundsTree>(Boxes);
+        }
+    };
+    auto* SeedDesigner=Seed.Actor ? Seed.Actor->GetBlueprintDesigner() : nullptr;
+    TMap<AFGBuildableBlueprintDesigner*,TUniquePtr<FDesignerIndex>> Designers;
     TSet<uint64> Visited;
     TMap<uint64, FBox> Bounds;
     Result.Add(Seed);
@@ -228,7 +253,18 @@ TArray<FBSBuildingRef> FBSConnected::Find(UWorld* World, const FBSBuildingRef& S
         const FBox Query = Bounds.FindChecked(FBSTransformNative::Key(Current)).ExpandBy(S.Gap * 100.0 + .1);
         TArray<FBSBuildingRef> Neighbors;
         int32 Examined = 0;
-        FBSTransformNative::QueryLightweightBounds(World, Query, Neighbors, Examined);
+        TSet<AFGBuildableBlueprintDesigner*> Queried;
+        auto QueryDesigner=[&](AFGBuildableBlueprintDesigner* Designer) {
+            if (!IsValid(Designer) || Queried.Contains(Designer)) return;
+            Queried.Add(Designer);
+            auto& Index=Designers.FindOrAdd(Designer);
+            if (!Index) Index=MakeUnique<FDesignerIndex>(Designer);
+            TArray<int32> Matches; Index->Tree->Query(0,Query,Matches); Examined+=Matches.Num();
+            for (int32 I:Matches) Neighbors.Add(Index->Members[I]);
+        };
+        FBSTransformNative::QueryLightweightBounds(World,Query,Neighbors,Examined);
+        for (const auto& Entry:Designers) QueryDesigner(Entry.Key);
+        QueryDesigner(SeedDesigner);
         if (System)
         {
             TArray<AFGBuildable*> Actors;
@@ -236,7 +272,11 @@ TArray<FBSBuildingRef> FBSConnected::Find(UWorld* World, const FBSBuildingRef& S
             Examined += Actors.Num();
             for (auto* Actor : Actors)
                 if (IsValid(Actor) && !Actor->GetIsDismantled() && !Actor->GetIsLightweightTemporary())
+                {
                     Neighbors.Add(FBSBuildingRef::FromActor(Actor));
+                    QueryDesigner(Cast<AFGBuildableBlueprintDesigner>(Actor));
+                    QueryDesigner(Actor->GetBlueprintDesigner());
+                }
         }
         if (Stats) { ++Stats->SpatialQueries; Stats->CandidatesExamined += Examined; }
         // Stable spatial ordering gives count-limited previews the same ordering

@@ -81,6 +81,14 @@ TSharedRef<SWidget> UBSPlanWidget::RebuildWidget()
     auto AddButton=[&](const TCHAR* Label,TFunction<void()> Action,TFunction<bool()> Enabled) {
         Buttons->AddSlot().AutoWidth().Padding(4)[SNew(SButton).Text(FText::FromString(Label)).IsEnabled_Lambda([this,Enabled]() { return !RefreshAfterAction && Enabled(); }).OnClicked_Lambda([Action]() { Action(); return FReply::Handled(); })];
     };
+    Buttons->AddSlot().AutoWidth().Padding(4)[SNew(SButton)
+        .Text_Lambda([this,P]() { return FText::FromString(ConfirmDeletePlan.IsValid() && ConfirmDeletePlan==P->CurrentId ? TEXT("Confirm delete plan") : TEXT("Delete plan")); })
+        .IsEnabled_Lambda([this,P]() { return !RefreshAfterAction && !P->Waiting && P->MenuCommands.IsEmpty() && P->Current(); })
+        .OnClicked_Lambda([this,P]() {
+            if (ConfirmDeletePlan!=P->CurrentId) ConfirmDeletePlan=P->CurrentId;
+            else { ConfirmDeletePlan.Invalidate(); FBSPlanCommand C; C.Action=EBSPlanAction::DeletePlan; SubmitAction(C); }
+            return FReply::Handled();
+        })];
     AddButton(TEXT("Duplicate"),[this,P]() { FBSPlanCommand C; C.Action=EBSPlanAction::Duplicate; SubmitAction(C); },[P]() { return !P->Waiting && P->MenuCommands.IsEmpty() && P->Current(); });
     AddButton(TEXT("Make shared"),[this,P]() { FBSPlanCommand C; C.Action=EBSPlanAction::Share; SubmitAction(C); },[P]() { return !P->Waiting && P->MenuCommands.IsEmpty() && P->Current() && !P->Current()->Shared; });
     AddButton(TEXT("New plan"),[this,P]() { FBSPlanCommand C; C.Action=EBSPlanAction::New; C.Name=TEXT("New plan"); SubmitAction(C); },[P]() { return !P->Waiting && P->MenuCommands.IsEmpty(); });
@@ -91,7 +99,7 @@ TSharedRef<SWidget> UBSPlanWidget::RebuildWidget()
         +SVerticalBox::Slot().AutoHeight()[Buttons]
         +SVerticalBox::Slot().AutoHeight().Padding(0,8)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Select a plan to load it. Double-click its name to rename it. Edits are retained when you close the gun and stored in world saves. Shared plans can be edited and built by everyone. Duplicates start as personal plans.")))];
     auto Root=SNew(SVerticalBox)
-        +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,12)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",22)).Text(FText::FromString(TEXT("Rail plans")))]
+        +SVerticalBox::Slot().AutoHeight().Padding(0,0,0,12)[SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold",22)).Text(FText::FromString(TEXT("Plans")))]
         +SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text_Lambda([P]() { return P->Status(); })];
     Root->AddSlot().AutoHeight().Padding(0,6)[Section(TEXT("Plans"),TEXT("Saved plans"),PlansBody)];
     auto Items=SNew(SVerticalBox)
@@ -264,12 +272,28 @@ void UBSPlanWidget::RebuildDetails()
     Heading(TEXT("Parallel lines — local meters (X forward, Y right, Z up)")); ParallelDraft=Plan->Parallels; ParallelReversedDraft=Plan->ParallelReversed; ParallelReversedDraft.SetNum(ParallelDraft.Num());
     ParallelNodeOffsetsDraft=Plan->ParallelNodeOffsets; ParallelNodeOffsetsDraft.SetNumZeroed(ParallelDraft.Num());
     ParallelStartOffsetsDraft=Plan->ParallelStartOffsets; ParallelStartOffsetsDraft.SetNumZeroed(ParallelDraft.Num());
+    ConstructionDraft=Plan->Construction; ConstructionDraft.Parallels.SetNum(ParallelDraft.Num());
+    auto TypePicker=[this](int32 Index) -> TSharedRef<SWidget> {
+        auto Choices=SNew(SVerticalBox);
+        for (int32 I=0;I<=int32(EBSPlanBuildable::Hypertube);++I)
+            Choices->AddSlot().AutoHeight()[SNew(SButton).Text(FText::FromString(FBSPlanBuild::Name(EBSPlanBuildable(I))))
+                .OnClicked_Lambda([this,Index,I]() {
+                    if (Index==0) { ConstructionDraft.Main=EBSPlanBuildable(I); SaveSpecification(); }
+                    else { ConstructionDraft.Parallels[Index-1]=EBSPlanBuildable(I); SaveParallels(); }
+                    FSlateApplication::Get().DismissAllMenus(); return FReply::Handled();
+                })];
+        return SNew(SHorizontalBox)
+            +SHorizontalBox::Slot().FillWidth(1).Padding(4)[SNew(STextBlock).Text(FText::FromString(Index==0 ? TEXT("Main line") : FString::Printf(TEXT("Parallel %d"),Index)))]
+            +SHorizontalBox::Slot().AutoWidth().Padding(4)[SNew(SComboButton).ButtonContent()[SNew(STextBlock)
+                .Text_Lambda([this,Index]() { return FText::FromString(FBSPlanBuild::Name(ConstructionDraft.Line(Index))); })].MenuContent()[Choices]];
+    };
     for (int32 I=0;I<ParallelDraft.Num();++I)
     {
+        Body->AddSlot().AutoHeight()[TypePicker(I+1)];
         Body->AddSlot().AutoHeight()[VectorRow([this,I]() { return ParallelDraft[I]; },[this,I](FVector V) { ParallelDraft[I]=V; SaveParallels(); })];
         for (bool Nodes:{true,false})
             Body->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox)
-                +SHorizontalBox::Slot().FillWidth(1)[SNew(STextBlock).Text(FText::FromString(Nodes ? TEXT("Node offset along local X (m)") : TEXT("Rail start placement offset (m)")))]
+                +SHorizontalBox::Slot().FillWidth(1)[SNew(STextBlock).Text(FText::FromString(Nodes ? TEXT("Node offset along local X (m)") : TEXT("Start placement offset (m)")))]
                 +SHorizontalBox::Slot().AutoWidth()[SNew(SNumericEntryBox<double>).AllowSpin(false)
                     .MinValue(-1000).MaxValue(1000).MinFractionalDigits(2).MaxFractionalDigits(2).MinDesiredValueWidth(120)
                     .Value_Lambda([this,I,Nodes]() -> TOptional<double> { return (Nodes ? ParallelNodeOffsetsDraft[I] : ParallelStartOffsetsDraft[I])/100; })
@@ -287,15 +311,25 @@ void UBSPlanWidget::RebuildDetails()
         +SHorizontalBox::Slot().AutoWidth().Padding(4)[SNew(SButton).Text(FText::FromString(TEXT("Remove last parallel"))).OnClicked_Lambda([this]() { ChangeParallelCount(false); return FReply::Handled(); })]];
     Details->AddSlot().AutoHeight().Padding(0,6)[Section(TEXT("Parallels"),TEXT("Parallel lines"),Body)];
     Body=SNew(SVerticalBox);
-    const double Maximum=FBSPlanBuild::MaximumLength(),Minimum=FBSPlanBuild::MinimumLength();
-    SegmentLengthDraft=Plan->SegmentLength==0 ? 8000 : FMath::Clamp(Plan->SegmentLength,Minimum,Maximum); RemainderDraft=Plan->Remainder;
+    SegmentLengthDraft=Plan->SegmentLength; RemainderDraft=Plan->Remainder;
     SyncParallelsInTurnsDraft=Plan->SyncParallelsInTurns;
     PlaceBlockSignalDraft=Plan->PlaceBlockSignal; SignalEveryDraft=Plan->SignalEvery; LeftSideSignalDraft=Plan->LeftSideSignal;
-    Body->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox)
-        +SHorizontalBox::Slot().FillWidth(1)[SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("Segment length (m), %.2f to %.2f"),Minimum/100,Maximum/100))) ]
-        +SHorizontalBox::Slot().AutoWidth()[SNew(SNumericEntryBox<double>).AllowSpin(false).MinDesiredValueWidth(100).MinValue(Minimum/100).MaxValue(Maximum/100).MinFractionalDigits(2).MaxFractionalDigits(2)
-            .Value_Lambda([this]() -> TOptional<double> { return SegmentLengthDraft/100; })
-            .OnValueCommitted_Lambda([this,Minimum,Maximum](double V,ETextCommit::Type) { if (FMath::IsFinite(V)) { SegmentLengthDraft=FMath::Clamp(FMath::RoundToDouble(V*100),Minimum,Maximum); SaveSpecification(); } })]];
+    Body->AddSlot().AutoHeight()[TypePicker(0)];
+    for (auto Type:{EBSPlanBuildable::Rail,EBSPlanBuildable::Pipe,EBSPlanBuildable::BeltMk1,EBSPlanBuildable::Hypertube})
+    {
+        const double Minimum=FBSPlanBuild::MinimumLength(Type),Maximum=FBSPlanBuild::MaximumLength(Type);
+        const TCHAR* Label=Type==EBSPlanBuildable::Rail ? TEXT("Rail") : Type==EBSPlanBuildable::Pipe ? TEXT("Pipe") : Type==EBSPlanBuildable::BeltMk1 ? TEXT("Belt") : TEXT("Hypertube");
+        Body->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox)
+            +SHorizontalBox::Slot().FillWidth(1)[SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("%s segment length (m), %.2f to %.2f"),Label,Minimum/100,Maximum/100)))]
+            +SHorizontalBox::Slot().AutoWidth()[SNew(SNumericEntryBox<double>).AllowSpin(false).MinDesiredValueWidth(100)
+                .MinValue(Minimum/100).MaxValue(Maximum/100).MinFractionalDigits(2).MaxFractionalDigits(2)
+                .Value_Lambda([this,Type,Maximum]() -> TOptional<double> { const double V=ConstructionDraft.Length(Type,SegmentLengthDraft); return (V==0 ? Maximum : V)/100; })
+                .OnValueCommitted_Lambda([this,Type,Minimum,Maximum](double V,ETextCommit::Type) {
+                    if (!FMath::IsFinite(V)) return;
+                    double& Length=Type==EBSPlanBuildable::Rail ? SegmentLengthDraft : Type==EBSPlanBuildable::Pipe ? ConstructionDraft.PipeLength : Type==EBSPlanBuildable::BeltMk1 ? ConstructionDraft.BeltLength : ConstructionDraft.HypertubeLength;
+                    Length=FMath::Clamp(FMath::RoundToDouble(V*100),Minimum,Maximum); SaveSpecification();
+                })]];
+    }
     auto PolicyName=[](EBSPlanRemainder Value) { return Value==EBSPlanRemainder::Last ? TEXT("Change only last") : Value==EBSPlanRemainder::Reduce ? TEXT("Reduce evenly") : TEXT("Increase evenly"); };
     auto Menu=SNew(SVerticalBox);
     for (int32 I=0;I<3;++I) Menu->AddSlot().AutoHeight()[SNew(SButton).Text(FText::FromString(PolicyName(EBSPlanRemainder(I))))
@@ -305,10 +339,10 @@ void UBSPlanWidget::RebuildDetails()
         .IsChecked_Lambda([this]() { return SyncParallelsInTurnsDraft ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
         .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { SyncParallelsInTurnsDraft=State==ECheckBoxState::Checked; SaveSpecification(); })
         [SNew(STextBlock).Text(FText::FromString(TEXT("Sync parallels in turns")))]];
-    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Align rail joints using the main path, including each parallel's placement offset. Shared spacing is reduced if any parallel exceeds the rail length limit.")))];
-    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Length follows the whole connected path. Junctions and existing rail connections force segment endpoints. If the chosen policy cannot satisfy rail limits, nothing is built.")))];
+    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Align joints using the main path and each parallel's placement offset. With synchronization, the main length controls spacing; shared spacing is reduced to respect every type's maximum length.")))];
+    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Length follows the whole connected path. Junctions and existing connections force segment endpoints. If the chosen policy cannot satisfy the selected types' limits, nothing is built. Belts and tubes need native fittings at branches.")))];
     Body->AddSlot().AutoHeight().Padding(4)[SNew(SCheckBox).IsChecked_Lambda([this]() { return PlaceBlockSignalDraft ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { PlaceBlockSignalDraft=State==ECheckBoxState::Checked; SaveSpecification(); })[SNew(STextBlock).Text(FText::FromString(TEXT("Place block signal")))]];
+        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { PlaceBlockSignalDraft=State==ECheckBoxState::Checked; SaveSpecification(); })[SNew(STextBlock).Text(FText::FromString(TEXT("Place block signal (rail lines only)")))]];
     Body->AddSlot().AutoHeight().Padding(4)[SNew(SHorizontalBox).IsEnabled_Lambda([this]() { return PlaceBlockSignalDraft; })
         +SHorizontalBox::Slot().AutoWidth().Padding(4)[SNew(STextBlock).Text(FText::FromString(TEXT("Every")))]
         +SHorizontalBox::Slot().AutoWidth()[SNew(SNumericEntryBox<int32>).AllowSpin(false).MinDesiredValueWidth(100).MinValue(1).MaxValue(2048).Value_Lambda([this]() -> TOptional<int32> { return SignalEveryDraft; }).OnValueCommitted_Lambda([this](int32 V,ETextCommit::Type) { SignalEveryDraft=FMath::Clamp(V,1,2048); SaveSpecification(); })]
@@ -317,7 +351,7 @@ void UBSPlanWidget::RebuildDetails()
         .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { LeftSideSignalDraft=State==ECheckBoxState::Checked; SaveSpecification(); })[SNew(STextBlock).Text(FText::FromString(TEXT("Left side signal")))]];
     Body->AddSlot().AutoHeight().Padding(4)[SNew(SButton).Text(FText::FromString(TEXT("Reverse direction"))).IsEnabled_Lambda([P]() { return !P->Waiting; })
         .OnClicked_Lambda([this,P]() { FBSPlanCommand C; C.Action=EBSPlanAction::ReverseDirection; C.Selection=P->Selection; SubmitAction(C); return FReply::Handled(); })];
-    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Arrows show signal direction. Reverse affects selected spline paths, or all paths with no selection. Geometry stays unchanged. Parallel Reverse flips its signals relative to the main path.")))];
+    Body->AddSlot().AutoHeight().Padding(4)[SNew(STextBlock).AutoWrapText(true).Text(FText::FromString(TEXT("Arrows show signal direction and belt flow. Reverse affects selected spline paths, or all paths with no selection. Geometry stays unchanged. Parallel Reverse flips its signals or belt flow relative to the main path.")))];
     Details->AddSlot().AutoHeight().Padding(0,6)[Section(TEXT("Segments"),TEXT("Build specification"),Body)];
 }
 
@@ -388,9 +422,9 @@ void UBSPlanWidget::SaveNode(FGuid Id)
 void UBSPlanWidget::SaveEdge()
 { if (auto* P=Cast<UBSPlanComponent>(mInteractObject)) { FBSPlanCommand C; C.Action=EBSPlanAction::Edge; C.Edge=EdgeDraft; P->QueueMenu(C); } }
 void UBSPlanWidget::SaveParallels()
-{ if (auto* P=Cast<UBSPlanComponent>(mInteractObject)) { FBSPlanCommand C; C.Action=EBSPlanAction::Parallels; C.Parallels=ParallelDraft; C.ParallelReversed=ParallelReversedDraft; C.ParallelNodeOffsets=ParallelNodeOffsetsDraft; C.ParallelStartOffsets=ParallelStartOffsetsDraft; P->QueueMenu(C); } }
+{ if (auto* P=Cast<UBSPlanComponent>(mInteractObject)) { FBSPlanCommand C; C.Action=EBSPlanAction::Parallels; C.Construction=ConstructionDraft; C.Parallels=ParallelDraft; C.ParallelReversed=ParallelReversedDraft; C.ParallelNodeOffsets=ParallelNodeOffsetsDraft; C.ParallelStartOffsets=ParallelStartOffsetsDraft; P->QueueMenu(C); } }
 void UBSPlanWidget::SaveSpecification()
-{ if (auto* P=Cast<UBSPlanComponent>(mInteractObject)) { FBSPlanCommand C; C.Action=EBSPlanAction::Segments; C.SegmentLength=SegmentLengthDraft; C.Remainder=RemainderDraft; C.SyncParallelsInTurns=SyncParallelsInTurnsDraft; C.PlaceBlockSignal=PlaceBlockSignalDraft; C.SignalEvery=SignalEveryDraft; C.LeftSideSignal=LeftSideSignalDraft; P->QueueMenu(C); } }
+{ if (auto* P=Cast<UBSPlanComponent>(mInteractObject)) { FBSPlanCommand C; C.Action=EBSPlanAction::Segments; C.Construction=ConstructionDraft; C.SegmentLength=SegmentLengthDraft; C.Remainder=RemainderDraft; C.SyncParallelsInTurns=SyncParallelsInTurnsDraft; C.PlaceBlockSignal=PlaceBlockSignalDraft; C.SignalEvery=SignalEveryDraft; C.LeftSideSignal=LeftSideSignalDraft; P->QueueMenu(C); } }
 
 void UBSPlanWidget::SubmitAction(FBSPlanCommand Command)
 {
@@ -405,16 +439,17 @@ void UBSPlanWidget::ChangeParallelCount(bool Add)
 {
     if (RefreshAfterAction || (Add ? ParallelDraft.Num()>=16 : ParallelDraft.IsEmpty())) return;
     FBSPlanCommand C; C.Action=EBSPlanAction::Parallels;
-    C.Parallels=ParallelDraft; C.ParallelReversed=ParallelReversedDraft;
+    C.Construction=ConstructionDraft; C.Parallels=ParallelDraft; C.ParallelReversed=ParallelReversedDraft;
     C.ParallelNodeOffsets=ParallelNodeOffsetsDraft; C.ParallelStartOffsets=ParallelStartOffsetsDraft;
     if (Add)
     {
+        C.Construction.Parallels.Add(EBSPlanBuildable::Rail);
         C.Parallels.Add(FVector(0,600*(C.Parallels.Num()+1),0));
         C.ParallelReversed.Add(false); C.ParallelNodeOffsets.Add(0); C.ParallelStartOffsets.Add(0);
     }
     else
     {
-        C.Parallels.Pop(); C.ParallelReversed.SetNum(C.Parallels.Num());
+        C.Construction.Parallels.Pop(); C.Parallels.Pop(); C.ParallelReversed.SetNum(C.Parallels.Num());
         C.ParallelNodeOffsets.SetNum(C.Parallels.Num()); C.ParallelStartOffsets.SetNum(C.Parallels.Num());
     }
     // Keep old row backing arrays intact until the acknowledged graph is

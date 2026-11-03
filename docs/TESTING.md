@@ -2,7 +2,72 @@
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
 build is CL 502094; the current installed Steam game is CL 513885 (1.2.4.1).
-Results below are tied to their tested versions. Current development version: Building Skills 0.10.14.
+Results below are tied to their tested versions. Current development version: Building Skills 0.11.0.
+
+## 0.11.0: designer Connected search and mixed spline plans
+
+The editor suite passed all 28 tests with no warnings or failures. Added cases
+cover independent lengths for mixed lines, synchronized turns respecting each
+line's minimum/maximum, invalid-length rejection, old-plan defaults, saved
+construction settings and undo/redo. Evidence: `Saved/Automation/index.json`.
+
+The final isolated Steam run on game build 513885 passed **121 assertions with
+zero failures**, then exited with code 0. It covered:
+
+- Native construction of all ten recipes: rail, both pipe tiers, six belt tiers
+  and hypertube; reciprocal interior joins and extensions onto existing endpoints.
+- Exactly four native supports for each three-piece non-rail route, counted by
+  snapping points rather than the offset origins of decorative support actors.
+- Belt flow following direction arrows, including reversed paths.
+- One mixed four-family plan, with block signals only on its rail joints.
+- Rejection of occupied world connections before native construction, with all
+  existing buildings and connection pointers preserved afterward.
+- Revision-checked plan deletion, history removal and an empty list after the
+  last plan is deleted.
+- Connected discovery of touching actor-backed foundations inside a designer,
+  including discovery from a touching object outside its boundary.
+- Connected paint RPC application of a swatch to both designer foundations, then
+  material replacement retaining both as members of that designer.
+
+The focused fixture is available through `scripts/RuntimeTest.ps1` with
+`-PlanConstructionOnly -Render`; use `-GameRoot` to select an isolated candidate
+installation. It also runs within the wider Plan fixture.
+
+Evidence: `Saved/Issue1/plan-construction-test.log`. Earlier focused runs are
+retained as `plan-construction-initial.log`, `plan-construction-supports.log`
+and `plan-construction-paint.log` in the same directory. The first run exposed
+missing native supports; the intermediate painting run exposed an assertion that
+counted pipe support origins instead of snapping points. Neither failed run is
+reported as a complete pass.
+
+Steam client and Linux dedicated-server compilation completed successfully.
+Linux was compiled, not run. Local 0.11.0 test ZIPs were prepared for the Steam
+Windows client and Linux server only. Their CRCs, native binary hashes, cooked
+assets, version metadata, SML manifests and license notices passed verification.
+Evidence: `Saved/Releases/BuildingSkills-0.11.0-verification.json`. No Windows
+Server package was prepared at that test-packaging stage. The Steam test ZIP
+was subsequently installed on November 2, with all 11 files verified by SHA-256
+and the previous installation backed up. Evidence: `Saved/InstallationVerification.json`.
+On November 3 the author reported that the installed version seems to work well;
+no detailed platform or scenario checklist accompanied that report.
+
+These checks use a temporary standalone world with saving blocked. Native
+construction checks use No Build Cost; they do not establish multiplayer RPC,
+paid mixed construction, live fluid/item flow or manual menu interaction.
+The normal game installation contains the explicitly requested 0.11.0 test build.
+The public release has not been uploaded to SMR.
+
+On November 3, Epic and Windows Server also compiled successfully and Alpakit
+assembled the combined public-release archive for Windows (Steam/Epic), Windows
+Server and Linux Server. The packaged Steam and Linux native hashes still match
+the earlier test ZIPs. Archive validation passed for all four native binaries,
+version fields, SML manifests, required cooked assets, license notices and CRCs.
+The additional builds emitted an SML hook-template C4191 warning. Windows Server
+initially rejected an already-generated friend declaration; retrying header
+generation succeeded without source or toolchain changes. Logs are retained in
+`Saved/PublicationBuild0110`. No new gameplay tests were run during packaging;
+Epic and dedicated-server compilation does not establish gameplay compatibility.
+The final kit and detailed report are under `Saved/Publication/0.11.0`.
 
 ## 0.10.14: Blueprint construction interface pointers
 

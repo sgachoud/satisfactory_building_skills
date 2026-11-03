@@ -111,7 +111,8 @@ Deployment can be configured in Alpakit for the existing local game installation
 
 Before publishing, set real repository/support URLs, add a mod icon, confirm tested
 game/platform compatibility and review the multiplayer requirement. Keep `VersionName`
-equal to `SemVersion`, and increment the integer `Version` for each release.
+equal to `SemVersion`, and set the integer `Version` to the SemVer major
+component (for example, `0` for `0.11.0`); it is not a build counter.
 
 For `LNK1181` mentioning `delayimp.lib`, check that MSVC v14.38 **x64/x86** tools are
 installed; the ARM64 package alone is insufficient.

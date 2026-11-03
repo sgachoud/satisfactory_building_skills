@@ -1,6 +1,6 @@
 # Plan gun
 
-Alt+P opens the Plan gun. Its initial tool is the rail planner. Plan geometry is
+Alt+P opens the Plan gun. It plans rail, pipe, belt and hypertube paths. Plan geometry is
 local visualization, with no collision, costs or world buildings until Build.
 Closing the gun hides all plan geometry without discarding the plan.
 
@@ -15,7 +15,7 @@ not depend on the same PlayerState actor surviving a reload or reconnect. Existi
 plans acquire that identity from their saved owner when it is still available.
 Ownerless legacy plans are never assigned to a different player by name.
 Personal plans are saved with the world, and their geometry is sent only to their owner. Shared plans are
-visible to everyone while using Plan, and everyone can edit or build them.
+visible to everyone while using Plan, and everyone can edit, build or delete them.
 Shared edits use revision checks; a conflicting edit is rejected and the latest
 plan is loaded instead of silently overwriting somebody else's work.
 
@@ -23,7 +23,11 @@ In **Saved plans**, clicking a name loads that plan immediately. There is no
 separate Save or Load button. Double-click the name to rename it in place;
 Enter or leaving the field commits the name. **Duplicate** creates and selects
 an independent personal plan named `<plan name> (copy)`, including its geometry,
-parallel offsets and build specification. The original remains unchanged.
+parallel offsets, construction types and build specification. The original remains unchanged.
+**Delete plan** asks for a second click on **Confirm delete plan**, then removes
+that plan and its editing history. This does not dismantle anything already built.
+The server rejects deletion if somebody edited the plan after your snapshot.
+Deleting the last plan leaves an empty list; use New plan to start another.
 Menu actions keep the window open and refresh their controls after the server
 confirms the edit. Escape or Close dismisses the window.
 Copies can be shared afterward. Names are limited to 80 characters, so a long
@@ -31,12 +35,12 @@ name is shortened as needed to retain the `(copy)` suffix.
 
 Parallel lines reproduce the main nodes and keep them linked. Selecting or
 moving a reproduced node edits the corresponding main node. Each parallel has
-a signed **Node offset along local X**, and a signed **Rail start placement
+a signed **Node offset along local X**, and a signed **Start placement
 offset**, both entered in meters with centimeter precision. Positive placement
 offset leaves a gap at the path's start; negative offset extends backward along
 the starting tangent. Placement offsets apply once per connected path between
-branches, including across interior nodes that require a live rail connection.
-The node markers remain at their planned positions even when the rail start
+branches, including across interior nodes that require a live spline connection.
+The node markers remain at their planned positions even when the path start
 is trimmed. An offset that consumes the whole path prevents building.
 
 ## Controls
@@ -62,7 +66,7 @@ is trimmed. An offset that consumes the whole path prevents building.
 
 Plan runs in an empty build-gun state without creating a rail hologram. Off
 uses the gun's surface trace; Default and Constrained use the same settings and
-path calculations as Stick. Nearby existing rail endpoints can capture the aim
+path calculations as Stick. Nearby compatible ports for the main line's selected type can capture the aim
 point; holding the configured multi-select modifier disables this snapping.
 Foundation placement resolves lightweight instances before using the native rail
 floor grid and rotation step. With Stick active, the aimed foundation must be
@@ -148,11 +152,21 @@ do not receive extra direction dots.
 Parallel offsets use local X forward, Y right and Z up in meters, with centimeter
 precision. They follow the curve rather than fixed world axes. Add, edit and
 remove offsets in K; the main path remains present. Each parallel has a Reverse
-checkbox for its signal direction; its offset and geometry stay unchanged.
+checkbox for its signal direction or belt flow; its offset and geometry stay unchanged.
 
-The **Build specification** section sets rail segment length in meters, initially
-80 m, bounded by the native Railway minimum and maximum (with a 1 cm rounding
-margin). Values commit when you finish typing or change a toggle; no Apply button
+**Build specification / Main line** chooses Rail, Pipe Mk.1/Mk.2, Belt
+Mk.1-Mk.6, or Hypertube. Each entry under **Parallel lines** has its own choice;
+existing plans and newly added parallels default to Rail. The chosen recipe
+must be unlocked before building. Preview curvature/grade checks and endpoint
+snapping follow the selected type.
+
+The **Build specification** section sets a separate segment length in meters
+for rails, pipes, belts and hypertubes. Lengths are shared by all lines of the
+same type, including different tiers. Rail length initially uses 80 m; other
+types initially use their native maximum. Rail minimum follows the native mesh
+length; pipes and hypertubes use their native 2 m minimum, and belts use a
+1 m planning minimum. Native placement checks still
+apply to every segment. Maximum lengths include a floating-point safety margin. Values commit when you finish typing or change a toggle; no Apply button
 is needed. It offers three remainder policies:
 
 - **Change only last:** try a short final piece. If it is below minimum, extend
@@ -162,8 +176,8 @@ is needed. It offers three remainder policies:
 - **Increase evenly:** lengthen all pieces equally, without exceeding the native maximum.
 
 Lengths apply across intermediate plan nodes. Divergences, open ends and nodes
-at matching live rail endpoints force segment endpoints. Nodes save only their
-geometry; removing a rail used while snapping does not invalidate the plan.
+at matching live endpoints force segment endpoints. Nodes save only their
+geometry; removing an object used while snapping does not invalidate the plan.
 Construction discovers matching positions and opposing tangents in the current
 world, including interior nodes. Each path between these
 boundaries is divided separately; closed loops are processed once. An impossible
@@ -171,12 +185,14 @@ policy rejects the whole build before construction.
 
 **Sync parallels in turns** defaults off. When enabled, the main curve supplies
 the segment boundaries for every parallel, keeping their joints at corresponding
-cross-sections through turns. Outer rails can be longer than the main segment;
-inner rails can be shorter. If a rail would exceed the native maximum, the shared
+cross-sections through turns. Outer lines can be longer than the main segment;
+inner lines can be shorter. If any line would exceed its type's native maximum, the shared
 target length for that connected path is reduced and its boundaries are recalculated
-using the selected remainder policy.
+using the selected remainder policy. In this mode the main type's requested length
+controls shared spacing; the other requested lengths are used when synchronization
+is off. Each line's minimum and maximum remain enforced.
 
-With synchronization enabled, a parallel's rail placement offset is measured along
+With synchronization enabled, a parallel's placement offset is measured along
 the main curve and shifts its joint positions by that amount. Positive offsets
 leave a starting gap; negative offsets extend backward along the starting tangent.
 Large negative offsets receive additional joints throughout the extended path.
@@ -185,7 +201,7 @@ remain part of the parallel geometry and are included in the length checks.
 
 Live rail intersections remain mandatory joints. A staggered parallel's final
 remainder may be merged with its preceding segment when too short; the merged
-segment is included in the maximum-length check. If synchronized rails cannot
+segment is included in the maximum-length check. If synchronized lines cannot
 respect both native length limits, the entire build is rejected before placement.
 This checkbox is saved with each plan, synchronized in multiplayer and included
 in undo/redo.
@@ -198,23 +214,23 @@ paths with no selection. Arrows show the resulting direction on primary and
 parallel paths. Reversing never changes curve geometry or segment boundaries.
 Signals go at connected segment endpoints, using native signal construction and
 guarded connections. Unconnected open ends remain unsignalled, as required by
-vanilla placement. Rail and signal costs are checked together before construction.
+vanilla placement. Spline, support and signal costs are checked together before construction.
 Build specifications and direction choices are saved per plan and support undo.
 
 Preview segments turn red around excessive curvature, grade or discontinuous
-node joins. **Build full plan** subdivides each complete path to native rail
+node joins. **Build full plan** subdivides each complete path to its selected type’s
 length limits, validates all pieces and checks the complete material cost.
 Affordability combines the player inventory and Dimensional Depot; payment follows
 the player's inventory-first/Depot-first setting. A shortage reports the required
 item and both available quantities. Each spline is processed once, including in
 closed loops; construction tracks visited edges instead of recursively walking the network.
-It constructs rails on the server and verifies reciprocal internal and existing
+It constructs the selected spline types on the server and verifies reciprocal internal and existing
 endpoint connections. Failed construction removes the incomplete batch. The plan
 remains available after a successful build.
 
 Limits are explicit: 32 plans per owner, 256 per world, 2048 nodes and splines per
 plan, 64 captured curve points per spline, 32 interior controls per Free spline,
-16 parallel lines, and 2048 built rail
+16 parallel lines, and 2048 built spline
 segments per operation. Oversized operations are rejected rather than truncated.
 
 ## Validation
@@ -227,3 +243,20 @@ automatic menu saving. The Build specification menu was inspected in a rendered
 screenshot. The temporary game exited cleanly. See [TESTING.md](TESTING.md) for
 exact coverage, manual checks and the limits of local permission checks versus a
 live dedicated-server run.
+
+## Mixed construction and connections
+
+A build checks recipes, the complete combined material cost and native placement
+validation before constructing. Pieces connect through native rail, pipe,
+hypertube or conveyor ports. Matching existing ports are discovered again at
+build time; no actor reference is retained in the plan. Belts follow the direction
+arrows, including each parallel's Reverse checkbox. Block signals are built only
+on rail lines. Native supports are added at free pipe, belt and hypertube joints, with their
+costs included. A shared joint gets one support; matching existing connections
+reuse their support. Junction fittings are not created automatically.
+
+Pipes, belts and hypertubes cannot form a rail-style branch without a compatible
+native fitting. Occupied existing ports reject the operation before construction.
+Other incompatible joins remove the incomplete placement. Use existing junctions/splitters/mergers where
+needed. Construction choices and lengths are saved with plans, replicated,
+duplicated, and included in plan undo/redo.

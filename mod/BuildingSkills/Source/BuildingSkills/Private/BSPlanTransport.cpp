@@ -68,6 +68,11 @@ void UBSGroupRemoteCallObject::Server_PlanCommand_Implementation(const FBSPlanCo
     {
         auto* Plan=Store->RailPlans.FindByPredicate([&](const auto& V) { return V.Id==C.Plan && Visible(V,Owner); });
         if (!Plan) Error=TEXT("This plan is not available to you.");
+        else if (C.Action==EBSPlanAction::DeletePlan)
+        {
+            if (C.Revision!=Plan->Revision) Error=TEXT("This plan changed. Review it before deleting it.");
+            else { const FGuid Removed=Plan->Id; Store->PlanHistories.Remove(Removed); Store->RailPlans.RemoveAll([&](const auto& V) { return V.Id==Removed; }); Id.Invalidate(); }
+        }
         else if (C.Action==EBSPlanAction::Undo || C.Action==EBSPlanAction::Redo)
             Store->PlanHistories.FindOrAdd(Plan->Id).Restore(*Plan,C.Action==EBSPlanAction::Redo,C.Revision,HistoryLimit,Error);
         else if (C.Action==EBSPlanAction::Build)
@@ -129,7 +134,7 @@ void UBSGroupRemoteCallObject::SendPlanChunk()
         Chunk.Plan.Id=P.Id; Chunk.Plan.Name=P.Name; Chunk.Plan.Shared=P.Shared; Chunk.Plan.Revision=P.Revision;
         if (Chunk.Start)
         {
-            Chunk.Plan.Parallels=P.Parallels; Chunk.Plan.SegmentLength=P.SegmentLength; Chunk.Plan.Remainder=P.Remainder;
+            Chunk.Plan.Construction=P.Construction; Chunk.Plan.Parallels=P.Parallels; Chunk.Plan.SegmentLength=P.SegmentLength; Chunk.Plan.Remainder=P.Remainder;
             Chunk.Plan.SyncParallelsInTurns=P.SyncParallelsInTurns;
             Chunk.Plan.PlaceBlockSignal=P.PlaceBlockSignal; Chunk.Plan.SignalEvery=P.SignalEvery; Chunk.Plan.LeftSideSignal=P.LeftSideSignal;
             Chunk.Plan.ParallelReversed=P.ParallelReversed;
