@@ -117,6 +117,8 @@ def main():
     validate_version(descriptor)
     metadata = json.loads((ROOT / "docs/publishing/METADATA.json").read_text(encoding="utf-8"))
     require(metadata["version"] == version, "Publication metadata has stale version")
+    require(metadata["game_build_requirement"] == descriptor["GameVersion"],
+            "Publication metadata has a stale game requirement")
     require((ROOT / "LICENSE").read_bytes() == (PLUGIN / "Resources/LICENSE.txt").read_bytes(),
             "Packaged project license differs from root license")
     with zipfile.ZipFile(args.archive) as incoming:

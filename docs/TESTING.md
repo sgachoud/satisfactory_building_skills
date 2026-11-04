@@ -1,7 +1,7 @@
 # Verification
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
-build is CL 502094; the current installed Steam game is CL 517554 (1.2.5.0).
+build is CL 517554; the current installed Steam game is CL 517554 (1.2.5.0).
 Results below are tied to their tested versions. Current development version: Building Skills 0.11.1.
 
 ## 0.11.1: CL 517554 compatibility
@@ -67,7 +67,10 @@ do not cover every multiplayer feature or combination of third-party mods.
 
 Publication preparation also compiled the Epic client and refreshed Windows
 Server, then validated the merged three-platform archive with all four native
-binaries. Its Steam and Linux files exactly match the tested/installable packages.
+binaries. Its Steam and Linux binaries and cooked content exactly match the
+tested/installable packages. Before publication, the declared minimum was raised
+from `>=502094` to `>=517554` in each platform descriptor; this metadata-only
+correction does not change the tested binaries or the earlier installation receipt.
 Build logs are retained under `Saved/PublicationBuild0111/`; publication checks
 are recorded in the release verification receipt. Epic was not launched.
 

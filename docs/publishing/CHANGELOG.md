@@ -5,7 +5,7 @@
 - Restores Plan endpoint discovery when rail collision is represented by an instance rather than the track actor.
 - Refreshes the gameplay regressions for the current selection modes and settings menus.
 
-Update both client and server. Validation is recorded in docs/TESTING.md.
+Requires Satisfactory 1.2.5.0 (CL 517554) or newer. Update both client and server. Validation is recorded in docs/TESTING.md.
 
 # 0.11.0 - Mixed transport plans and blueprint designer selection
 

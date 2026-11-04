@@ -9,7 +9,7 @@ Building Skills uses the same separate-repository/junction workflow as
 | SML project | `F:/dev/satisfactory_mods/SatisfactoryModLoader/FactoryGame.uproject` |
 | Engine | `C:/Program Files/Unreal Engine - CSS` (5.6.1-CSS) |
 | SML | 3.12.0 |
-| Declared minimum game build | CL 502094, matching the reference mod |
+| Declared minimum game build | CL 517554 (Satisfactory 1.2.5.0), matching the validated release |
 | Compiler | VS 2022 / MSVC v14.38 x64/x86, per the reference setup |
 | Audio SDK | Wwise 2023.1.14.8770, per the reference setup |
 

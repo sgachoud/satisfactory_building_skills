@@ -16,5 +16,5 @@
   "suggested_tags": ["Building", "Tools", "Quality of Life", "Trains"],
   "required_on_remote": true,
   "sml_requirement": "^3.12.0",
-  "game_build_requirement": ">=502094"
+  "game_build_requirement": ">=517554"
 }
