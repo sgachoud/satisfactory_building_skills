@@ -1,8 +1,11 @@
+#include "BSBlueprintAccess.h"
 #include "BSEditModeComponent.h"
 #include "BSEditModeWidget.h"
 #include "BSTransformSettingsWidget.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Widgets/Input/SEditableText.h"
+#include "Widgets/Text/STextBlock.h"
+#include "TimerManager.h"
 #include "Widgets/SWindow.h"
 #include "BSBlueprintSave.h"
 #include "BSBlueprintScale.h"
@@ -102,6 +105,7 @@ public:
         static FVector WheelPivot;
         static FString BlueprintTestName;
         static TArray<FBSBuildingRef> BlueprintMembers;
+        static TSubclassOf<UFGBuildGunModeDescriptor> NormalSelectionMode;
         const double Now = FPlatformTime::Seconds();
         if (Now - Started > 240)
         {
@@ -302,6 +306,7 @@ public:
             Key(EKeys::F, true); break;
         case 17:
             Key(EKeys::F, false);
+            NormalSelectionMode = Gun->GetCurrentBuildGunMode();
             Check(TEXT("Vanilla dismantle targets buildings again"), !Edit->IsEditing() && Edit->InputAllowed() && Dismantle && Dismantle->GetSelectedActor() == TestBuilding.Get());
             Key(EKeys::LeftControl, true); break;
         case 18:
@@ -313,7 +318,12 @@ public:
         case 20:
             Check(TEXT("Vanilla mode change preserves selection"), Dismantle && Edit->Selection.Buildings.Num() == 2);
             Check(TEXT("Vanilla offers group selection"), Gun->GetCurrentBuildGunMode() == UBSGroupModeDescriptor::StaticClass());
-            Gun->CycleBuildMode(1); break;
+            for (int32 I = 0; I < 8 && Gun->GetCurrentBuildGunMode() != NormalSelectionMode; ++I)
+            {
+                Gun->CycleBuildMode(1);
+                Check(TEXT("Each available vanilla selection mode preserves pinned members"), Edit->Selection.Buildings.Num() == 2);
+            }
+            break;
         case 21:
             Check(TEXT("Returning to vanilla normal preserves selection"), Edit->GetStatusText().ToString().Contains(TEXT("Normal")) && Edit->Selection.Buildings.Num() == 2);
             Key(EKeys::LeftMouseButton, true);
@@ -458,9 +468,14 @@ public:
                 WheelPivot = Bounds.GetCenter();
                 Check(TEXT("Default transform pivot is the combined selection bounds center"), Edit->GetTransformPivot().Equals(WheelPivot, .01));
             }
-            Key(EKeys::R, true); break;
+            Key(EKeys::R, true);
+            {
+                // A tap cycles; holding R until the next one-second sample opens the radial.
+                FTimerHandle Release;
+                World->GetTimerManager().SetTimer(Release, [Key]() { Key(EKeys::R, false); }, .1f, false);
+            }
+            break;
         case 62:
-            Key(EKeys::R, false);
             Check(TEXT("Native R changes transform mode without changing selection mode"), Edit->TransformMode == EBSTransformMode::RotateY && Edit->Selection.Groups.Num() == 1);
             Key(EKeys::MouseScrollUp, true);
             break;
@@ -676,7 +691,7 @@ public:
             if(Descriptor)
             {
                 const bool Read=Blueprints->ReadBlueprintFromDisc(BlueprintTestName);
-                Check(TEXT("Saved group blueprint reads back from disk with native archive data"),Read && Blueprints->mStoredBlueprintData.IsValid());
+                Check(TEXT("Saved group blueprint reads back from disk with native archive data"),Read && FBSBlueprintAccess::Data(Blueprints).IsValid());
                 TArray<AFGBuildable*> Loaded;
                 if(Read) Blueprints->LoadStoredBlueprint(Descriptor,FTransform::Identity,Loaded,true);
                 Check(TEXT("Blueprint loads exactly the three selected members"),Loaded.Num()==BlueprintMembers.Num() && Loaded.Num()==3);
@@ -939,7 +954,19 @@ public:
                 TFunction<void(TSharedRef<SWidget>)> FindButton = [&](TSharedRef<SWidget> Widget)
                 {
                     if (Button) return;
-                    if (Widget->GetTypeAsString() == TEXT("SButton")) { Button = Widget; return; }
+                    if (Widget->GetTypeAsString() == TEXT("SButton"))
+                    {
+                        bool IsClose = false;
+                        TFunction<void(TSharedRef<SWidget>)> FindLabel = [&](TSharedRef<SWidget> Child)
+                        {
+                            if (Child->GetTypeAsString() == TEXT("STextBlock"))
+                                IsClose |= StaticCastSharedRef<STextBlock>(Child)->GetText().ToString() == TEXT("Close");
+                            auto* Children = Child->GetChildren();
+                            for (int32 I = 0; I < Children->Num(); ++I) FindLabel(Children->GetChildAt(I));
+                        };
+                        FindLabel(Widget);
+                        if (IsClose) { Button = Widget; return; }
+                    }
                     auto* Children = Widget->GetChildren();
                     for (int32 I=0; I<Children->Num(); ++I) FindButton(Children->GetChildAt(I));
                 };
@@ -1012,10 +1039,10 @@ public:
         if (Samples >= 130 && Samples <= 144 && Samples % 2 == 0)
             ChecksPassed &= FBSTransformNative::RunPooledVisualChecks(Player, (Samples-130)/2);
         if (Samples >= 150 && Samples <= 203) ChecksPassed &= RunBuildingSkillsConnectedChecks(Player, Samples - 150);
-        if (Samples >= 250 && Samples <= 278) ChecksPassed &= RunBuildingSkillsVolumeChecks(Player, Samples - 250);
+        if (Samples >= 250 && Samples <= 279) ChecksPassed &= RunBuildingSkillsVolumeChecks(Player, Samples - 250);
         if (Samples >= 450 && Samples <= 476) ChecksPassed &= RunBuildingSkillsTransformerChecks(Player, Samples - 450);
         if (Samples >= 400 && Samples <= 439) ChecksPassed &= RunBuildingSkillsPolishChecks(Player, Samples - 400);
-        if (Samples >= 300 && Samples <= 374) ChecksPassed &= FBSStick::RunChecks(Player, Samples - 300);
+        if (Samples >= 300 && Samples <= 380) ChecksPassed &= FBSStick::RunChecks(Player, Samples - 300);
         if (Samples==610) ChecksPassed &= RunBuildingSkillsPlanConstructionChecks(Player,[](const TCHAR* Name,bool OK) {
             UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME %s: Plan construction: %s"),OK ? TEXT("PASS") : TEXT("FAIL"),Name);
         });
@@ -1023,7 +1050,7 @@ public:
         if (Samples >= 500 && Samples <= 535) ChecksPassed &= RunBuildingSkillsBlueprintNetworkChecks(Player, Samples - 500);
         if (Samples == 239 && FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,3);
         if (Samples == 153) Next += 3; // Allow modal/HUD animations to settle for visual inspection.
-        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanConstructionTest")) ? 611 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest")) ? 605 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 376 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 280 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanConstructionTest")) ? 611 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest")) ? 605 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 382 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 281 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;

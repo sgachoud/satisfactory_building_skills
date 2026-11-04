@@ -16,6 +16,7 @@
 #include "FGBuildableSubsystem.h"
 #include "FGFactoryConnectionComponent.h"
 #include "FGPipeConnectionComponent.h"
+#include "FGRailroadTrackConnectionComponent.h"
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildableRailroadSignal.h"
 #include "Buildables/FGBuildableBlueprintDesigner.h"
@@ -112,6 +113,24 @@ bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer* Player,TFunctio
             Test(TEXT("Three spline segments share four native endpoint supports"),Supports==4);
         }
         Test(TEXT("Belt flow follows the plan direction arrow"),Flow);
+        // Aim hits on instanced rail geometry do not identify the track actor.
+        // Exercise the actual Plan snap entry point with no actor hint, including
+        // a track without physics collision, while its native bounds stay indexed.
+        FVector SnapAt=B.Position+FVector(80,60,40),SnapDirection=FVector::UpVector;
+        Test(TEXT("Plan aim finds the existing endpoint without a hit actor"),
+            FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr) && SnapAt.Equals(B.Position,.1));
+        if (Type==EBSPlanBuildable::Rail)
+        {
+            for (TActorIterator<AFGBuildable> It(World,Class);It;++It)
+                if (!Before.Contains(*It) && FMath::Abs(It->GetActorLocation().Y-A.Position.Y)<1) It->SetActorEnableCollision(false);
+            SnapAt=B.Position+FVector(80,60,40); SnapDirection=FVector::UpVector;
+            Test(TEXT("Rail endpoint snap uses native bounds independently of collision"),
+                FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr) && SnapAt.Equals(B.Position,.1) && SnapDirection.Equals(FVector::ForwardVector,.001));
+            SnapAt=B.Position+FVector(0,250,0);
+            Test(TEXT("Rail endpoint snap respects the snap radius"),!FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr));
+            for (TActorIterator<AFGBuildable> It(World,Class);It;++It)
+                if (!Before.Contains(*It) && FMath::Abs(It->GetActorLocation().Y-A.Position.Y)<1) It->SetActorEnableCollision(true);
+        }
         // Extend the same line into a port already present in the world.
         Plan.Nodes[0].Position=Plan.Nodes[1].Position; Plan.Nodes[1].Position.X+=9000;
         Test(TEXT("Plan extension connects to the existing same-type spline"),FBSPlanBuild::Build(Player,Plan,Error));
@@ -186,6 +205,7 @@ bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer* Player,TFunctio
         if (Remote && Members.Num()==2)
         {
             auto* Gun=Player->GetBuildGun();
+            const bool WasEquipped=Player->IsBuildGunEquipped();
             const auto Position=Player->GetActorLocation();
             auto* PreviousBuild=Cast<UFGBuildGunStateBuild>(Gun->GetCurrentState());
             auto* PreviousPaint=Cast<UFGBuildGunStatePaint>(Gun->GetCurrentState());
@@ -196,13 +216,14 @@ bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer* Player,TFunctio
                 if (PreviousBuild) Gun->GotoBuildState(PreviousRecipe);
                 else if (PreviousPaint) Gun->GotoPaintState(PreviousSwatch,true);
                 else Gun->GotoDismantleState();
+                if (!WasEquipped) Player->UnequipBuildGun();
             };
             Player->SetActorLocation(Pose.GetLocation()+FVector(0,-500,500),false,nullptr,ETeleportType::TeleportPhysics);
             const auto Swatch=LoadClass<UFGCustomizationRecipe>(nullptr,TEXT("/Game/FactoryGame/Buildable/-Shared/Customization/Swatches/Recipe_Swatch_Slot1.Recipe_Swatch_Slot1_C"));
             const auto Material=LoadClass<UFGCustomizationRecipe>(nullptr,TEXT("/Game/FactoryGame/Buildable/-Shared/Customization/Materials/Recipe_Material_Foundation_Concrete.Recipe_Material_Foundation_Concrete_C"));
             AFGRecipeManager::Get(World)->AddAvailableRecipe(Swatch); AFGRecipeManager::Get(World)->AddAvailableRecipe(Material);
             Settings.Scope=EBSConnectedScope::Strict;
-            Gun->GotoPaintState(Swatch,true); Remote->LastConnectedPaint=-100;
+            Player->HotKeyPaint(Swatch); Gun->GotoPaintState(Swatch,true); Remote->LastConnectedPaint=-100;
             Remote->Server_PaintConnected(FBSBuildingRef::FromActor(Members[0]),Settings,Swatch);
             const auto Desc=UFGCustomizationRecipe::GetCustomizationDescriptor(Swatch);
             Test(TEXT("Connected paint applies swatch to both designer foundations"),Desc && Members[0]->GetCustomizationData_Native().SwatchDesc==Desc && Members[1]->GetCustomizationData_Native().SwatchDesc==Desc);

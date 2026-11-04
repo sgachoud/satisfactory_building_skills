@@ -1,3 +1,12 @@
+# 0.11.1 - Game update compatibility
+
+- Fixes deletion undo crashing after game update 1.2.5.0 (CL 517554).
+- Resolves native blueprint storage through runtime reflection, covering undo, copy, blueprint saving, scale restoration and preview cleanup.
+- Restores Plan endpoint discovery when rail collision is represented by an instance rather than the track actor.
+- Refreshes the gameplay regressions for the current selection modes and settings menus.
+
+Update both client and server. Validation is recorded in docs/TESTING.md.
+
 # 0.11.0 - Mixed transport plans and blueprint designer selection
 
 - Connected selection and material/swatch spreading now work on buildings inside blueprint designers.

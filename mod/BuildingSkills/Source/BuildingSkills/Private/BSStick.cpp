@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSStick.h"
 #include "BSEditModeComponent.h"
 #include "BuildingSkills.h"
@@ -852,6 +853,9 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     auto* PC=Cast<APlayerController>(Player->GetController());
     auto* Input=PC ? Cast<UEnhancedPlayerInput>(PC->PlayerInput) : nullptr;
     if (!E || !Input) return false;
+    const int32 SettingsPhase=Phase;
+    if (Phase>=14 && Phase<=19) Phase=-2;
+    else if (Phase>=20) Phase-=6;
     bool Passed=true;
     auto Check=[&](const TCHAR* Name,bool OK) { UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME %s: Stick: %s"),OK ? TEXT("PASS") : TEXT("FAIL"),Name); Passed &= OK; };
     auto Supply=[&](AFGHologram* H) {
@@ -1191,47 +1195,57 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
         Key(EKeys::MouseScrollUp,false);
         Check(TEXT("Physical wheel drives the configured distance action"),FMath::IsNearlyEqual(E->StickDistance,8.0+Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings().StickStep));
         Check(TEXT("Bottom hints expose toggle, wheel, both tilt axes and K"),E->GetControlHints().Num()==6);
+        // This fixture edits both constraints before toggling them off. The
+        // player's persisted defaults may start either constraint disabled.
+        auto& UISettings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
+        UISettings.VerticalConstraint=true; UISettings.HorizontalConstraint=true;
         Key(EKeys::K,true);
     }
-    if (Phase==13)
+    // Commit one input per rendered frame, as a player does. Numeric commits
+    // invalidate layout; cached hit geometry must not be reused immediately.
+    if (SettingsPhase>=13 && SettingsPhase<=19)
     {
         Key(EKeys::K,false);
-        Check(TEXT("Settings show native mouse cursor"),E->StickWindow && PC->bShowMouseCursor);
-        if (E->StickWindow && !FParse::Param(FCommandLine::Get(),TEXT("nullrhi")))
+        Check(TEXT("Settings retain native mouse cursor during editing"),E->StickWindow && PC->bShowMouseCursor);
+        if (!E->StickWindow) return false;
+        TArray<TSharedRef<SEditableText>> Fields;
+        TArray<TSharedRef<SCheckBox>> Toggles;
+        TFunction<void(TSharedRef<SWidget>)> Find=[&](TSharedRef<SWidget> W) {
+            if (W->GetTypeAsString()==TEXT("SEditableText")) Fields.Add(StaticCastSharedRef<SEditableText>(W));
+            if (W->GetTypeAsString()==TEXT("SCheckBox")) Toggles.Add(StaticCastSharedRef<SCheckBox>(W));
+            auto* C=W->GetChildren(); for (int32 I=0; I<C->Num(); ++I) Find(C->GetChildAt(I));
+        };
+        Find(E->StickWindow->TakeWidget());
+        Check(TEXT("Five numeric controls and both constraint switches are present"),Fields.Num()==5 && Toggles.Num()==2);
+        if (Fields.Num()!=5 || Toggles.Num()!=2) return false;
+        if (SettingsPhase==13)
         {
-            TArray<TSharedRef<SEditableText>> Fields;
-            TArray<TSharedRef<SCheckBox>> Toggles;
-            TFunction<void(TSharedRef<SWidget>)> Find=[&](TSharedRef<SWidget> W) {
-                if (W->GetTypeAsString()==TEXT("SEditableText")) Fields.Add(StaticCastSharedRef<SEditableText>(W));
-                if (W->GetTypeAsString()==TEXT("SCheckBox")) Toggles.Add(StaticCastSharedRef<SCheckBox>(W));
-                auto* C=W->GetChildren(); for (int32 I=0; I<C->Num(); ++I) Find(C->GetChildAt(I));
-            };
-            Find(E->StickWindow->TakeWidget()); Check(TEXT("All five numeric controls are present"),Fields.Num()==5);
-            if (Fields.Num()==5)
-            {
-                const auto A=Fields[1]->GetCachedGeometry().GetAbsolutePosition();
-                const auto B=Fields[2]->GetCachedGeometry().GetAbsolutePosition();
-                Check(TEXT("Equivalent slope fields share a row"),FMath::Abs(A.Y-B.Y)<2 && B.X>A.X);
-                for (const int32 Index:{0,2,3,4})
-                {
-                    Check(TEXT("Numeric control accepts mouse focus"),Click(Fields[Index]) && Fields[Index]->HasKeyboardFocus());
-                    Fields[Index]->SelectAllText();
-                    for (TCHAR Ch:FString(Index==0 ? TEXT("2.5") : Index==2 ? TEXT("10") : Index==3 ? TEXT("60") : TEXT("7.5")))
-                        FSlateApplication::Get().ProcessKeyCharEvent(FCharacterEvent(Ch,FModifierKeysState(),0,false));
-                    FSlateApplication::Get().ProcessKeyDownEvent(FKeyEvent(EKeys::Enter,FModifierKeysState(),0,false,0,0));
-                }
-            }
-            Check(TEXT("Typed percent updates linked degrees and radius stays independent"),FMath::IsNearlyEqual(E->StickWindow->Draft.StickSlope,float(FMath::RadiansToDegrees(FMath::Atan(.1))),.001f) && E->StickWindow->Draft.StickRadius==60 && E->StickWindow->Draft.StickStep==2.5f);
-            Check(TEXT("K offers separate vertical and horizontal switches"),Toggles.Num()==2);
-            if (Toggles.Num()==2)
-            {
-                const float Slope=E->StickWindow->Draft.StickSlope;
-                Check(TEXT("Mouse disables vertical constraint independently"),Click(Toggles[0]) && !E->StickWindow->Draft.VerticalConstraint && E->StickWindow->Draft.HorizontalConstraint);
-                Check(TEXT("Mouse disables horizontal constraint independently"),Click(Toggles[1]) && !E->StickWindow->Draft.HorizontalConstraint);
-                Check(TEXT("Disabling constraints retains their numeric values"),E->StickWindow->Draft.StickSlope==Slope && E->StickWindow->Draft.StickRadius==60);
-            }
+            const auto A=Fields[1]->GetCachedGeometry().GetAbsolutePosition();
+            const auto B=Fields[2]->GetCachedGeometry().GetAbsolutePosition();
+            Check(TEXT("Equivalent slope fields share a row"),FMath::Abs(A.Y-B.Y)<2 && B.X>A.X);
         }
-        FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsStickSettings.png"),true,false);
+        if (SettingsPhase<=16)
+        {
+            const int32 Indices[]={0,2,3,4}; const TCHAR* Values[]={TEXT("2.5"),TEXT("10"),TEXT("60"),TEXT("7.5")};
+            const int32 I=Indices[SettingsPhase-13];
+            Check(TEXT("Numeric control accepts mouse focus"),Click(Fields[I]) && Fields[I]->HasKeyboardFocus());
+            Fields[I]->SelectAllText();
+            for (TCHAR Ch:FString(Values[SettingsPhase-13])) FSlateApplication::Get().ProcessKeyCharEvent(FCharacterEvent(Ch,FModifierKeysState(),0,false));
+            FSlateApplication::Get().ProcessKeyDownEvent(FKeyEvent(EKeys::Enter,FModifierKeysState(),0,false,0,0));
+            FSlateApplication::Get().ProcessKeyUpEvent(FKeyEvent(EKeys::Enter,FModifierKeysState(),0,false,0,0));
+        }
+        if (SettingsPhase==17)
+        {
+            Check(TEXT("Typed percent updates linked degrees and radius stays independent"),FMath::IsNearlyEqual(E->StickWindow->Draft.StickSlope,float(FMath::RadiansToDegrees(FMath::Atan(.1))),.001f) && E->StickWindow->Draft.StickRadius==60 && E->StickWindow->Draft.StickStep==2.5f);
+            Check(TEXT("Mouse disables vertical constraint independently"),Click(Toggles[0]) && !E->StickWindow->Draft.VerticalConstraint && E->StickWindow->Draft.HorizontalConstraint);
+        }
+        if (SettingsPhase==18) Check(TEXT("Mouse disables horizontal constraint independently"),Click(Toggles[1]) && !E->StickWindow->Draft.HorizontalConstraint);
+        if (SettingsPhase==19)
+        {
+            Check(TEXT("Disabling constraints retains their numeric values"),FMath::IsNearlyEqual(E->StickWindow->Draft.StickSlope,float(FMath::RadiansToDegrees(FMath::Atan(.1))),.001f) && E->StickWindow->Draft.StickRadius==60);
+            FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsStickSettings.png"),true,false);
+        }
+        return Passed;
     }
     if (Phase==14)
     {
@@ -1243,9 +1257,9 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
                 auto* C=W->GetChildren(); for (int32 I=0; I<C->Num(); ++I) Find(C->GetChildAt(I));
             };
             Find(E->StickWindow->TakeWidget());
-            Check(TEXT("Mouse Apply closes settings"),Buttons.Num()==2 && Click(Buttons.Last()) && !E->StickWindow);
+            Check(TEXT("Mouse Close closes settings"),Buttons.Num()==1 && Click(Buttons.Last()) && !E->StickWindow);
             const auto& Settings=Player->GetWorld()->GetSubsystem<UBSStickSession>()->GetSettings();
-            Check(TEXT("Apply stores temporary session values"),Settings.StickStep==2.5f && Settings.StickRadius==60 && Settings.StickTiltStep==7.5f && !Settings.VerticalConstraint && !Settings.HorizontalConstraint);
+            Check(TEXT("Committed fields store temporary session values without Apply"),Settings.StickStep==2.5f && Settings.StickRadius==60 && Settings.StickTiltStep==7.5f && !Settings.VerticalConstraint && !Settings.HorizontalConstraint);
         }
         if (E->StickWindow) E->CloseStickSettings();
         E->OnStickSettings();
@@ -1409,7 +1423,17 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
     const bool DoublePillars=FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsARSDoubleTest"));
     FString PresetDirectory; const bool ExactPreset=FParse::Value(FCommandLine::Get(),TEXT("BuildingSkillsARSPreset="),PresetDirectory);
     auto* Session=Player->GetWorld()->GetSubsystem<UBSStickSession>();
-    if (Phase==28)
+    if (Phase>=28 && Phase<=39 && FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsSkipARSTest")))
+    {
+        if (Phase==28) UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME SKIP: Stick: optional ARS integration explicitly excluded from this run."));
+        if (Phase==39)
+        {
+            FBSBlueprintAccess::Buildables(AFGBlueprintSubsystem::Get(Player->GetWorld())).Add(nullptr);
+            Check(TEXT("Shutdown fixture includes an expired preview entry"),true);
+        }
+        return Passed;
+    }
+    if (Phase==28 && !FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsSkipARSTest")))
     {
         auto* ARSClass=FindObject<UClass>(nullptr,TEXT("/Script/AutoRailSupports.ARSRemoteCallObject"));
         auto* ARS=ARSClass ? Cast<AFGPlayerController>(PC)->GetRemoteCallObjectOfClass(ARSClass) : nullptr;
@@ -1433,7 +1457,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
             if (Captured)
             {
                 auto* System=AFGBlueprintSubsystem::Get(Player->GetWorld());
-                System->mStoredBlueprintData=SupportData;
+                FBSBlueprintAccess::Data(System)=SupportData;
                 const bool Written=System->WriteBlueprintToDisk(Record);
                 Check(TEXT("Temporary support blueprint uses native disk format"),Written);
                 System->EnumerateBlueprints();
@@ -1492,8 +1516,8 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
                                 if (Copied && System->ReadBlueprintFromDisc(Alias))
                                 {
                                     FBlueprintRecord Record; Record.BlueprintName=Alias;
-                                    auto* Descriptor=System->CreateBlueprintDescriptor(Record,System->mStoredBlueprintData.BlueprintHeader,false);
-                                    Check(TEXT("Preset blueprint descriptor is ready"),Descriptor!=nullptr && System->DoesHeaderExistForDescriptor(Descriptor));
+                                    auto* Descriptor=System->CreateBlueprintDescriptor(Record,FBSBlueprintAccess::Data(System).BlueprintHeader,false);
+                                    Check(TEXT("Preset blueprint descriptor is ready"),Descriptor!=nullptr && FBSBlueprintAccess::HasHeader(System,Descriptor));
                                     TestPresetDescriptors.Add(Descriptor); TestPresetNames.Add(Alias);
                                     Field->SetPropertyValue_InContainer(Container,Alias);
                                     TArray<FItemAmount> Cost; if (Descriptor) Descriptor->GetBlueprintCost(Cost);
@@ -1639,7 +1663,7 @@ bool FBSStick::RunChecks(AFGCharacterPlayer* Player,int32 Phase)
         ObserveTestStamps=false;
         AFGBuildableSubsystem::Get(Player->GetWorld())->BuildableConstructedGlobalDelegate.RemoveDynamic(Session,&UBSStickSession::ObserveConstruction);
         if (SupportDescriptor.IsValid()) AFGBlueprintSubsystem::Get(Player->GetWorld())->DeleteBlueprintDescriptor(SupportDescriptor.Get());
-        AFGBlueprintSubsystem::Get(Player->GetWorld())->mBlueprintWorldBuildables.Add(nullptr);
+        FBSBlueprintAccess::Buildables(AFGBlueprintSubsystem::Get(Player->GetWorld())).Add(nullptr);
         Check(TEXT("Shutdown fixture includes an expired preview entry"),true);
     }
     if (Phase==40)

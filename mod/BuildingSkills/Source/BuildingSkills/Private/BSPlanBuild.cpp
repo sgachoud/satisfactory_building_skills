@@ -8,6 +8,7 @@
 #include "Engine/OverlapResult.h"
 #include "Hologram/HologramHelpers.h"
 #include "FGCharacterPlayer.h"
+#include "FGBuildableSubsystem.h"
 #include "FGRecipe.h"
 #include "FGRecipeManager.h"
 #include "FGInventoryComponent.h"
@@ -139,6 +140,15 @@ bool FBSPlanBuild::SnapConnection(UWorld* World,EBSPlanBuildable Type,FVector& P
 {
     TSet<AFGBuildable*> Actors;
     if (auto* B=Cast<AFGBuildable>(Hit)) Actors.Add(B);
+    // Rail meshes may be represented by the instance manager, so a collision
+    // overlap (or the aim hit's actor) need not identify the owning buildable.
+    // Use the game's maintained buildable index for nearby connection owners.
+    if (auto* System=AFGBuildableSubsystem::Get(World))
+    {
+        TArray<AFGBuildable*> Indexed;
+        System->GetCollidingBuildablesInBoundingBox(Indexed,FBox(Position-FVector(200),Position+FVector(200)));
+        for (auto* B:Indexed) Actors.Add(B);
+    }
     TArray<FOverlapResult> Nearby;
     World->OverlapMultiByObjectType(Nearby,Position,FQuat::Identity,FCollisionObjectQueryParams::AllObjects,FCollisionShape::MakeSphere(200));
     for (const auto& Result:Nearby) if (auto* B=Cast<AFGBuildable>(Result.GetActor())) Actors.Add(B);

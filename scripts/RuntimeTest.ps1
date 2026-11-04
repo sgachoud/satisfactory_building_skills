@@ -7,6 +7,7 @@ param(
     [switch]$ConnectedOnly,
     [switch]$VolumeOnly,
     [switch]$StickOnly,
+    [switch]$SkipARSIntegration,
     [switch]$PlanOnly,
     [switch]$PlanConstructionOnly,
     [switch]$PolishOnly,
@@ -40,6 +41,7 @@ $arguments += '-ini:Engine:[EOSSDK.Platform.Live]:bDisableOverlay=True,[EOSSDK.P
 if ($ConnectedOnly) { $arguments += '-BuildingSkillsConnectedTest' }
 if ($VolumeOnly) { $arguments += '-BuildingSkillsVolumeTest' }
 if ($StickOnly) { $arguments += '-BuildingSkillsStickTest' }
+if ($SkipARSIntegration) { $arguments += '-BuildingSkillsSkipARSTest' }
 if ($PlanOnly) { $arguments += '-BuildingSkillsPlanTest' }
 if ($PlanConstructionOnly) { $arguments += '-BuildingSkillsPlanConstructionTest' }
 if ($TransformersOnly) { $arguments += '-BuildingSkillsTransformersTest' }
@@ -77,7 +79,7 @@ if ($Render -and -not $PlanConstructionOnly -and -not $PlanOnly -and -not $Bluep
         Copy-Item -LiteralPath $transformScreenshot -Destination (Join-Path $saved 'TransformTest.png') -Force
     } else { throw 'The runtime test did not produce a fresh transform screenshot.' }
 }
-if ($Render -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $PooledVisualsOnly) {
+if ($Render -and -not $PlanConstructionOnly -and -not $PlanOnly -and -not $BlueprintFixture -and -not $TransformersOnly -and -not $PolishOnly -and -not $StickOnly -and -not $VolumeOnly -and -not $ConnectedOnly -and -not $NetworksOnly -and -not $PooledVisualsOnly) {
     $blueprintScreenshot = Join-Path $env:LOCALAPPDATA 'FactoryGame\Saved\BuildingSkillsBlueprintTest.png'
     if ((Test-Path -LiteralPath $blueprintScreenshot) -and (Get-Item -LiteralPath $blueprintScreenshot).LastWriteTime -ge $started) {
         Copy-Item -LiteralPath $blueprintScreenshot -Destination (Join-Path $saved 'BlueprintTest.png') -Force

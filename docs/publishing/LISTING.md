@@ -5,7 +5,7 @@ Tools for editing your factory and planning what comes next.
 Group buildings, move whole selections, copy layouts, repeat construction with
 mirrors and rotations, and design rail, pipe, belt and hypertube networks before building them.
 
-**Early-access release: 0.11.0.** Back up an important save before large editing
+**Early-access release: 0.11.1.** Back up an important save before large editing
 operations. Some recent planner changes still need broader player testing.
 
 ## Start here

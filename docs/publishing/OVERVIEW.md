@@ -71,7 +71,7 @@ segment lengths and parallel lines. Rail lines can include block signals.
 
 ## Before you install
 
-**Early access · 0.11.0 · SML 3.12.** Back up important saves before large edits.
+**Early access · 0.11.1 · SML 3.12.** Back up important saves before large edits.
 In multiplayer, the server and every client need the same mod version.
 Windows Steam/Epic clients and Windows/Linux dedicated-server packages are included.
 

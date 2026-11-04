@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSClipboard.h"
 #include "BSDeduplication.h"
 #include "BSBlueprintSave.h"
@@ -288,7 +289,7 @@ void UBSClipboard::InstallHooks()
             // Preview consumers can destroy measurement actors before this
             // subsystem. GC nulls the reflected references; native EndPlay
             // calls Destroy on each entry without checking for null.
-            const int32 Removed=System->mBlueprintWorldBuildables.RemoveAll(
+            const int32 Removed=FBSBlueprintAccess::Buildables(System).RemoveAll(
                 [](const auto& Building) { return !IsValid(Building.Get()); });
             if (Removed) UE_LOG(LogBuildingSkills, Display,
                 TEXT("Blueprint shutdown: removed %d expired preview entries"), Removed);
@@ -328,7 +329,7 @@ void UBSClipboard::InstallHooks()
         {
             if (!Name.StartsWith(ClipboardPrefix)) return;
             auto* Clipboard = Find(System->GetWorld(), Name);
-            if (Clipboard) System->mStoredBlueprintData = Clipboard->Data;
+            if (Clipboard) FBSBlueprintAccess::Data(System) = Clipboard->Data;
             Scope.Override(Clipboard != nullptr);
         });
     SUBSCRIBE_METHOD(AFGBuildGun::SetDesiredBlueprint,
@@ -356,9 +357,9 @@ void UBSClipboard::InstallHooks()
             if (!Clipboard || !System) return;
             // Keep transient clipboard descriptors available to native decode
             // work without permanently adding them to the blueprint library.
-            auto Descriptors = System->mAllBlueprintDescriptors;
+            auto Descriptors = FBSBlueprintAccess::Descriptors(System);
             Descriptors.AddUnique(Clipboard->Descriptor);
-            TGuardValue<decltype(Descriptors)> Guard(System->mAllBlueprintDescriptors, MoveTemp(Descriptors));
+            TGuardValue<decltype(Descriptors)> Guard(FBSBlueprintAccess::Descriptors(System), MoveTemp(Descriptors));
             Scope(Self);
         });
     SUBSCRIBE_METHOD(AFGBlueprintHologram::OnRep_BlueprintDescName,
@@ -367,9 +368,9 @@ void UBSClipboard::InstallHooks()
             auto* Clipboard = Find(Hologram->GetWorld(), Hologram->mBlueprintDescName);
             auto* System = AFGBlueprintSubsystem::Get(Hologram->GetWorld());
             if (!Clipboard || !System) return;
-            auto Descriptors = System->mAllBlueprintDescriptors;
+            auto Descriptors = FBSBlueprintAccess::Descriptors(System);
             Descriptors.AddUnique(Clipboard->Descriptor);
-            TGuardValue<decltype(Descriptors)> Guard(System->mAllBlueprintDescriptors, MoveTemp(Descriptors));
+            TGuardValue<decltype(Descriptors)> Guard(FBSBlueprintAccess::Descriptors(System), MoveTemp(Descriptors));
             Scope(Hologram);
         });
     SUBSCRIBE_UOBJECT_METHOD(AFGBlueprintHologram, Construct,
@@ -392,13 +393,13 @@ void UBSClipboard::InstallHooks()
             if (!Clipboard) return;
             auto* RCO = Cast<UBSGroupRemoteCallObject>(Clipboard->GetOuter());
             if (!BlueprintWorld && (!RCO || RCO->GetOwnerPlayerCharacter() != Instigator)) { Scope.Cancel(); return; }
-            System->mStoredBlueprintData = Clipboard->Data;
+            FBSBlueprintAccess::Data(System) = Clipboard->Data;
             // Native loading requires a cached header as well as the archive.
             // Scope it to this call so clipboard entries never enter library enumeration.
-            auto Headers = System->mCachedHeaders;
+            auto Headers = FBSBlueprintAccess::Headers(System);
             Headers.RemoveAll([&](const auto& Header) { return Header.BlueprintName == Clipboard->Name(); });
             Headers.Add(Clipboard->Data.BlueprintHeader);
-            TGuardValue<TArray<FBlueprintHeader>> HeaderGuard(System->mCachedHeaders, MoveTemp(Headers));
+            TGuardValue<TArray<FBlueprintHeader>> HeaderGuard(FBSBlueprintAccess::Headers(System), MoveTemp(Headers));
             if (BlueprintWorld || !System->HasAuthority())
             {
                 Scope(System, Descriptor, Origin, Buildings, BlueprintWorld, Designer, Instigator, Proxy, PostSerialize, PreBeginPlay);
@@ -437,7 +438,7 @@ void UBSClipboard::PreviewMemberCost(AFGBlueprintSubsystem* System,AFGBuildable*
     auto* LiveWorld = System->GetWorld();
     auto* PreviewWorld = Building->GetWorld();
     auto* Recipes = AFGRecipeManager::Get(LiveWorld);
-    if (!Recipes || !PreviewWorld || (PreviewWorld != LiveWorld && PreviewWorld != System->mBlueprintWorld)) return;
+    if (!Recipes || !PreviewWorld || (PreviewWorld != LiveWorld && PreviewWorld != FBSBlueprintAccess::PreviewWorld(System))) return;
 
     // Native recipe lookup reads AFGGameState from UWorld. Only the native
     // blueprint preview world borrows this pointer during synchronous pricing.

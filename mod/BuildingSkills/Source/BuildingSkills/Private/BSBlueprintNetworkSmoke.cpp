@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSBlueprintScale.h"
 #include "BSClipboard.h"
 #include "BuildingSkills.h"
@@ -96,7 +97,7 @@ bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 P
         const bool Read=System->ReadBlueprintFromDisc(FixtureName);
         Check(TEXT("Reported blueprint is decoded by the native disk reader"),Read);
         if (!Read) return false;
-        auto* Clip=NewObject<UBSClipboard>(RCO); Clip->RequestId=FGuid::NewGuid(); Clip->Data=System->mStoredBlueprintData;
+        auto* Clip=NewObject<UBSClipboard>(RCO); Clip->RequestId=FGuid::NewGuid(); Clip->Data=FBSBlueprintAccess::Data(System);
         TArray<FActorSaveHeader> Headers;
         if (!ReadBuildingSkillsBlueprintHeaders(Clip->Data,Headers)) return false;
         bool AllClasses=true;

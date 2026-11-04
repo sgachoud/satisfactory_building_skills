@@ -1,8 +1,86 @@
 # Verification
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
-build is CL 502094; the current installed Steam game is CL 513885 (1.2.4.1).
-Results below are tied to their tested versions. Current development version: Building Skills 0.11.0.
+build is CL 502094; the current installed Steam game is CL 517554 (1.2.5.0).
+Results below are tied to their tested versions. Current development version: Building Skills 0.11.1.
+
+## 0.11.1: CL 517554 compatibility
+
+The shipped game headers were compared with CL 513885. The new
+`AFGBlueprintSubsystem::mIsSerializingBlueprintData` member shifts subsequent
+native storage, including cached headers and preview arrays. A clean isolated
+0.11.0 run reproduced the deletion-undo crash in `UBSActionRecord::Restore` while
+copying `mCachedHeaders`. The candidate resolves this storage by reflected
+property offsets in the running game, without changing the shared SDK.
+
+Completed isolated packaged-game fixtures on CL 517554:
+
+| Fixture | Passed assertions | Evidence under `Saved/Update517554/` |
+| --- | ---: | --- |
+| Core selection, groups, transforms, copy and deduplication | 330 | `candidate2-base.log` |
+| Connected selection/paint and settings handoff | 98 | `candidate2-smart-connected.log` |
+| Volume selection | 45 | `candidate2-volume.log` |
+| Plan controls, persistence, geometry and construction | 396 | `candidate2-plan.log` |
+| Native mixed-transport construction and endpoint snapping | 135 | `candidate1-planconstruction.log` |
+| Transformers | 110 | `candidate1-transformers.log` |
+| Undo/redo, refunds, restored networks and large selections | 72 | `candidate1-polish.log` |
+| Copied networks in standalone play | 171 | `candidate1-network.log` |
+| Pooled machine visuals after movement | 49 | `candidate1-pooledvisual.log` |
+| Blueprint save/load, scale and cleanup | 119 | `candidate3-blueprint-blueprint.log` |
+| Stick placement, splitting, endpoint joins and settings | 369 | `candidate4-retry-stick.log` |
+
+These eleven fixtures passed 1,894 assertions in total. A separate Steam client
+connected to an isolated Windows dedicated server on CL 517554 and passed native
+blueprint placement, deletion, deletion undo and deletion redo for two foundations.
+The restored objects replicated back to the client; client disconnect and server
+shutdown completed without a crash. Evidence: `network-updated-test.log` and the
+isolated server log. The fixture uses the native dismantle hotkey and sends both
+the blueprint proxy and its lightweight bundles, with a live-member precondition.
+Earlier incomplete requests and a fresh-world run rejected by native
+`FGCDInvalidFloor` are retained as failed/incomplete evidence, not passing tests.
+
+The new endpoint checks cover every supported transport recipe and
+rail discovery with track actor collision disabled; they also reject targets
+outside the snapping radius. These are packaged-game fixtures, not a claim of
+exhaustive multiplayer or manual GUI coverage.
+
+Evidence is retained under `Saved/Update517554/`, including
+`baseline-polish.log`, `candidate1-results.json` and `game-headers.diff`.
+Initial broad runs also exposed outdated test assumptions about selection-mode
+counts, short versus held R, settings navigation and deferred dismantle visuals.
+Failed runs remain in the evidence; corrected fixtures are rerun separately.
+The Stick settings fixture explicitly enables both constraints before editing
+their numeric fields, then verifies disabling them preserves the values. An
+interrupted launch with Steam closed produced no gameplay results and is not
+included in the passing counts.
+
+Windows Steam and Linux Server packages were built and validated: archive CRCs,
+version metadata, native binary hashes, all fourteen required cooked assets and
+license/notice files. The final Windows binary and cooked content exactly match
+the isolated test installation; its descriptor differs only in formatting.
+Windows 0.11.1 was installed after backing up the previous plugin, and all eleven
+installed files matched the package by SHA-256. Receipts:
+`Saved/InstallationVerification.json` and
+`Saved/Releases/BuildingSkills-0.11.1-verification.json`.
+Linux was compiled and packaged, but was not launched on Linux. These checks
+do not cover every multiplayer feature or combination of third-party mods.
+
+Publication preparation also compiled the Epic client and refreshed Windows
+Server, then validated the merged three-platform archive with all four native
+binaries. Its Steam and Linux files exactly match the tested/installable packages.
+Build logs are retained under `Saved/PublicationBuild0111/`; publication checks
+are recorded in the release verification receipt. Epic was not launched.
+
+Optional integration limitation: installed Auto Rail Supports 1.1.0 crashes
+during `AARSSubsystem::BeginPlay`, before the Stick fixture starts. A second
+fresh-world run with Building Skills removed reproduces the same delegate
+registration crash. Evidence: `candidate1-stick-stick.log` and
+`ars-without-bs.log`. No other mod was modified. The standalone Stick run
+explicitly excludes this integration; it does not count ARS coverage as passing.
+To run that standalone fixture, use `scripts/RuntimeTest.ps1 -StickOnly -Render
+-SkipARSIntegration` with an isolated installation that does not load the
+incompatible optional plugin. The switch only skips its test; it does not disable
+or modify an installed mod.
 
 ## 0.11.0: designer Connected search and mixed spline plans
 

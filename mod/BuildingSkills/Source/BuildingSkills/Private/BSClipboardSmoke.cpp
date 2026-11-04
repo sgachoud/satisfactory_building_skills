@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSClipboard.h"
 #include "BSDeduplication.h"
 #include "BSEditModeComponent.h"
@@ -34,6 +35,8 @@
 #include "UObject/ScriptInterface.h"
 #include "Equipment/FGBuildGun.h"
 #include "Equipment/FGBuildGunBuild.h"
+#include "Equipment/FGBuildGunDismantle.h"
+#include "UnrealClient.h"
 
 namespace
 {
@@ -45,12 +48,16 @@ namespace
         double Started = FPlatformTime::Seconds();
         int32 Phase = 0;
         int32 WaitTicks = 0;
+        int32 DiagnosticTicks = 0;
         TWeakObjectPtr<UObject> ActivatedServer;
         TSet<TWeakObjectPtr<AFGBlueprintProxy>> Existing;
+        TWeakObjectPtr<AFGBlueprintProxy> Placed;
+        TArray<FBSBuildingRef> Members;
+        const bool TestUndo=FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsUpdateNetworkTest"));
 
         bool Tick(float)
         {
-            if (FPlatformTime::Seconds() - Started > 240)
+            if (FPlatformTime::Seconds() - Started > (TestUndo ? 480 : 240))
             {
                 UE_LOG(LogBuildingSkills, Error, TEXT("ISSUE1 NETWORK: FAIL timeout phase=%d"), Phase);
                 FPlatformMisc::RequestExit(false); return false;
@@ -113,10 +120,17 @@ namespace
                 if (!Player || !Player->IsLocallyControlled() || !System || !Player->GetBuildGun()) continue;
                 if (!System->GetSessionBlueprintPath().Contains(TEXT("BuildingSkills_Issue1_Test"))) continue;
                 auto* Gun = Player->GetBuildGun();
+                if (TestUndo && Phase>=4 && ++DiagnosticTicks%15==0)
+                {
+                    int32 Alive=0; for (const auto& Ref:Members) Alive+=Ref.IsAlive(World);
+                    UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: phase=%d state=%s equipped=%d proxy=%d members=%d alive=%d"),
+                        Phase,*GetNameSafe(Gun->GetCurrentState()),Player->IsBuildGunEquipped(),Placed.IsValid(),Members.Num(),Alive);
+                }
                 auto* State = Cast<UFGBuildGunStateBuild>(Gun->GetBuildGunStateFor(EBuildGunState::BGS_BUILD));
                 if (!State) continue;
                 if (Phase == 1)
                 {
+                    if (!Player->CanEquipBuildGun()) continue;
                     auto* Descriptor = System->GetBlueprintDescriptorByNameString(TEXT("rest"));
                     if (!Descriptor) continue;
                     if (auto* PlayerState = Player->GetPlayerState())
@@ -133,6 +147,19 @@ namespace
                 }
                 else if (Phase == 2 && ++WaitTicks >= 5)
                 {
+                    if (WaitTicks%15==0 && !Player->IsBuildGunEquipped())
+                    {
+                        UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: equip readiness=%d state=%s"),Player->CanEquipBuildGun(),*GetNameSafe(Gun->GetCurrentState()));
+                        FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsNetworkEquip.png"),true,false);
+                        // Joining can finish between selecting the descriptor and
+                        // equipment replication. Retry only this fixture's recipe.
+                        if (Player->CanEquipBuildGun())
+                        {
+                            auto* Descriptor=System->GetBlueprintDescriptorByNameString(TEXT("rest"));
+                            State->SetActiveBlueprintDescriptor(Descriptor); System->SetActiveBlueprintHologramDescriptor(Descriptor);
+                            Player->HotKeyRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+                        }
+                    }
                     auto* Hologram = Cast<AFGBlueprintHologram>(State->GetHologram());
                     if (WaitTicks % 15 == 0) UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: waiting for blueprint equipped=%d hologram=%d name=%s"),
                         Player->IsBuildGunEquipped(), Hologram != nullptr, Hologram ? *Hologram->mBlueprintDescName : TEXT("none"));
@@ -166,14 +193,67 @@ namespace
                         int32 Count = It->GetBuildables().Num();
                         for (const auto& Bundle : It->GetLightweightClassAndIndices()) Count += Bundle.Indices.Num();
                         if (Count != 2) continue;
+                        Placed=*It;
+                        for (auto* Building:It->GetBuildables()) Members.Add(FBSBuildingRef::FromActor(Building));
+                        for (const auto& Bundle:It->GetLightweightClassAndIndices())
+                            for (int32 Index:Bundle.Indices) Members.Add(FBSBuildingRef::FromLightweight(World,Bundle.BuildableClass,Index));
                         UE_LOG(LogBuildingSkills, Display, TEXT("ISSUE1 NETWORK: PASS native remote placement replicated both foundations"));
                         Phase = 4; WaitTicks = 0; break;
                     }
                 }
                 else if (Phase == 4 && ++WaitTicks >= 5)
                 {
+                    if (TestUndo) { Player->HotKeyDismantle(); Phase=5; WaitTicks=0; continue; }
                     FPlatformMisc::RequestExit(false); return false;
                 }
+                else if (TestUndo && Phase==5 && ++WaitTicks>=5)
+                {
+                    auto* Dismantle=Cast<UFGBuildGunStateDismantle>(Gun->GetCurrentState());
+                    if (!Dismantle)
+                    {
+                        if (WaitTicks%15==0) Player->HotKeyDismantle();
+                        continue;
+                    }
+                    int32 Alive=0; for (const auto& Ref:Members) Alive+=Ref.IsAlive(World);
+                    if (!Placed.IsValid() || Members.Num()!=2 || Alive!=2)
+                    {
+                        UE_LOG(LogBuildingSkills,Error,TEXT("UPDATE NETWORK: FAIL deletion precondition proxy=%d members=%d alive=%d"),Placed.IsValid(),Members.Num(),Alive);
+                        FPlatformMisc::RequestExitWithStatus(false,1); return false;
+                    }
+                    struct { TArray<AActor*> Actors; TArray<FDismantleLightweightBundle> Bundles; } Request;
+                    Request.Actors.Add(Placed.Get());
+                    for (const auto& Bundle:Placed->GetLightweightClassAndIndices())
+                    {
+                        auto& Removal=Request.Bundles.Add_GetRef(FDismantleLightweightBundle(Bundle.BuildableClass));
+                        Removal.RemovalIndices=Bundle.Indices;
+                    }
+                    UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: dispatch native blueprint dismantle with %d lightweight bundles"),Request.Bundles.Num());
+                    Dismantle->ProcessEvent(Dismantle->FindFunctionChecked(TEXT("Server_DismantleActors")),&Request);
+                    Phase=6; WaitTicks=0;
+                }
+                else if (TestUndo && Phase>=6 && Phase<=8)
+                {
+                    auto* RCO=PC->GetRemoteCallObjectOfClass<UBSGroupRemoteCallObject>();
+                    if (!RCO) continue;
+                    int32 Alive=0; for (const auto& Ref:Members) Alive+=Ref.IsAlive(World);
+                    if (Phase==6 && Alive==0)
+                    {
+                        UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: PASS deletion replicated both foundations"));
+                        RCO->Server_UndoGunAction(true); Phase=7;
+                    }
+                    else if (Phase==7 && Alive==2)
+                    {
+                        UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: PASS deletion undo restored both foundations on the client"));
+                        RCO->Server_RedoGunAction(true); Phase=8;
+                    }
+                    else if (Phase==8 && Alive==0)
+                    {
+                        UE_LOG(LogBuildingSkills,Display,TEXT("UPDATE NETWORK: PASS deletion redo removed both foundations"));
+                        Phase=9; WaitTicks=0;
+                    }
+                }
+                else if (TestUndo && Phase==9 && ++WaitTicks>=5)
+                { FPlatformMisc::RequestExit(false); return false; }
             }
             return true;
         }
@@ -181,7 +261,9 @@ namespace
 
     const bool Issue1NetworkRegressionInstalled = []
     {
-        if (WITH_EDITOR || IsRunningDedicatedServer() || !FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsIssue1NetworkTest"))) return false;
+        if (WITH_EDITOR || IsRunningDedicatedServer() ||
+            (!FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsIssue1NetworkTest")) &&
+             !FParse::Param(FCommandLine::Get(), TEXT("BuildingSkillsUpdateNetworkTest")))) return false;
         auto Test = MakeShared<FIssue1NetworkRegression>();
         FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Test](float Delta) { return Test->Tick(Delta); }), 1.0f);
         return true;
@@ -304,7 +386,7 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
     Check(TEXT("Clipboard transport preserves native archive bytes"), Decoded->Decode(Error) &&
         Decoded->Data.TOCData == Clipboard->Data.TOCData && Decoded->Data.BlobData == Clipboard->Data.BlobData);
     TArray<UFGBlueprintDescriptor*> Library;
-    System->GetBlueprintDescriptors_Internal(Library);
+    FBSBlueprintAccess::GetDescriptors(System,Library);
     Check(TEXT("Copy descriptor is absent from native blueprint library"), !Library.Contains(Clipboard->Descriptor));
     TArray<AFGBuildable*> Preview;
     System->LoadStoredBlueprint(Clipboard->Descriptor, FTransform::Identity, Preview, true);
@@ -362,12 +444,12 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
             Check(TEXT("Blueprint callback starts with a valid name and descriptor"), ValidInput);
             if (!ValidInput) { Received->Destroy(); return false; }
             TArray<UFGBlueprintDescriptor*> Before;
-            System->GetBlueprintDescriptors_Internal(Before);
+            FBSBlueprintAccess::GetDescriptors(System,Before);
             DecodeBlueprintMessage(static_cast<IFGConstructionMessageInterface*>(Received));
             const bool DecodedDescriptor = Received->mBlueprintDescriptor == Descriptor;
             Check(TEXT("Blueprint message callback preserves the selected descriptor"), DecodedDescriptor);
             TArray<UFGBlueprintDescriptor*> After;
-            System->GetBlueprintDescriptors_Internal(After);
+            FBSBlueprintAccess::GetDescriptors(System,After);
             Check(TEXT("Blueprint callback restores the native descriptor library"), Before == After);
             // Send each mode through the real serializer. Change local state
             // before reading it back so a fallback to local settings cannot pass.
@@ -456,7 +538,7 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
                     FBlueprintRecord FixtureRecord;
                     FixtureRecord.BlueprintName = Name;
                     FixtureRecord.Category = System->GetCategoryForUndefined(); FixtureRecord.SubCategory = System->GetSubCategoryForUndefined();
-                    auto FixtureHeader = System->mStoredBlueprintData.BlueprintHeader;
+                    auto FixtureHeader = FBSBlueprintAccess::Data(System).BlueprintHeader;
                     SavedDescriptor = System->CreateBlueprintDescriptor(FixtureRecord, FixtureHeader);
                 }
                 Check(TEXT("Issue 1 two-foundation blueprint decodes and constructs"), DecodeAndConstruct(SavedDescriptor, 2, 3));
@@ -495,7 +577,18 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
             return Next;
         };
         auto CountProxy = [](AFGBlueprintProxy* P)
-        { int32 N = P ? P->GetBuildables().Num() : 0; if (P) for (const auto& Bundle : P->GetLightweightClassAndIndices()) N += Bundle.Indices.Num(); return N; };
+        {
+            int32 N = 0;
+            if (!IsValid(P)) return N;
+            // Dismantled actors remain in the proxy until their visual effect finishes.
+            for (auto* Actor : P->GetBuildables())
+                if (IsValid(Actor) && !Actor->GetIsDismantled()) ++N;
+            auto* LW = AFGLightweightBuildableSubsystem::Get(P->GetWorld());
+            if (LW) for (const auto& Bundle : P->GetLightweightClassAndIndices())
+                for (int32 Index : Bundle.Indices)
+                    if (auto* Data = LW->GetRuntimeDataForBuildableClassAndIndex(Bundle.BuildableClass, Index); Data && Data->IsValid()) ++N;
+            return N;
+        };
         TGuardValue<EBSDeduplication> ModeGuard(Edit->Deduplication, EBSDeduplication::Skip);
         auto* SkipHolo = SpawnCopy();
         TMap<AFGBuildable*,bool> PreviewVisibility;

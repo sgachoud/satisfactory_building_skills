@@ -288,7 +288,7 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
             Plan->Active=true; Plan->Entering=true;
             Plan->EnteredAt=P->GetWorld()->GetRealTimeSeconds()-3;
             OwnerProperty->SetObjectPropertyValue_InContainer(Gun,nullptr);
-            Check(TEXT("Fixture removes the gun instigator during delayed equip"),!Gun->GetInstigatorCharacter());
+            Check(TEXT("Fixture clears the replicated equipment owner during delayed equip"),!Gun->IsEquipped());
             Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
             Check(TEXT("Plan waits beyond the former two-second grace without input or a context"),Plan->Active && Plan->Entering && !Plan->Allowed() && !Plan->Context);
             OwnerProperty->SetObjectPropertyValue_InContainer(Gun,OriginalOwner);
@@ -433,9 +433,15 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
                     Check(*FString::Printf(TEXT("Plan menu exposes the %s button"),*Label),Button.IsValid());
                     if (Button)
                     {
-                        const FKeyEvent Accept(EKeys::Enter,FModifierKeysState(),0,false,0,0);
-                        Button->OnKeyDown(Button->GetCachedGeometry(),Accept);
-                        Button->OnKeyUp(Button->GetCachedGeometry(),Accept);
+                        // Exercise the real button delegate without depending on
+                        // the game's keyboard-navigation mapping for Enter.
+                        const auto Point=Button->GetCachedGeometry().GetAbsolutePositionAtCoordinates(FVector2D(.5,.5));
+                        Button->SetClickMethod(EButtonClickMethod::MouseDown);
+                        Button->OnMouseButtonDown(Button->GetCachedGeometry(),FPointerEvent(0,Point,Point,{EKeys::LeftMouseButton},EKeys::LeftMouseButton,0,FModifierKeysState()));
+                        Button->OnMouseButtonUp(Button->GetCachedGeometry(),FPointerEvent(0,Point,Point,{},EKeys::LeftMouseButton,0,FModifierKeysState()));
+                        Button->SetClickMethod(EButtonClickMethod::DownAndUp);
+                        UE_LOG(LogBuildingSkills,Display,TEXT("PLAN MENU TEST: %s enabled=%d parallels=%d draft=%d waiting=%d queued=%d refreshing=%d feedback=%s"),
+                            *Label,Button->IsEnabled(),Plan->Current()?Plan->Current()->Parallels.Num():-1,W->ParallelDraft.Num(),Plan->Waiting,Plan->MenuCommands.Num(),W->RefreshAfterAction,*Plan->Message);
                     }
                 };
                 const int32 Count=Plan->Current()->Parallels.Num();

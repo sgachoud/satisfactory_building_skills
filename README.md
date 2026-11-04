@@ -2,7 +2,7 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, Group, Connected and Volume selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.11.0`.
+The mod reference is `BuildingSkills`; the development version is `0.11.1`.
 
 The **Plan** gun designs rail, pipe, belt and hypertube paths before construction, with named personal or
 shared plans, editable nodes and curves, mixed parallel lines, configurable segment

@@ -743,6 +743,8 @@ public:
                 const bool Consumed=App.ProcessKeyDownEvent(FKeyEvent(EKeys::Seven,AltGr,0,false,0,0));
                 App.ProcessKeyCharEvent(FCharacterEvent('|',AltGr,0,false));
                 App.ProcessKeyUpEvent(FKeyEvent(EKeys::Seven,AltGr,0,false,0,0));
+                // Regex changes commit on Enter/focus loss, rather than on every character.
+                App.ProcessKeyDownEvent(FKeyEvent(EKeys::Enter,FModifierKeysState(),0,false,0,0));
                 Check(TEXT("AltGr+7 is consumed by whitelist and enters the pipe character"),Consumed && Edit->ConnectedWindow && Edit->ConnectedWindow->Draft.Whitelist==TEXT("|") && Edit->IsSpreadPainting());
                 Fields[2]->SetText(FText::FromString(TEXT("(?i)(?:belt|pipe)")));
                 FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir()/TEXT("BuildingSkillsRegexInputTest.png"),true,false);

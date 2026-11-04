@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSBlueprintSave.h"
 #include "BSBlueprintScale.h"
 #include "BSBlueprintBounds.h"
@@ -184,7 +185,7 @@ void ABSBlueprintSaveSession::InstallHooks()
             TArray<FActorSaveHeader> Headers;
             TSet<FString> SerializedBlueprintMembers;
             bool BlueprintContentsValid = RestoreBuildingSkillsBlueprintArchiveScales(System) &&
-                ReadBuildingSkillsBlueprintHeaders(System->mStoredBlueprintData, Headers);
+                ReadBuildingSkillsBlueprintHeaders(FBSBlueprintAccess::Data(System), Headers);
             for (const auto& Header : Headers)
                 if (const auto* Expected = ExpectedBlueprintTransforms.Find(Header.ObjectHeader.Reference.ToString()))
                 {

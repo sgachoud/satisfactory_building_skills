@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSBlueprintScale.h"
 #include "BSBlueprintBounds.h"
 #include "BSGroups.h"
@@ -106,14 +107,14 @@ bool RunBuildingSkillsBlueprintScaleChecks(AFGCharacterPlayer* Player)
         return Result;
     };
     TArray<FActorSaveHeader> Stored;
-    const bool HeadersRead = ReadBuildingSkillsBlueprintHeaders(System->mStoredBlueprintData, Stored);
+    const bool HeadersRead = ReadBuildingSkillsBlueprintHeaders(FBSBlueprintAccess::Data(System), Stored);
     TArray<AFGBuildable*> Preview;
     System->LoadStoredBlueprint(Descriptor, FTransform::Identity, Preview, true);
     bool HeaderScales = HeadersRead && Stored.Num() == 3;
     for (const FVector& Scale : Scales) HeaderScales &= Stored.ContainsByPredicate([&](const FActorSaveHeader& Item)
     { return FVector(Item.Transform.GetScale3D()).Equals(Scale, .0001); });
     Check(TEXT("Native blueprint actor headers retain all three original scales"), HeaderScales);
-    auto InvalidTOC = System->mStoredBlueprintData;
+    auto InvalidTOC = FBSBlueprintAccess::Data(System);
     InvalidTOC.TOCData.Add(0);
     TArray<FActorSaveHeader> InvalidHeaders;
     Check(TEXT("Blueprint TOC validation rejects trailing unparsed data"), !ReadBuildingSkillsBlueprintHeaders(InvalidTOC, InvalidHeaders));

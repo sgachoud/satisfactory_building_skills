@@ -1,5 +1,7 @@
 #include "BSVolume.h"
 #include "BSEditModeComponent.h"
+#include "BSTransformers.h"
+#include "Widgets/Text/STextBlock.h"
 #include "BuildingSkills.h"
 #include "FGCharacterPlayer.h"
 #include "FGGameUserSettings.h"
@@ -159,6 +161,30 @@ public:
             Gun->SetCurrentBuildGunMode(UBSEditVolumeModeDescriptor::StaticClass());
         }
         if (Phase == 11) Key(EKeys::K,true);
+        if (Phase == 12)
+        {
+            Key(EKeys::K,false);
+            Check(TEXT("K opens the shared Edit settings menu"),Edit->TransformersWindow && PC->bShowMouseCursor && !Edit->InputAllowed());
+            TSharedPtr<SWidget> Button;
+            TFunction<bool(TSharedRef<SWidget>)> HasLabel = [&](TSharedRef<SWidget> Widget)
+            {
+                if (Widget->GetTypeAsString()==TEXT("STextBlock") && StaticCastSharedRef<STextBlock>(Widget)->GetText().ToString()==TEXT("Volume settings")) return true;
+                auto* Children=Widget->GetChildren();
+                for (int32 I=0; I<Children->Num(); ++I) if (HasLabel(Children->GetChildAt(I))) return true;
+                return false;
+            };
+            TFunction<void(TSharedRef<SWidget>)> Find = [&](TSharedRef<SWidget> Widget)
+            {
+                if (Button) return;
+                if (Widget->GetTypeAsString()==TEXT("SButton") && HasLabel(Widget)) { Button=Widget; return; }
+                auto* Children=Widget->GetChildren();
+                for (int32 I=0; I<Children->Num(); ++I) Find(Children->GetChildAt(I));
+            };
+            if (Edit->TransformersWindow) Find(Edit->TransformersWindow->TakeWidget());
+            Check(TEXT("Volume settings button accepts a mouse click"),Button && ClickWidget(Button.ToSharedRef()));
+            return Passed;
+        }
+        if (Phase > 12) --Phase; // Allow the child settings window a frame to lay out.
         if (Phase == 12)
         {
             Key(EKeys::K,false);

@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSActionHistory.h"
 #include "BSTransformers.h"
 #include "BSBlueprintScale.h"
@@ -115,7 +116,14 @@ bool UBSActionRecord::Capture(AFGCharacterPlayer* Player, const TArray<FBSBuildi
     for (const auto& Ref : Members)
     {
         auto* B = Ref.ResolveActor(GetWorld());
-        if (!IsValid(B) || B->GetIsDismantled()) { Error = TEXT("A deleted object could not be archived for undo."); return false; }
+        if (!IsValid(B) || B->GetIsDismantled())
+        {
+            UE_LOG(LogBuildingSkills,Warning,TEXT("Undo capture failed: actor=%s class=%s index=%d resolved=%d temporary=%s dismantled=%d position=%s"),
+                *GetNameSafe(Ref.Actor.Get()),*GetNameSafe(Ref.LightweightClass.Get()),Ref.RuntimeIndex,
+                Ref.LightweightClass ? Ref.ResolveIndex(GetWorld()) : INDEX_NONE,*GetNameSafe(B),
+                IsValid(B) && B->GetIsDismantled(),*Ref.Transform.GetLocation().ToString());
+            Error = TEXT("A deleted object could not be archived for undo."); return false;
+        }
         Actors.Add(B); Blocked.Add(B->GetBlockCleanupOfTemporary());
         if (B->GetIsLightweightTemporary()) B->SetBlockCleanupOfTemporary(true);
         Paths.Add(FObjectReferenceDisc(B).ToString()); ActorNames.Add(B->GetPathName());
@@ -256,9 +264,9 @@ bool UBSActionRecord::Restore(AFGCharacterPlayer* Player, FString& Message)
     TMap<FString,FBSBuildingRef> SpawnedRefs;
     TArray<AFGBuildable*> NewBuildings;
     TGuardValue<UBSActionRecord*> RecordGuard(RestoringRecord,this);
-    TGuardValue<FBlueprintSaveData> Stored(System->mStoredBlueprintData,Data);
-    auto Headers=System->mCachedHeaders; Headers.Add(Data.BlueprintHeader);
-    TGuardValue<TArray<FBlueprintHeader>> HeaderGuard(System->mCachedHeaders,MoveTemp(Headers));
+    TGuardValue<FBlueprintSaveData> Stored(FBSBlueprintAccess::Data(System),Data);
+    auto Headers=FBSBlueprintAccess::Headers(System); Headers.Add(Data.BlueprintHeader);
+    TGuardValue<TArray<FBlueprintHeader>> HeaderGuard(FBSBlueprintAccess::Headers(System),MoveTemp(Headers));
     TArray<FBSBuildingRef> NewInstances;
     TGuardValue<TArray<FBSBuildingRef>*> InstanceGuard(RestoredInstances,&NewInstances);
     TArray<AFGBlueprintProxy*> Proxies;
@@ -427,7 +435,7 @@ void FBSActionHistory::Install()
         [](auto& Scope,AFGBlueprintSubsystem* System,const FString& Name)
         {
             if(!RestoringRecord || RestoringRecord->GetWorld()!=System->GetWorld() || Name!=RestoringRecord->Data.BlueprintHeader.BlueprintName) return;
-            System->mStoredBlueprintData=RestoringRecord->Data; Scope.Override(true);
+            FBSBlueprintAccess::Data(System)=RestoringRecord->Data; Scope.Override(true);
         });
     SUBSCRIBE_METHOD(AFGBuildableSubsystem::AddBuildable, [](auto&,AFGBuildableSubsystem* System,AFGBuildable* B)
     {

@@ -1,3 +1,4 @@
+#include "BSBlueprintAccess.h"
 #include "BSBlueprintScale.h"
 #include "BSGroups.h"
 #include "BSDeduplication.h"
@@ -223,7 +224,7 @@ bool RestoreBuildingSkillsBlueprintArchiveScales(AFGBlueprintSubsystem* System)
 {
     if (!BlueprintWrite) return true;
     if (BlueprintWrite->InvalidObject) return false;
-    auto& Data = System->mStoredBlueprintData;
+    auto& Data = FBSBlueprintAccess::Data(System);
     TArray<FStoredActorHeader> Headers;
     if (!ReadStoredHeaders(Data, Headers)) return false;
     // Patch a copy, using native version-aware serialization and requiring every
@@ -411,11 +412,11 @@ bool WriteBuildingSkillsClipboard(AFGBlueprintSubsystem* System, const FBlueprin
     FBlueprintWriteContext Context{System->GetWorld(), true};
     for (auto* Building : Buildings) Context.Members.Add(Building);
     TGuardValue<FBlueprintWriteContext*> Guard(BlueprintWrite, &Context);
-    TGuardValue<FBlueprintSaveData> StoredGuard(System->mStoredBlueprintData, {});
-    System->mStoredBlueprintData.BlueprintHeader = System->WriteBlueprintToArchive(Record, Origin, Buildings, Dimensions);
-    System->mStoredBlueprintData.BlueprintHeader.BlueprintName = Record.BlueprintName;
+    TGuardValue<FBlueprintSaveData> StoredGuard(FBSBlueprintAccess::Data(System), {});
+    FBSBlueprintAccess::Data(System).BlueprintHeader = System->WriteBlueprintToArchive(Record, Origin, Buildings, Dimensions);
+    FBSBlueprintAccess::Data(System).BlueprintHeader.BlueprintName = Record.BlueprintName;
     if (!RestoreBuildingSkillsBlueprintArchiveScales(System)) return false;
-    Out = System->mStoredBlueprintData;
+    Out = FBSBlueprintAccess::Data(System);
     return Out.IsValid();
 }
 
