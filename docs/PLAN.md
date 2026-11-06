@@ -68,6 +68,11 @@ Plan runs in an empty build-gun state without creating a rail hologram. Off
 uses the gun's surface trace; Default and Constrained use the same settings and
 path calculations as Stick. Nearby compatible ports for the main line's selected type can capture the aim
 point; holding the configured multi-select modifier disables this snapping.
+With Stick off, connection snapping also searches within 2 m of the aiming ray,
+up to the surface hit (plus the endpoint allowance), or the native build range
+when no surface is hit. This lets a rail endpoint capture the aim even when the
+cursor points through the gap between its meshes. Stick modes search only near
+the stick tip.
 Foundation placement resolves lightweight instances before using the native rail
 floor grid and rotation step. With Stick active, the aimed foundation must be
 within 2 m of the tip. Holding the configured multi-select modifier bypasses
@@ -218,7 +223,9 @@ vanilla placement. Spline, support and signal costs are checked together before 
 Build specifications and direction choices are saved per plan and support undo.
 
 Preview segments turn red around excessive curvature, grade or discontinuous
-node joins. **Build full plan** subdivides each complete path to its selected type’s
+node joins. Pipe and hypertube previews include the native 5% minimum bend-radius
+margin; they use their own transport limits rather than rail limits.
+**Build full plan** subdivides each complete path to its selected type’s
 length limits, validates all pieces and checks the complete material cost.
 Affordability combines the player inventory and Dimensional Depot; payment follows
 the player's inventory-first/Depot-first setting. A shortage reports the required

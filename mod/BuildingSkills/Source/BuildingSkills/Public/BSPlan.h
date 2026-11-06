@@ -213,7 +213,8 @@ public:
     static double MaximumLength(EBSPlanBuildable Type=EBSPlanBuildable::Rail);
     static double MinimumLength(EBSPlanBuildable Type=EBSPlanBuildable::Rail);
     static FVector ShapeLimits(EBSPlanBuildable Type);
-    static bool SnapConnection(class UWorld* World, EBSPlanBuildable Type, FVector& Position, FVector& Direction, class AActor* Hit);
+    // RayStart searches near the visible aiming ray; omitted for a Stick tip.
+    static bool SnapConnection(class UWorld* World, EBSPlanBuildable Type, FVector& Position, FVector& Direction, class AActor* Hit, const FVector* RayStart=nullptr);
     static void SnapFoundation(class AFGBuildable* Floor, FVector& Position, FVector& Direction);
     static bool Build(class AFGCharacterPlayer* Player, const FBSRailPlan& Plan, FString& Error);
 };

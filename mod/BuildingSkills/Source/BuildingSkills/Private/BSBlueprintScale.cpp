@@ -9,6 +9,7 @@
 #include "BlueprintArchiveObjectDataProxy.h"
 #include "FGCircuitConnectionComponent.h"
 #include "FGConnectionComponent.h"
+#include "FGRailroadTrackConnectionComponent.h"
 #include "UObject/UnrealType.h"
 #include "SaveCustomVersion.h"
 #include "Serialization/MemoryReader.h"
@@ -28,6 +29,7 @@ namespace
     {
         bool Preview = false;
         int32 ResetConveyorChains = 0;
+        int32 RemovedRailReferences = 0;
         FTransform Origin;
         TOptional<FActorSaveHeader> Pending;
         TMap<AActor*, FVector> Spawning;
@@ -87,6 +89,7 @@ namespace
         // their subobjects must refer only to members of this archive.
         return !Building || Members.Contains(Building);
     }
+    void CleanLoadedNetworkReferences(AFGBuildable* Building);
     FArchive& SerializeBlueprintDataObject(FBlueprintArchiveObjectDataProxy* Archive, UObject*& Object)
     {
         // This overload writes complete TOC objects, not references inside their
@@ -101,7 +104,19 @@ namespace
             UE_LOG(LogBuildingSkills, Warning, TEXT("Blueprint archive rejected an invalid bulk object; no snapshot will be retained."));
             return *Archive;
         }
-        return NativeSerializeDataObject(Archive, Object);
+        FArchive& Result=NativeSerializeDataObject(Archive, Object);
+        if(Archive->IsLoading() && BlueprintLoad && IsValid(Object))
+        {
+            // All TOC objects exist before their data blobs are read. Clean the
+            // just-deserialized owner's connections before the loader dispatches
+            // PostLoadGame, whose rail implementation repairs reciprocal links.
+            // This boundary uses UObject pointers, avoiding adjusted secondary
+            // IFGSaveInterface pointers in its virtual PostLoadGame entry point.
+            auto* Building=Cast<AFGBuildable>(Object);
+            if(!Building)Building=Object->GetTypedOuter<AFGBuildable>();
+            CleanLoadedNetworkReferences(Building);
+        }
+        return Result;
     }
 
     void CleanLoadedNetworkReferences(AFGBuildable* Building)
@@ -157,7 +172,12 @@ namespace
                 for (int32 I = Array.Num()-1; I >= 0; --I)
                 {
                     UObject* Reference = Inner->GetObjectPropertyValue(Array.GetRawPtr(I));
-                    if (!IsValid(Reference) || !BlueprintOwnsObject(Reference, BlueprintLoad->Members)) Array.RemoveValues(I);
+                    if (!IsValid(Reference) || !BlueprintOwnsObject(Reference, BlueprintLoad->Members))
+                    {
+                        if (Name == TEXT("mConnectedComponents") && Port->IsA<UFGRailroadTrackConnectionComponent>())
+                            ++BlueprintLoad->RemovedRailReferences;
+                        Array.RemoveValues(I);
+                    }
                 }
                 if (Name == TEXT("mWires"))
                     if (auto* Count = FindFProperty<FByteProperty>(Port->GetClass(), TEXT("mNumWiresConnected")))
@@ -353,6 +373,9 @@ void InstallBuildingSkillsBlueprintScale()
             if (Context.ResetConveyorChains)
                 UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint placement reset %d copied conveyor simulation references before registration (preview=%d)."),
                     Context.ResetConveyorChains, BlueprintWorld);
+            if (Context.RemovedRailReferences)
+                UE_LOG(LogBuildingSkills, Display, TEXT("Blueprint placement excluded %d external rail references before native connection repair (preview=%d)."),
+                    Context.RemovedRailReferences, BlueprintWorld);
             // Lightweight creation sends its full native instance transform.
             // Actor movement replication lacks scale, so use the existing bounded
             // transform transport and late-join snapshot for ordinary buildings.

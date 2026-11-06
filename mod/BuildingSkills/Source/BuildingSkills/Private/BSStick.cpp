@@ -171,7 +171,9 @@ FVector FBSStick::PlanLimits(AFGSplineHologram* H)
 {
     if (auto* R=Cast<AFGRailroadTrackHologram>(H)) return FVector(R->mMinBendRadius,R->mMaxGrade,R->mMinLength);
     if (auto* B=Cast<AFGConveyorBeltHologram>(H)) return FVector(B->mBendRadius,B->mMaxIncline,100);
-    if (auto* P=Cast<AFGPipelineHologram>(H)) return FVector(P->mMinBendRadius,90,AFGPipelineHologram::MINIMUM_HOLOGRAM_LENGTH);
+    // Native pipe/hypertube curvature validation includes a 5% bend margin.
+    // Use that same effective radius in the planner's preview and preflight.
+    if (auto* P=Cast<AFGPipelineHologram>(H)) return FVector(P->mMinBendRadius*1.05f,90,AFGPipelineHologram::MINIMUM_HOLOGRAM_LENGTH);
     return FVector(2000,35,100);
 }
 

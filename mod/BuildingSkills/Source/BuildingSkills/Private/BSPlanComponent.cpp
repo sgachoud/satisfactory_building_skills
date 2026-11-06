@@ -334,9 +334,12 @@ void UBSPlanComponent::AimAndHit()
     FVector EdgeHit=FVector::ZeroVector;
     const auto* EditState=Edit(this);
     const bool Stick=EditState && EditState->StickMode!=EBSStickMode::Off;
-    const FHitResult& HitResult=Gun->GetHitResult();
+    // Plan deliberately has no construction hologram. Refresh the native trace
+    // here rather than depending on the Build state's cached hologram hit.
+    FHitResult HitResult; Gun->TraceForBuilding(Player(this),HitResult);
     Aim={}; AimRoute.Reset(); HaveAim=Stick || HitResult.bBlockingHit;
-    Aim.Position=Stick ? Eye+Ray*(EditState->StickDistance*100) : FVector(HitResult.ImpactPoint);
+    Aim.Position=Stick ? Eye+Ray*(EditState->StickDistance*100) : HitResult.bBlockingHit ? FVector(HitResult.ImpactPoint) : Eye+Ray*Gun->GetDefaultBuildGunRange();
+    const FVector TraceEnd=Aim.Position;
     Aim.Direction=FVector(Ray.X,Ray.Y,0).GetSafeNormal();
     if (Aim.Direction.IsNearlyZero()) Aim.Direction=FVector::ForwardVector;
     if (HitResult.bBlockingHit && !Multi(this) && (!Stick || FVector::DistSquared(Aim.Position,HitResult.ImpactPoint)<=FMath::Square(200.0)))
@@ -375,7 +378,12 @@ void UBSPlanComponent::AimAndHit()
     }
     else if (Start) Aim.Direction=FBSStickPath::EndpointDirection(StartDirection,EditState && EditState->StickTiltSet,EditState ? EditState->StickTilt : 0,EditState ? EditState->StickYaw : 0);
     // Snap to the selected main line's native ports without spawning a hologram.
-    if (HaveAim && !Multi(this) && FBSPlanBuild::SnapConnection(GetWorld(),P->Construction.Main,Aim.Position,Aim.Direction,HitResult.GetActor())) AimRoute.Reset();
+    if (!Multi(this))
+    {
+        FVector SnapPosition=Stick ? Aim.Position : TraceEnd, SnapDirection=Aim.Direction;
+        if (FBSPlanBuild::SnapConnection(GetWorld(),P->Construction.Main,SnapPosition,SnapDirection,HitResult.GetActor(),Stick ? nullptr : &Eye))
+        { Aim.Position=SnapPosition; Aim.Direction=SnapDirection; HaveAim=true; AimRoute.Reset(); }
+    }
     const bool Placing=!Editing && !Multi(this);
     const bool StickPlacing=Placing && EditState && EditState->StickMode!=EBSStickMode::Off;
     auto Hit=[&](FVector Pos,double Radius) {

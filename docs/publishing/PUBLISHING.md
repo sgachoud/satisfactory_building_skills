@@ -5,7 +5,7 @@ ficsit.app); Satisfactory Mod Manager (SMM) distributes versions from there.
 
 ## Files
 
-The generated `Saved/Publication/0.11.1` folder contains the upload archive,
+The generated `Saved/Publication/0.11.2` folder contains the upload archive,
 listing, metadata, changelog, artwork, source snapshot and verification report.
 Only **BuildingSkills.zip** is the mod version upload. Do not upload a
 development platform ZIP, source snapshot, or the complete publication folder
@@ -26,7 +26,7 @@ as the mod version.
   not a gameplay screenshot.
 - `verification.json`: exact archive validation and target/build evidence.
 - `SHA256SUMS.txt`: hashes for the prepared deliverables.
-- `BuildingSkills-0.11.1-source.zip`: source, assets, scripts, documentation and
+- `BuildingSkills-0.11.2-source.zip`: source, assets, scripts, documentation and
   notices, excluding local saves, references, logs, caches, SDK and binaries.
 
 ## Create the page and version
@@ -40,14 +40,14 @@ as the mod version.
    the prepared text. Keep these separate from the feature description.
 5. Use the source URL in `METADATA.json`. The support URL is already included
    as the overview's “Report a bug” link; SMR has no separate support field.
-   The public GitHub repository has issues enabled. Commit and push the reviewed
-   0.11.1 source and documentation before publishing this version. The source
+   The public GitHub repository has issues enabled. The user commits and pushes the reviewed
+   0.11.2 source and documentation before publishing this version. The source
    snapshot in the kit includes the current working tree, even before committing.
    Keep `docs/publishing/media/` on branch `main`: the overview embeds the six
    existing GIFs through raw GitHub URLs. Alternatively upload the GIFs to SMR's
    media service and replace the image URLs before submission.
    Suggested tags must be selected from the site's actual list.
-6. Create New Version, select **BuildingSkills.zip**, verify version **0.11.1**,
+6. Create New Version, select **BuildingSkills.zip**, verify version **0.11.2**,
    target platforms and the SML/game requirements, and paste the changelog.
 7. Choose early-access/beta wording rather than claiming a stable release.
    Do not mark an untested game branch as working just because it compiled.
@@ -60,7 +60,7 @@ The supplied SSH remote is configured as `origin`, with `main` as the branch.
 ## Recreating the package
 
 The descriptor's integer `Version` must equal the major component of
-`SemVersion`: for `0.11.1`, use `Version: 0`. It is not a build counter.
+`SemVersion`: for `0.11.2`, use `Version: 0`. It is not a build counter.
 `VersionName` must match `SemVersion`. The publication validator checks this
 in the source descriptor and every packaged target.
 
@@ -83,13 +83,12 @@ targets, cooked content, licenses, and unsafe archive entries. It removes debug
 symbols from the upload while retaining the original local Alpakit archive.
 
 Keep the final report honest: archive checks are not multiplayer gameplay tests.
-For 0.11.1, eleven isolated Steam gameplay suites passed 1,894 assertions on
-CL 517554. A real Steam client/Windows dedicated-server run also passed native
-blueprint placement, deletion, deletion undo and redo, followed by clean
-disconnect and shutdown. This is not exhaustive multiplayer certification:
-Epic and Linux were built and packaged but not launched on those platforms.
-The optional ARS integration test was blocked by a startup crash also reproduced
-without Building Skills. See `docs/TESTING.md` for the exact checks, retained
+For 0.11.2, the Plan fixture passed 431 assertions during development, followed
+by 499 assertions across transformer, network, undo and blueprint fixtures on
+CL 517554. These are isolated Steam standalone tests. Dedicated multiplayer was
+not rerun for these changes; Epic, Windows Server and Linux Server are compiled
+and packaged without gameplay validation for this version.
+See `docs/TESTING.md` for the exact checks, retained
 evidence and limitations. Do not mark an untested branch or integration as tested.
 
 ## References

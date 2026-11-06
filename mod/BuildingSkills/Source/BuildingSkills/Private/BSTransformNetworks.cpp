@@ -157,7 +157,10 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
         for (auto* Connection : Connections)
         {
             for (auto* Other : Linked(Connection))
+            {
+                if(!IsValid(Other)) { Error=TEXT("A selected network has an invalid connection. No buildings changed."); return false; }
                 if (auto* Edge = Cast<AFGBuildable>(Other->GetOwner()); IsFlexible(Edge) && !FindChange(Edge)) AddChange(Capture(Edge));
+            }
             if (auto* Circuit = Cast<UFGCircuitConnectionComponent>(Connection))
             {
                 TArray<AFGBuildableWire*> Wires;
@@ -166,12 +169,30 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
             }
         }
     }
+    // Validate before walking junctions or calculating any deformation. A stale
+    // copied link must not pull a selected curve toward a distant original rail.
+    for(const auto& C:Changes)if(auto* Track=Cast<AFGBuildableRailroadTrack>(C.Building.Actor))
+        for(int32 End=0;End<2;++End)
+            if(auto* Port=Track->GetConnection(End))for(auto* Other:Linked(Port))
+                if(!IsValid(Other) || !Port->GetComponentLocation().Equals(Other->GetComponentLocation(),1.0))
+                {
+                    Error=TEXT("A rail has an invalid or distant connection. Rebuild that connection before transforming it. No buildings changed.");
+                    return false;
+                }
     // Resolve endpoint targets against the immutable rigid-motion plan. A
     // selected edge drives an unselected edge; a fixed machine anchors an end.
     const auto RigidPlan = Changes;
     TMap<AActor*, const FBSNativeTransform*> RigidIndex;
     for (const auto& C : RigidPlan) if (C.Building.Actor) RigidIndex.Add(C.Building.Actor, &C);
     auto Rigid = [&](AActor* Actor) -> const FBSNativeTransform* { const auto* Found = RigidIndex.Find(Actor); return Found ? *Found : nullptr; };
+    // A shared translation must not refit each selected rail's tangents to its
+    // neighbours. Preserve the saved curve exactly when neither end is pinned.
+    const FVector Translation=Changes.IsEmpty()?FVector::ZeroVector:Changes[0].Target.GetLocation()-Changes[0].Building.Transform.GetLocation();
+    bool UniformTranslation=true;
+    for(const auto& C:RigidPlan)if(Moving.Contains(C.Building.Actor.Get()))
+        UniformTranslation &= C.Target.GetRotation().Equals(C.Building.Transform.GetRotation(),.000001)
+            && C.Target.GetScale3D().Equals(C.Building.Transform.GetScale3D(),.000001)
+            && (C.Target.GetLocation()-C.Building.Transform.GetLocation()).Equals(Translation,.0001);
     auto Endpoint = [&](UFGConnectionComponent* C, const FBSNativeTransform& Owner, FVector& Position, FVector& Normal)
     {
         Position = MovedPoint(Owner, C->GetComponentLocation());
@@ -215,6 +236,10 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
             const FVector Original0 = C.Target.TransformPosition(C.Spline[0].Location);
             const FVector Original1 = C.Target.TransformPosition(C.Spline.Last().Location);
             const FVector Delta0 = P0 - Original0, Delta1 = P1 - Original1;
+            const bool PreserveRailCurve=Actor->IsA<AFGBuildableRailroadTrack>() && UniformTranslation && Moving.Contains(Actor)
+                && Delta0.IsNearlyZero(.01) && Delta1.IsNearlyZero(.01);
+            if(!PreserveRailCurve)
+            {
             const bool PinnedBody = Moving.Contains(Actor) && !Delta0.IsNearlyZero(.01) && !Delta1.IsNearlyZero(.01);
             if(PinnedBody && C.Spline.Num()==2)
             {
@@ -244,6 +269,7 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
                 P.LeaveTangent = C.Target.InverseTransformVector(Direction * L);
             };
             SetEnd(C.Spline[0], -N0); SetEnd(C.Spline.Last(), N1);
+            }
             double TotalLength = 0;
             bool Tight = false;
             for (int32 Segment = 1; Segment < C.Spline.Num(); ++Segment)
@@ -426,6 +452,9 @@ void FBSTransformNative::RebuildSpline(AFGBuildable* Actor)
     }
     Actor->Internal_CallRemoveInstances();
     Actor->CallSetupInstances();
+    // Instance regeneration creates fresh material data. Reapply the saved
+    // swatch to those handles, including when restoring a transform by undo.
+    Actor->ApplyCustomizationData_Native(Actor->GetCustomizationData_Native());
     for(int32 I=0;I<Connections.Num();++I) Connections[I]->Mobility=Mobilities[I];
 }
 
@@ -439,8 +468,21 @@ void FBSTransformNative::ApplyGeometry(AFGBuildable* Actor, const FBSNativeTrans
     {
         if (auto* Spline = Cast<IFGSplineBuildableInterface>(Actor))
         {
+            const auto& Current=Spline->GetSplinePointData();
+            // On clients, native actor movement may arrive before this snapshot
+            // while shared mesh instances still have the previous pose. Rebuild
+            // there rather than treating an already-updated root as visual proof.
+            bool SameRailGeometry=Track && Actor->HasAuthority() && Current.Num()==C.Spline.Num()
+                && Before.GetRotation().Equals(C.Target.GetRotation(),.000001)
+                && Before.GetScale3D().Equals(C.Target.GetScale3D(),.000001);
+            if(SameRailGeometry)for(int32 I=0;I<Current.Num();++I)
+                SameRailGeometry &= Current[I].Location.Equals(C.Spline[I].Location,.0001)
+                    && Current[I].ArriveTangent.Equals(C.Spline[I].ArriveTangent,.0001)
+                    && Current[I].LeaveTangent.Equals(C.Spline[I].LeaveTangent,.0001);
             *Spline->GetMutableSplinePointData() = C.Spline;
-            RebuildSpline(Actor);
+            // Moving an unchanged curve already moved its native instance and
+            // collision transforms. Retain its deformation/material buffers.
+            if(!SameRailGeometry) RebuildSpline(Actor);
             if(Track && Track->HasAuthority())
             {
                 // Vehicle positions are offsets on tracks, not actor transforms.
@@ -464,6 +506,7 @@ void FBSTransformNative::ApplyGeometry(AFGBuildable* Actor, const FBSNativeTrans
         Lift->OnRep_TopTransform(); Lift->SetupConnections();
         Lift->mLength = Lift->GetHeight();
         Lift->Internal_CallRemoveInstances(); Lift->CallSetupInstances();
+        Lift->ApplyCustomizationData_Native(Lift->GetCustomizationData_Native());
     }
     if (Conveyor)
     {

@@ -16,6 +16,8 @@
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildableConveyorLift.h"
 #include "Buildables/FGBuildableWire.h"
+#include "Buildables/FGBuildableRailroadTrack.h"
+#include "FGRailroadTrackConnectionComponent.h"
 #include "FGBuildableSubsystem.h"
 #include "FGCircuitConnectionComponent.h"
 #include "Equipment/FGBuildGun.h"
@@ -122,9 +124,23 @@ bool FBSTransformers::Copy(UBSGroupRemoteCallObject* Owner,const TArray<FBSBuild
         for(int32 I=0;I<8;++I)Query+=Rule.Point(FVector(I&1?Before.Max.X:Before.Min.X,I&2?Before.Max.Y:Before.Min.Y,I&4?Before.Max.Z:Before.Min.Z));
         TArray<AFGBuildable*> Nearby;AFGBuildableSubsystem::Get(P->GetWorld())->GetCollidingBuildablesInBoundingBox(Nearby,Query.ExpandBy(2));
         AFGBuildable* Match=nullptr;
-        for(auto* B:Nearby)if(IsValid(B) && B!=Original && !Originals.Contains(B) && B->GetClass()==Original->GetClass()
-            && B->GetActorLocation().Equals(Target.GetLocation(),.1) && B->GetActorQuat().Equals(Target.GetRotation(),.0001) && B->GetActorScale3D().Equals(Target.GetScale3D(),.0001))
-        {if(Match && Match!=B){Match=nullptr;break;}Match=B;}
+        for(auto* B:Nearby)if(IsValid(B) && B!=Original && !Originals.Contains(B) && B->GetClass()==Original->GetClass())
+        {
+            bool Same=B->GetActorLocation().Equals(Target.GetLocation(),.1) && B->GetActorQuat().Equals(Target.GetRotation(),.0001)
+                && B->GetActorScale3D().Equals(Target.GetScale3D(),.0001);
+            if(auto* OriginalRail=Cast<AFGBuildableRailroadTrack>(Original))
+            {
+                // Native blueprint placement may bake actor rotation into the
+                // local rail spline. Match world geometry, not that representation.
+                const auto& A=OriginalRail->GetSplinePointData();const auto& C=CastChecked<AFGBuildableRailroadTrack>(B)->GetSplinePointData();
+                Same=A.Num()>=2 && A.Num()==C.Num();
+                if(Same)for(int32 I=0;I<A.Num();++I)
+                    Same &= Rule.Point(Original->GetActorTransform().TransformPosition(A[I].Location)).Equals(B->GetActorTransform().TransformPosition(C[I].Location),.1)
+                        && Rule.Vector(Original->GetActorTransform().TransformVector(A[I].ArriveTangent)).Equals(B->GetActorTransform().TransformVector(C[I].ArriveTangent),.01)
+                        && Rule.Vector(Original->GetActorTransform().TransformVector(A[I].LeaveTangent)).Equals(B->GetActorTransform().TransformVector(C[I].LeaveTangent),.01);
+            }
+            if(Same){if(Match && Match!=B){Match=nullptr;break;}Match=B;}
+        }
         External.Add(Original,Match);return Match;
     };
     auto PortOn=[](UFGCircuitConnectionComponent* SourcePort,AFGBuildable* Actor)->UFGCircuitConnectionComponent*
@@ -236,6 +252,30 @@ bool FBSTransformers::Copy(UBSGroupRemoteCallObject* Owner,const TArray<FBSBuild
         if(Proxy)Proxy->Destroy();
         Result.Reset(); Error=TEXT("A transformer copy was incomplete and has been rolled back."); return false;
     }
+    // Live snapshots deliberately strip references to the original rail network.
+    // Reconnect only to the corresponding repeated neighbour, after native
+    // loading and geometry setup. A nearby unrelated rail is not a substitute.
+    for(const auto& Pair:Placed)
+        if(auto* SourceRail=Cast<AFGBuildableRailroadTrack>(Pair.Key))
+            if(auto* CopyRail=Cast<AFGBuildableRailroadTrack>(Pair.Value))
+                for(int32 End=0;End<2;++End)
+                    for(auto* Other:SourceRail->GetConnection(End)->GetConnections())
+                    {
+                        auto* OriginalNeighbour=IsValid(Other)?Cast<AFGBuildableRailroadTrack>(Other->GetOwner()):nullptr;
+                        if(!OriginalNeighbour || Originals.Contains(OriginalNeighbour))continue;
+                        auto* Repeated=Cast<AFGBuildableRailroadTrack>(Counterpart(OriginalNeighbour));
+                        if(!Repeated)continue;
+                        auto* Port=CopyRail->GetConnection(End);
+                        for(int32 OtherEnd=0;OtherEnd<2;++OtherEnd)
+                        {
+                            auto* Target=Repeated->GetConnection(OtherEnd);
+                            if(IsValid(Port) && IsValid(Target) && !Port->GetConnections().Contains(Target)
+                                && Target->GetConnectorLocation().Equals(Rule.Point(Other->GetConnectorLocation()),.5)
+                                && Port->GetConnectorLocation().Equals(Target->GetConnectorLocation(),.5)
+                                && FVector::DotProduct(Port->GetConnectorNormal(),Target->GetConnectorNormal())<-.999
+                                && Port->CanConnectTo(Target))Port->AddConnection(Target);
+                        }
+                    }
     if(Proxy){Proxy->FinishSpawning(Proxy->GetActorTransform());Proxy->OnRep_LocalBounds();}
     if(!Free) for(const auto& Item:Cost) Inventory->Remove(Item.ItemClass,Item.Amount);
     return true;

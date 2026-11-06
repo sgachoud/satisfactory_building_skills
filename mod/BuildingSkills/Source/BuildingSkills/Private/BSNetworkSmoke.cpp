@@ -14,6 +14,7 @@
 #include "FGFactoryConnectionComponent.h"
 #include "FGPipeConnectionComponent.h"
 #include "FGCircuitConnectionComponent.h"
+#include "FGCustomizationRecipe.h"
 #include "FGRailroadTrackConnectionComponent.h"
 #include "Resources/FGResourceNode.h"
 #include "EngineUtils.h"
@@ -22,6 +23,7 @@
 #include "Engine/NetSerialization.h"
 #include "Serialization/BitReader.h"
 #include "Serialization/BitWriter.h"
+#include "UObject/UnrealType.h"
 
 namespace { TWeakObjectPtr<AFGBuildableConveyorBelt> SimulationBelt; }
 
@@ -267,7 +269,7 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         Check(TEXT("Internal pipe junction stays coincident when differently rotated pipes scale together"),Rotated && Scaled &&
             Pipe->GetPipeConnection1()->GetComponentLocation().Equals(Pipe2->GetPipeConnection0()->GetComponentLocation(),.1));
     }
-    auto* Rail2 = Cast<AFGBuildableRailroadTrack>(SplineSpawn(TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"), FVector(1000,1500,0)));
+    auto* Rail2 = Cast<AFGBuildableRailroadTrack>(SplineSpawn(TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"), Rail->GetConnection(1)->GetComponentLocation()-Base));
     if (Rail2)
     {
         Rail->GetConnection(1)->AddConnection(Rail2->GetConnection(0));
@@ -276,6 +278,83 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         Check(TEXT("Rail boundary stretches and preserves its connection graph"),Applied && Rail->GetConnection(1)->GetConnections().Contains(Rail2->GetConnection(0)) &&
             Rail->GetConnection(1)->GetComponentLocation().Equals(Rail2->GetConnection(0)->GetComponentLocation(),.1) &&
             Rail2->GetConnection(1)->GetComponentLocation().Equals(Fixed,.1));
+    }
+    {
+        TArray<AFGBuildable*> Curves;
+        TArray<FBSNativeTransform> Original;
+        TArray<TArray<FVector>> WorldSamples;
+        TArray<TArray<TArray<float>>> Buffers;
+        TArray<TArray<FInstanceOwnerHandlePtr>> Handles;
+        auto ReadBuffers=[](AFGBuildable* B)
+        {
+            TArray<TArray<float>> Out;
+            for(const auto& Handle:B->mInstanceHandles)if(Handle && Handle->IsInstanced())
+                if(auto* Mesh=Handle->GetInstanceComponent())
+                {
+                    const int32 Count=Mesh->NumCustomDataFloats,Start=int32(Handle->GetHandleID())*Count;
+                    TArray<float> Values;
+                    if(Count>0 && Mesh->PerInstanceSMCustomData.IsValidIndex(Start+Count-1))Values.Append(Mesh->PerInstanceSMCustomData.GetData()+Start,Count);
+                    Out.Add(MoveTemp(Values));
+                }
+            return Out;
+        };
+        auto SwatchRecipe=LoadClass<UFGCustomizationRecipe>(nullptr,TEXT("/Game/FactoryGame/Buildable/-Shared/Customization/Swatches/Recipe_Swatch_Slot1.Recipe_Swatch_Slot1_C"));
+        FFactoryCustomizationData Paint;
+        if(SwatchRecipe)Paint.SwatchDesc=UFGCustomizationRecipe::GetCustomizationDescriptor(SwatchRecipe);
+        for(int32 I=0;I<2;++I)
+        {
+            auto* Track=Cast<AFGBuildableRailroadTrack>(Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"),FVector(I*4000,6000+I*2000,2500+I*500),false));
+            if(!Track)break;
+            const FVector StartTangent=I?FVector(4000,2000,0):FVector(4000,0,0);
+            const FVector EndTangent=I?FVector(4000,0,0):FVector(4000,2000,0);
+            *Track->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,StartTangent),FSplinePointData(FVector(4000,2000,I?0:500),EndTangent)};
+            Track->FinishSpawning(Track->GetActorTransform());
+            Track->SetCustomizationData_Native(Paint);Track->ApplyCustomizationData_Native(Track->GetCustomizationData_Native());
+            Curves.Add(Track);Original.Add(Capture(Track));Handles.Add(Track->mInstanceHandles);Buffers.Add(ReadBuffers(Track));
+            TArray<FVector> Samples;for(int32 K=0;K<=16;++K)Samples.Add(Track->GetSplineComponent()->GetLocationAtSplineInputKey(K/16.f,ESplineCoordinateSpace::World));
+            WorldSamples.Add(MoveTemp(Samples));
+        }
+        Check(TEXT("painted curved-rail batch fixture spawns"),Curves.Num()==2 && SwatchRecipe && !Buffers[0].IsEmpty() && !Buffers[1].IsEmpty());
+        if(Curves.Num()==2)
+        {
+            auto* A=Cast<AFGBuildableRailroadTrack>(Curves[0]);auto* B=Cast<AFGBuildableRailroadTrack>(Curves[1]);
+            A->GetConnection(1)->AddConnection(B->GetConnection(0));
+            const FVector Up(0,0,100);
+            bool Moved=Transform(Curves,EBSTransformMode::RotateX,0,Up),Shape=Moved,Visuals=Moved;
+            for(int32 I=0;I<Curves.Num();++I)
+            {
+                auto* S=Cast<IFGSplineBuildableInterface>(Curves[I]);
+                for(int32 K=0;K<=16;++K)Shape &= S->GetSplineComponent()->GetLocationAtSplineInputKey(K/16.f,ESplineCoordinateSpace::World).Equals(WorldSamples[I][K]+Up,.01);
+                Visuals &= Curves[I]->mInstanceHandles==Handles[I] && ReadBuffers(Curves[I])==Buffers[I]
+                    && Curves[I]->GetCustomizationData_Native().SwatchDesc==Paint.SwatchDesc;
+            }
+            Check(TEXT("raising a curved rail batch preserves every sampled point and tangent shape"),Shape);
+            Check(TEXT("raising rails retains their rendered deformation and swatch buffers"),Visuals);
+            Check(TEXT("raised rail junction remains reciprocal and coincident"),A->GetConnection(1)->GetConnections().Contains(B->GetConnection(0))
+                && B->GetConnection(0)->GetConnections().Contains(A->GetConnection(1)) && A->GetConnection(1)->GetComponentLocation().Equals(B->GetConnection(0)->GetComponentLocation(),.01));
+            FBSSelection Result;FString Error;bool Undone=Groups->RestoreTransform(Player,false,Result,Error);
+            for(int32 I=0;I<Curves.Num();++I)Undone &= Matches(World,Original[I]) && ReadBuffers(Curves[I])==Buffers[I];
+            Check(TEXT("undo restores curved rail poses without losing their painted appearance"),Undone);
+            bool Rebuilt=true;
+            for(int32 I=0;I<Curves.Num();++I){RebuildSpline(Curves[I]);Rebuilt &= ReadBuffers(Curves[I])==Buffers[I];}
+            Check(TEXT("necessary rail mesh rebuild reapplies swatch without overwriting deformation data"),Rebuilt);
+            auto* Port=A->GetConnection(0);
+            auto* Property=FindFProperty<FArrayProperty>(Port->GetClass(),TEXT("mConnectedComponents"));
+            auto* Inner=Property?CastField<FObjectPropertyBase>(Property->Inner):nullptr;
+            bool Rejected=false;
+            if(Inner)
+            {
+                // Reproduce a stale live-copy reference synchronously, without
+                // invoking native graph callbacks or leaving it for a tick.
+                FScriptArrayHelper Links(Property,Property->ContainerPtrToValuePtr<void>(Port));
+                const int32 Index=Links.AddValue();Inner->SetObjectPropertyValue(Links.GetRawPtr(Index),Rail->GetConnection(0));
+                TArray<FBSNativeTransform> Proposed{Capture(A),Capture(B)};
+                for(auto& C:Proposed)C.Target.AddToTranslation(Up);
+                Rejected=!PlanNetworks(Proposed,Error);
+                Links.RemoveValues(Index);
+            }
+            Check(TEXT("distant stale rail link is rejected before any world geometry changes"),Rejected && Matches(World,Original[0]) && Matches(World,Original[1]));
+        }
     }
     auto* Pole0=Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/PowerTower/Build_PowerTower.Build_PowerTower_C"),FVector(0,-1000,0));
     auto* Pole1=Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/PowerTower/Build_PowerTower.Build_PowerTower_C"),FVector(1000,-1000,0));

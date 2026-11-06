@@ -2,7 +2,124 @@
 
 Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
 build is CL 517554; the current installed Steam game is CL 517554 (1.2.5.0).
-Results below are tied to their tested versions. Current development version: Building Skills 0.11.1.
+Results below are tied to their tested versions. Current release candidate: Building Skills 0.11.2.
+
+## 0.11.2: release packaging (2026-11-06)
+
+Alpakit successfully cooked and merged Steam and Epic Windows clients, Windows
+Server and Linux Server. Epic and Windows Server were rebuilt from the current
+source. The packaged Steam and Linux binaries match the SHA-256 hashes recorded
+after the final regression work; changing the descriptor to 0.11.2 did not
+change those binaries.
+
+Archive validation checks source/packaged version fields, game requirement
+`>=517554`, SML module manifests, every native binary hash, required cooked
+assets, notices, safe paths and ZIP integrity. Separate platform archives are
+under `Saved/Releases`; the upload kit is under `Saved/Publication/0.11.2`.
+Evidence: `Saved/PublicationBuild0112/` and
+`Saved/Releases/BuildingSkills-0.11.2-verification.json`.
+
+Packaging adds no gameplay coverage to the results below. No ordinary game
+installation was changed, and no commit, push or publication was performed.
+
+## 0.11.2: rotated-rail copy fix (2026-11-05)
+
+The supplied dedicated-server log ends in `SortConnections` after single-rail
+snapshots and warnings about one-way connections from newly loaded rails to an
+original rail. The reported action was rail placement with two rotation
+transformers. Native component `PostLoadGame` repairs both ends of such links
+before the actor's `PostSerializedFromBlueprint` callback, where our previous
+cleanup ran.
+
+The candidate removes references outside the loaded blueprint immediately after
+each object's data is deserialized, before native `PostLoadGame` repairs connections. The synchronous
+blueprint-load context and membership checks exclude ordinary world loading.
+Transformer regression phases 27–30 cover two rotation copies of a connected
+rail, copying a connected pair, separate placements reconnecting to their own
+rotated neighbours, preserving the original network, delayed connection updates
+and dismantling the copies. The later 20:55 server log reports invalid child
+connections after deletion, then crashes in `RebuildSignalBlocks`; it includes
+one of the original rail identifiers from the earlier report.
+
+Additional network regressions prepare two painted curved rails, move both
+upward, compare samples along their full curves, check the rendered per-instance
+buffers, undo, and force a necessary mesh rebuild. A temporarily injected distant
+reference must be rejected without moving anything; it is removed synchronously
+before the next game tick. This does not implement save repair.
+
+The final source compiled for Steam Windows and Linux Server on 2026-11-06.
+Evidence: `Saved/Update517554/rail-movement-final-build-windows.log`,
+`rail-movement-final-build-linux.log`, and the final replication-order adjustment
+in `rail-replication-build-windows.log` / `rail-replication-build-linux.log`.
+Clients still rebuild rail meshes from the authoritative snapshot because
+native movement replication may already have changed the actor's root pose.
+The first isolated run (`railfix-transformers.log`) failed in the candidate's
+secondary-interface hook, after reproducing a one-way rail-reference warning.
+That hook was removed; cleanup now uses the existing UObject data-deserializer
+boundary. The replacement and inventory changes compiled for both targets in
+`blueprint-rail-build2-windows.log` / `blueprint-rail-build2-linux.log`.
+The corrected candidate passed the following isolated Steam Windows fixtures
+on CL 517554, with normal process exit and no failed assertions:
+
+| Fixture | Passed assertions | Evidence under `Saved/Update517554/` |
+| --- | ---: | --- |
+| Transformer copies, connections and deferred rail cleanup | 121 | `railfix2-transformers.log` |
+| Network copies, rail movement, paint, undo and bad-link rejection | 179 | `railfix2-network.log` |
+| Deletion undo/redo, contents and large selections | 72 | `railfix2-polish.log` |
+| Blueprint save/load, scale and inventory filtering | 127 | `railfix3-blueprint.log` |
+
+These fixtures passed 499 assertions. The final blueprint fixture refreshes
+the native catalog before reading its newly saved file; the earlier
+`railfix2-blueprint.log` attempt failed its two read-back assertions because
+that synchronous fixture had no cached header yet. Final compilation evidence:
+`blueprint-rail-build3-windows.log` / `blueprint-rail-build3-linux.log`.
+Results are recorded in `railfix-final-results.json`.
+
+These are standalone gameplay tests, including native connection-update ticks;
+the reported dedicated-server crash scenario has not been rerun in multiplayer.
+Linux compilation passed, but Linux gameplay was not tested. No ordinary
+installation was changed during testing. Release packaging is recorded separately below.
+
+## 0.11.2: blueprint inventory filtering (2026-11-06)
+
+Only selection-to-blueprint saving scopes storage/production inventories as
+empty, retaining slot counts, while calculating costs and serializing. The
+original arrays are restored synchronously without inventory events. Installed
+Power Shards and Somersloops are retained through the factory's potential
+inventory. Copy and deletion history keep their existing content semantics.
+
+The passing native-file regression saves a container with coal and a constructor
+with input ingots, output rods and an installed shard. It checks unchanged
+source contents, empty saved storage/input/output inventories, preserved slots
+and recipe, retained upgrade, and construction cost equal to the empty-goods
+baseline. All eight inventory assertions passed in `railfix3-blueprint.log`.
+The fixture directly exercises an installed Power Shard; Somersloops use the
+same preserved potential inventory but were not separately exercised. Deletion
+undo retaining stored items also passed in `railfix2-polish.log`.
+
+## 0.11.2: Plan fixes after 0.11.1 (2026-11-05)
+
+The isolated Steam Windows game on CL 517554 passed **431 assertions** in the
+complete Plan fixture using the candidate DLL and unchanged cooked content.
+Evidence: `Saved/Update517554/planfix-final.log` and `planfix-results.json`.
+The test client exited normally. Earlier failed diagnostic runs are retained
+under the same directory and are not counted as passing verification.
+
+- The real Plan camera trace misses the rail mesh, yet the node snaps to the
+  existing endpoint and adopts its direction without a construction hologram.
+- Holding Ctrl across an input frame disables that snap. Direct queries also
+  cover instanced/indexed rails, the visible mesh just in front of a connector,
+  and an obstruction beyond the endpoint snap allowance.
+- Curved rails, belts, pipes and hypertubes construct using their own limits.
+  Straight ends keep tight tube bends above the minimum segment length. A
+  borderline bend passes the old pipe preview check, receives native
+  `UFGCDPipeInvalidShape`, and is rejected by the corrected preview for both
+  pipes and hypertubes. This exercises the native 5% bend-radius margin.
+
+Steam Windows and Linux Server compilation passed. Linux gameplay and a
+dedicated multiplayer session were not rerun for these changes. Only the
+isolated test installation was updated at that point. Subsequent release
+packaging is recorded above; the ordinary game installation was not changed.
 
 ## 0.11.1: CL 517554 compatibility
 

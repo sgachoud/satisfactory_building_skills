@@ -6,6 +6,7 @@
 #include "Algo/Reverse.h"
 #include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
+#include "AbstractInstanceManager.h"
 #include "Hologram/HologramHelpers.h"
 #include "FGCharacterPlayer.h"
 #include "FGBuildableSubsystem.h"
@@ -136,8 +137,12 @@ FVector FBSPlanBuild::ShapeLimits(EBSPlanBuildable Type)
 {
     auto Limits=FBSStick::PlanLimits(PlanDefaults(Type)); Limits.Z=MinimumLength(Type); return Limits;
 }
-bool FBSPlanBuild::SnapConnection(UWorld* World,EBSPlanBuildable Type,FVector& Position,FVector& Direction,AActor* Hit)
+bool FBSPlanBuild::SnapConnection(UWorld* World,EBSPlanBuildable Type,FVector& Position,FVector& Direction,AActor* Hit,const FVector* RayStart)
 {
+    if (!World) return false;
+    const FVector Target=Position;
+    FBox Search(Target-FVector(200),Target+FVector(200));
+    if (RayStart) { Search+=*RayStart-FVector(200); Search+=*RayStart+FVector(200); }
     TSet<AFGBuildable*> Actors;
     if (auto* B=Cast<AFGBuildable>(Hit)) Actors.Add(B);
     // Rail meshes may be represented by the instance manager, so a collision
@@ -146,20 +151,36 @@ bool FBSPlanBuild::SnapConnection(UWorld* World,EBSPlanBuildable Type,FVector& P
     if (auto* System=AFGBuildableSubsystem::Get(World))
     {
         TArray<AFGBuildable*> Indexed;
-        System->GetCollidingBuildablesInBoundingBox(Indexed,FBox(Position-FVector(200),Position+FVector(200)));
+        System->GetCollidingBuildablesInBoundingBox(Indexed,Search);
         for (auto* B:Indexed) Actors.Add(B);
     }
     TArray<FOverlapResult> Nearby;
-    World->OverlapMultiByObjectType(Nearby,Position,FQuat::Identity,FCollisionObjectQueryParams::AllObjects,FCollisionShape::MakeSphere(200));
-    for (const auto& Result:Nearby) if (auto* B=Cast<AFGBuildable>(Result.GetActor())) Actors.Add(B);
+    World->OverlapMultiByObjectType(Nearby,Search.GetCenter(),FQuat::Identity,FCollisionObjectQueryParams::AllObjects,FCollisionShape::MakeBox(Search.GetExtent()));
+    for (const auto& Result:Nearby)
+    {
+        if (auto* B=Cast<AFGBuildable>(Result.GetActor())) Actors.Add(B);
+        auto* Manager=Cast<AAbstractInstanceManager>(Result.GetActor());
+        if (!Manager && Result.GetComponent()) Manager=Cast<AAbstractInstanceManager>(Result.GetComponent()->GetOwner());
+        FInstanceHandle Handle;
+        if (Manager && Manager->ResolveOverlap(Result,Handle))
+            if (auto* B=Cast<AFGBuildable>(Manager->GetOwnerByHandle(Handle))) Actors.Add(B);
+    }
     TArray<FPlanPort> Ports; for (auto* A:Actors) if (IsValid(A) && !A->GetIsDismantled()) PlanPorts(A,Ports);
-    double Nearest=200*200; const FVector Target=Position; bool Snapped=false;
+    double Nearest=200*200, NearestDepth=DBL_MAX; bool Snapped=false;
     for (const auto& Port:Ports)
     {
         if (Port.Family!=PlanFamily(Type)) continue;
         if (auto* C=Cast<UFGFactoryConnectionComponent>(Port.Component); C && C->IsConnected()) continue;
         if (auto* C=Cast<UFGPipeConnectionComponentBase>(Port.Component); C && C->GetConnection()) continue;
-        const double D=FVector::DistSquared(Target,Port.Position()); if (D>=Nearest) continue;
+        const FVector At=Port.Position();
+        const FVector Closest=RayStart ? FMath::ClosestPointOnSegment(At,*RayStart,Target) : Target;
+        const double Depth=RayStart ? FVector::DotProduct(At-*RayStart,(Target-*RayStart).GetSafeNormal()) : 0;
+        // A visible mesh surface can lie just in front of its connector. Keep
+        // the existing 2 m endpoint snap allowance at the end of the ray too.
+        if (RayStart && (Depth<=0 || Depth>(Target-*RayStart).Size()+200)) continue;
+        const double D=FVector::DistSquared(Closest,At);
+        if (D>Nearest || (FMath::IsNearlyEqual(D,Nearest,.01) && Depth>=NearestDepth)) continue;
+        NearestDepth=Depth;
         Nearest=D; Position=Port.Position(); Direction=Port.Normal(); Snapped=true;
     }
     return Snapped;

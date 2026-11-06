@@ -1040,7 +1040,7 @@ public:
             ChecksPassed &= FBSTransformNative::RunPooledVisualChecks(Player, (Samples-130)/2);
         if (Samples >= 150 && Samples <= 203) ChecksPassed &= RunBuildingSkillsConnectedChecks(Player, Samples - 150);
         if (Samples >= 250 && Samples <= 279) ChecksPassed &= RunBuildingSkillsVolumeChecks(Player, Samples - 250);
-        if (Samples >= 450 && Samples <= 476) ChecksPassed &= RunBuildingSkillsTransformerChecks(Player, Samples - 450);
+        if (Samples >= 450 && Samples <= 480) ChecksPassed &= RunBuildingSkillsTransformerChecks(Player, Samples - 450);
         if (Samples >= 400 && Samples <= 439) ChecksPassed &= RunBuildingSkillsPolishChecks(Player, Samples - 400);
         if (Samples >= 300 && Samples <= 380) ChecksPassed &= FBSStick::RunChecks(Player, Samples - 300);
         if (Samples==610) ChecksPassed &= RunBuildingSkillsPlanConstructionChecks(Player,[](const TCHAR* Name,bool OK) {
@@ -1050,7 +1050,7 @@ public:
         if (Samples >= 500 && Samples <= 535) ChecksPassed &= RunBuildingSkillsBlueprintNetworkChecks(Player, Samples - 500);
         if (Samples == 239 && FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest"))) ChecksPassed &= RunBuildingSkillsNetworkCopyChecks(Player,3);
         if (Samples == 153) Next += 3; // Allow modal/HUD animations to settle for visual inspection.
-        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanConstructionTest")) ? 611 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest")) ? 605 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 478 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 382 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 281 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
+        if (++Samples < (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanConstructionTest")) ? 611 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPlanTest")) ? 605 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest")) ? 537 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 482 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPolishTest")) ? 441 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsStickTest")) ? 382 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest")) ? 281 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) ? 205 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsPooledVisualTest")) ? 146 : FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsNetworkTest")) ? 240 : 125)) return true;
         for (TObjectIterator<UUserWidget> It; It; ++It)
         {
             if (It->GetWorld() != World || !It->WidgetTree) continue;

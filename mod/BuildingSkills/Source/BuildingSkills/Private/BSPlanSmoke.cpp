@@ -247,6 +247,8 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
     auto Key=[&](FKey K,bool Down) { Input->InputKey(FInputKeyEventArgs(nullptr,INPUTDEVICEID_NONE,K,Down ? IE_Pressed : IE_Released,Down ? 1.f : 0.f,false,0)); };
     static FGuid SavedId,PrivateId; static TWeakObjectPtr<AFGPlayerState> OtherOwner;
     static FBSRailPlan BuiltPlan; static FVector BeforeMove;
+    static TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> SnapTracks;
+    static FVector SnapEndpoint, BeforeSnapPosition;
     static bool FixtureReady=false;
     static FGuid ExtensionPlan,ExtensionNode; static FVector ExtensionPosition;
     static FGuid InsertedId,ControlEdge; static FVector InsertedPosition,OriginalDirection,ControlPosition; static int32 BeforeNodes=0,BeforeEdges=0;
@@ -270,12 +272,39 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
         Plan->Close(false);
         Plan->TickComponent(.01f,LEVELTICK_All,nullptr);
         Check(TEXT("Cancelling pending Plan entry prevents a later state transition"),!Plan->Active && !Plan->Entering && !Plan->Context && P->GetBuildGun()->GetCurrentState()==PreviousState);
+        BeforeSnapPosition=P->GetActorLocation(); SnapTracks.Reset();
+        FBSRailPlan SnapPlan; SnapPlan.Id=FGuid::NewGuid(); SnapPlan.Name=TEXT("Camera rail snap fixture");
+        FBSPlanNode A; A.Id=FGuid::NewGuid(); A.Position=BeforeSnapPosition+FVector(0,0,50000);
+        auto B=A; B.Id=FGuid::NewGuid(); B.Position.X+=5000; SnapEndpoint=B.Position;
+        FBSPlanEdge Link; Link.Id=FGuid::NewGuid(); Link.Start=A.Id; Link.End=B.Id; Link.Trace=EBSPlanTrace::Straight;
+        SnapPlan.Nodes={A,B}; SnapPlan.Edges={Link}; FString Error;
+        auto* State=P->GetWorld()->GetGameState<AFGGameState>(); const bool Free=State->GetCheatNoCost(); State->SetCheatNoCost(true);
+        Check(TEXT("Camera rail snap fixture constructs"),FBSPlanBuild::Build(P,SnapPlan,Error)); State->SetCheatNoCost(Free);
+        for (TActorIterator<AFGBuildableRailroadTrack> It(P->GetWorld());It;++It)
+            if (It->GetConnection(0)->GetConnectorLocation().Equals(SnapEndpoint,.1) || It->GetConnection(1)->GetConnectorLocation().Equals(SnapEndpoint,.1)) SnapTracks.Add(*It);
+        P->SetActorLocation(SnapEndpoint+FVector(0,-1500,0));
     }
-    if (Phase==1) { Key(EKeys::LeftAlt,true); Key(EKeys::P,true); }
+    if (Phase==1) {
+        FVector Eye; FRotator View; PC->GetPlayerViewPoint(Eye,View);
+        PC->SetControlRotation((SnapEndpoint+FVector(0,0,150)-Eye).Rotation());
+        Key(EKeys::LeftAlt,true); Key(EKeys::P,true);
+    }
     if (Phase==2)
     {
         Key(EKeys::P,false); Key(EKeys::LeftAlt,false);
         Check(TEXT("Alt+P opens Plan without a rail hologram or active construction recipe"),Plan->Active && !FBSStick::Active(E) && Cast<UFGBuildGunStateBuild>(P->GetBuildGun()->GetCurrentState()) && !Cast<UFGBuildGunStateBuild>(P->GetBuildGun()->GetCurrentState())->GetActiveRecipe());
+        {
+            const auto SavedPlans=Plan->Plans; const auto SavedCurrent=Plan->CurrentId;
+            FBSRailPlan Empty; Empty.Id=FGuid::NewGuid(); Plan->Plans={Empty}; Plan->CurrentId=Empty.Id;
+            E->StickMode=EBSStickMode::Off; Plan->AimAndHit();
+            FVector Eye; FRotator View; PC->GetPlayerViewPoint(Eye,View);
+            FHitResult Hit; P->GetBuildGun()->TraceForBuilding(P,Hit);
+            UE_LOG(LogBuildingSkills,Display,TEXT("PLAN CAMERA SNAP: tracks=%d eye=%s view=%s target=%s aim=%s direction=%s have=%d hit=%d actor=%s impact=%s range=%.1f"),
+                SnapTracks.Num(),*Eye.ToString(),*View.ToString(),*SnapEndpoint.ToString(),*Plan->Aim.Position.ToString(),*Plan->Aim.Direction.ToString(),Plan->HaveAim,Hit.bBlockingHit,*GetNameSafe(Hit.GetActor()),*Hit.ImpactPoint.ToString(),P->GetBuildGun()->GetDefaultBuildGunRange());
+            Check(TEXT("Camera snap fixture aims past the mesh rather than within 2 m of a surface hit"),!Hit.bBlockingHit || FVector::DistSquared(Hit.ImpactPoint,SnapEndpoint)>40000);
+            Check(TEXT("Plan camera aim snaps to a built rail without any construction hologram"),!SnapTracks.IsEmpty() && Plan->HaveAim && Plan->Aim.Position.Equals(SnapEndpoint,.1) && FMath::Abs(Plan->Aim.Direction.X)>.999);
+            Plan->Plans=SavedPlans; Plan->CurrentId=SavedCurrent;
+        }
         // Reproduce the client ordering without a server: the player has its
         // gun, but equipment's replicated owner has not been assigned yet.
         auto* Gun=P->GetBuildGun();
@@ -317,8 +346,22 @@ static bool Run(AFGCharacterPlayer* P,int32 Phase)
             Check(TEXT("Completed Plan reentry remains active on the next tick"),Plan->Active && !Plan->Entering && Plan->Allowed());
         }
         E->StickMode=EBSStickMode::Default; E->StickDistance=64;
+        Key(EKeys::LeftControl,true);
     }
-    if (Phase==3) { Check(TEXT("A personal draft is created"),Plan->Current() && !Plan->Current()->Shared); Key(EKeys::LeftMouseButton,true); }
+    if (Phase==3) {
+        // Physical held-key state is updated by the next input frame.
+        E->StickMode=EBSStickMode::Off; Plan->AimAndHit();
+        Check(TEXT("Configured multi-select suppresses rail endpoint snapping"),!Plan->HaveAim || !Plan->Aim.Position.Equals(SnapEndpoint,.1));
+        Key(EKeys::LeftControl,false);
+        for (auto& T:SnapTracks) if (T.IsValid()) IFGDismantleInterface::Execute_Dismantle(T.Get()); SnapTracks.Reset();
+        P->SetActorLocation(BeforeSnapPosition); PC->SetControlRotation(FRotator::ZeroRotator);
+        E->StickMode=EBSStickMode::Default;
+        Check(TEXT("A personal draft is created"),Plan->Current() && !Plan->Current()->Shared);
+        FTimerHandle Click;
+        P->GetWorldTimerManager().SetTimer(Click,[Weak=TWeakObjectPtr<UEnhancedPlayerInput>(Input)]() {
+            if (auto* I=Weak.Get()) I->InputKey(FInputKeyEventArgs(nullptr,INPUTDEVICEID_NONE,EKeys::LeftMouseButton,IE_Pressed,1.f,false,0));
+        },.2f,false);
+    }
     if (Phase==4)
     {
         Key(EKeys::LeftMouseButton,false); Check(TEXT("Native gun click places a plan node"),Plan->Current() && Plan->Current()->Nodes.Num()==1);

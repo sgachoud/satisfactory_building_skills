@@ -1,5 +1,9 @@
 # Building Skills workflow
 
+- Never push commits, branches or tags to any remote through any tool. Only the user
+  performs pushes, including during release or publication workflows.
+- Create local commits only when the user explicitly asks. A request to commit,
+  prepare or publish a release never authorizes a push.
 - The mod reference is `BuildingSkills`; its display name is `Building Skills`.
 - The plugin is in `mod/BuildingSkills`. Keep code, config and Unreal content here.
 - Use the shared SML checkout at `F:/dev/satisfactory_mods/SatisfactoryModLoader`

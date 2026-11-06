@@ -1,8 +1,8 @@
 {
     "FileVersion": 3,
     "Version": 0,
-    "VersionName": "0.11.1",
-    "SemVersion": "0.11.1",
+    "VersionName": "0.11.2",
+    "SemVersion": "0.11.2",
     "FriendlyName": "Building Skills",
     "Description": "Edit and group buildings, copy selections, plan rail, pipe, belt and hypertube networks, repeat construction with transformers, and extend spline placement with Stick.",
     "Category": "Modding",

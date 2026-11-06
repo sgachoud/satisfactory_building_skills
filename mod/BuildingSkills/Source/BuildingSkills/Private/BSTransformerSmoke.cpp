@@ -24,6 +24,9 @@
 #include "Hologram/FGHologram.h"
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildablePipeline.h"
+#include "Buildables/FGBuildableRailroadTrack.h"
+#include "FGRailroadTrackConnectionComponent.h"
+#include "EngineUtils.h"
 #include "FGBuildableSubsystem.h"
 #include "FGPipeConnectionComponent.h"
 #include "FGPowerConnectionComponent.h"
@@ -529,6 +532,107 @@ public:
             }
           }
         }
+    }
+    // A copied live rail must not let native PostLoadGame add the copy to its
+    // unselected neighbour. Keep fixtures across ticks to exercise rail timers.
+    static TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> RailSource, RailCopies;
+    auto RailSourceIntact=[&]()
+    {
+        if(RailSource.Num()!=2 || !RailSource[0].IsValid() || !RailSource[1].IsValid())return false;
+        auto* A=RailSource[0]->GetConnection(1);auto* B=RailSource[1]->GetConnection(0);
+        return A->GetConnections()==TArray<UFGRailroadTrackConnectionComponent*>{B}
+            && B->GetConnections()==TArray<UFGRailroadTrackConnectionComponent*>{A}
+            && !RailSource[0]->GetConnection(0)->IsConnected() && !RailSource[1]->GetConnection(1)->IsConnected();
+    };
+    if(Phase==27)
+    {
+        RailSource.Reset();RailCopies.Reset();R->Transformers.Reset();R->TransformersBuildAsBlueprint=false;
+        W->GetGameState<AFGGameState>()->SetCheatNoCost(true);
+        auto* Class=LoadClass<AFGBuildableRailroadTrack>(nullptr,TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"));
+        auto RC=LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Recipes/Buildings/Recipe_RailroadTrack.Recipe_RailroadTrack_C"));
+        if(!Class || !RC){Check(TEXT("rail regression assets load"),false);return false;}
+        AFGRecipeManager::Get(W)->AddAvailableRecipe(RC);
+        const FVector RailBase=Base+FVector(18000,18000,5000);
+        for(int32 I=0;I<2;++I)
+        {
+            auto* Rail=Cast<AFGBuildableRailroadTrack>(AFGBuildableSubsystem::Get(W)->BeginSpawnBuildable(Class,FTransform(RailBase+FVector(I*4000,0,0))));
+            if(!Rail){Check(TEXT("rail fixture spawns"),false);return false;}
+            Rail->SetBuiltWithRecipe(RC);
+            *Rail->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,FVector(4000,0,0)),FSplinePointData(FVector(4000,0,0),FVector(4000,0,0))};
+            Rail->FinishSpawning(Rail->GetActorTransform());RailSource.Add(Rail);
+        }
+        RailSource[0]->GetConnection(1)->AddConnection(RailSource[1]->GetConnection(0));
+        Check(TEXT("rail fixture has exactly one reciprocal original link"),RailSourceIntact());
+        FBSTransformer Turn;Turn.Id=FGuid::NewGuid();Turn.Frame=FTransform(RailBase+FVector(0,10000,0));
+        Turn.Mirror=false;Turn.Rotation=true;Turn.Angle=90;Turn.Radius=500;
+        auto Turn2=Turn;Turn2.Id=FGuid::NewGuid();Turn2.Angle=180;
+        R->Transformers={Turn,Turn2};
+        TSet<AFGBuildableRailroadTrack*> BeforeRails;
+        for(TActorIterator<AFGBuildableRailroadTrack> It(W);It;++It)BeforeRails.Add(*It);
+        FBSTransformers::Replicate(R,{FBSBuildingRef::FromActor(RailSource[1].Get())});
+        for(TActorIterator<AFGBuildableRailroadTrack> It(W);It;++It)
+            if(!BeforeRails.Contains(*It) && !It->GetIsDismantled())RailCopies.Add(*It);
+        Check(TEXT("two rotation transformers each produce one rail"),RailCopies.Num()==2);
+        Check(TEXT("rotating a connected rail leaves original neighbours untouched"),RailSourceIntact());
+        bool Detached=RailCopies.Num()==2;
+        for(auto& Copy:RailCopies)for(int32 End=0;End<2;++End)Detached &= !Copy->GetConnection(End)->IsConnected();
+        Check(TEXT("rotated single rails retain no source-world endpoint references"),Detached);
+        R->Transformers.Reset();
+        TArray<FBSBuildingRef> Batch;FString Error;Turn.Angle=270;
+        const bool Copied=FBSTransformers::Copy(R,{FBSBuildingRef::FromActor(RailSource[0].Get()),FBSBuildingRef::FromActor(RailSource[1].Get())},Turn,Batch,Error);
+        Check(TEXT("connected pair rotates as one batch"),Copied && Batch.Num()==2);
+        for(auto& Ref:Batch)if(auto* Rail=Cast<AFGBuildableRailroadTrack>(Ref.Actor))RailCopies.Add(Rail);
+    }
+    if(Phase==28)
+    {
+        // Place the neighbouring segments in a later action. Their copies must
+        // join the corresponding rotation, not the original or the other copy.
+        FBSTransformer Turn;Turn.Id=FGuid::NewGuid();Turn.Mirror=false;Turn.Rotation=true;Turn.Radius=500;
+        Turn.Frame=FTransform(Base+FVector(18000,28000,5000));
+        for(double Angle:{90.,180.})
+        {
+            Turn.Angle=Angle;TArray<FBSBuildingRef> Next;FString Error;
+            const bool OK=RailSource.Num()==2 && FBSTransformers::Copy(R,{FBSBuildingRef::FromActor(RailSource[0].Get())},Turn,Next,Error);
+            auto* NewRail=Next.Num()==1?Cast<AFGBuildableRailroadTrack>(Next[0].Actor):nullptr;
+            bool Joined=OK && NewRail && NewRail->GetConnection(1)->GetConnections().Num()==1;
+            if(Joined)
+            {
+                auto* Other=NewRail->GetConnection(1)->GetConnection(0);
+                Joined=IsValid(Other) && RailCopies.Contains(Other->GetTrack())
+                    && Other->GetConnectorLocation().Equals(Turn.Point(RailSource[1]->GetConnection(0)->GetConnectorLocation()),.1)
+                    && Other->GetConnections().Contains(NewRail->GetConnection(1));
+            }
+            Check(TEXT("separate rail placement connects only to its corresponding rotated neighbour"),Joined);
+            if(NewRail)RailCopies.Add(NewRail);
+        }
+        Check(TEXT("original rail network stays intact after deferred connection sorting"),RailSourceIntact());
+        bool Valid=RailCopies.Num()==6;int32 Links=0;
+        for(auto& Weak:RailCopies)
+        {
+            auto* Rail=Weak.Get();if(!Rail){Valid=false;continue;}
+            for(int32 End=0;End<2;++End)
+            {
+                auto* Port=Rail->GetConnection(End);
+                for(auto* Other:Port->GetConnections())
+                {
+                    ++Links;
+                    Valid &= IsValid(Other) && RailCopies.Contains(Other->GetTrack()) && Other->GetConnections().Contains(Port)
+                        && Port->GetComponentLocation().Equals(Other->GetComponentLocation(),.1);
+                }
+            }
+        }
+        Check(TEXT("copied internal rail connections remain reciprocal and isolated after timers"),Valid && Links==6);
+    }
+    if(Phase==29)
+    {
+        for(auto& Rail:RailCopies)if(Rail.IsValid())IFGDismantleInterface::Execute_Dismantle(Rail.Get());
+        Check(TEXT("dismantling rotated rail copies does not disconnect originals"),RailSourceIntact());
+    }
+    if(Phase==30)
+    {
+        Check(TEXT("source rail ports remain valid after copy destruction and timers"),RailSourceIntact());
+        for(auto& Rail:RailSource)if(Rail.IsValid())IFGDismantleInterface::Execute_Dismantle(Rail.Get());
+        RailSource.Reset();RailCopies.Reset();
     }
     return Passed;
  }

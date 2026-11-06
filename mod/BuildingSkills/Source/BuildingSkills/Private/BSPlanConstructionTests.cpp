@@ -21,6 +21,8 @@
 #include "Buildables/FGBuildableRailroadSignal.h"
 #include "Buildables/FGBuildableBlueprintDesigner.h"
 #include "FGDismantleInterface.h"
+#include "FGConstructDisqualifier.h"
+#include "Hologram/FGSplineHologram.h"
 #include "EngineUtils.h"
 #include "Misc/ScopeExit.h"
 
@@ -128,6 +130,17 @@ bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer* Player,TFunctio
                 FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr) && SnapAt.Equals(B.Position,.1) && SnapDirection.Equals(FVector::ForwardVector,.001));
             SnapAt=B.Position+FVector(0,250,0);
             Test(TEXT("Rail endpoint snap respects the snap radius"),!FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr));
+            // The ray passes through the gap between the rail meshes and hits
+            // terrain far behind it: an endpoint-distance-only query misses it.
+            const FVector Eye=B.Position+FVector(0,-2000,80);
+            SnapAt=B.Position+FVector(0,2000,80);
+            Test(TEXT("Rail snap finds an endpoint beside the aim ray before the surface hit"),
+                FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr,&Eye) && SnapAt.Equals(B.Position,.1));
+            SnapAt=B.Position+FVector(0,-100,80);
+            Test(TEXT("Rail mesh surface just in front of the connector does not block its snap"),
+                FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr,&Eye) && SnapAt.Equals(B.Position,.1));
+            SnapAt=B.Position+FVector(0,-500,80);
+            Test(TEXT("Rail snap cannot reach through a nearer obstructing surface"),!FBSPlanBuild::SnapConnection(World,Type,SnapAt,SnapDirection,nullptr,&Eye));
             for (TActorIterator<AFGBuildable> It(World,Class);It;++It)
                 if (!Before.Contains(*It) && FMath::Abs(It->GetActorLocation().Y-A.Position.Y)<1) It->SetActorEnableCollision(true);
         }
@@ -152,6 +165,53 @@ bool RunBuildingSkillsPlanConstructionChecks(AFGCharacterPlayer* Player,TFunctio
             for (const auto& Link:PipeLinks) Intact &= IsValid(Link.Key) && Link.Key->GetConnection()==Link.Value;
             Test(TEXT("Rejected duplicate placement preserves existing buildings and networks"),Intact);
         }
+    }
+    for (const auto Type:{EBSPlanBuildable::Rail,EBSPlanBuildable::Pipe,EBSPlanBuildable::BeltMk1,EBSPlanBuildable::Hypertube})
+        for (const double Radius:{100.,300.,1000.,3000.,FBSPlanBuild::ShapeLimits(Type).X/1.05*1.02,FBSPlanBuild::ShapeLimits(Type).X*1.01,FBSPlanBuild::ShapeLimits(Type).X*1.1})
+    {
+        FBSRailPlan Plan; Plan.Id=FGuid::NewGuid(); Plan.Name=TEXT("Native curve validation regression");
+        Plan.Construction.Main=Type; Plan.Remainder=EBSPlanRemainder::Reduce;
+        FBSPlanNode A; A.Id=FGuid::NewGuid(); A.Position=Origin+FVector(100000+int32(Type)*20000,Radius*10,0);
+        auto B=A; B.Id=FGuid::NewGuid(); B.Position+=FVector(Radius,Radius,0); B.Direction=FVector::RightVector;
+        FBSPlanEdge E; E.Id=FGuid::NewGuid(); E.Start=A.Id; E.End=B.Id;
+        const double Tangent=Radius*1.65685424949238;
+        E.Route.Emplace(FSplinePointData(A.Position,FVector(Tangent,0,0)));
+        E.Route.Emplace(FSplinePointData(B.Position,FVector(0,Tangent,0)));
+        const bool PipeFamily=Type==EBSPlanBuildable::Pipe || Type==EBSPlanBuildable::Hypertube;
+        // A near-minimum-radius tube quarter-turn alone is shorter than the
+        // minimum piece length. Straight ends isolate curvature from length.
+        if (PipeFamily)
+        {
+            A.Position-=FVector(500,0,0); B.Position+=FVector(0,500,0);
+            E.Route[0].ArriveTangent=FVector(500,0,0); E.Route.Last().LeaveTangent=FVector(0,500,0);
+            E.Route.Insert(FBSPlanPoint(FSplinePointData(A.Position,FVector(500,0,0))),0);
+            E.Route.Emplace(FSplinePointData(B.Position,FVector(0,500,0)));
+        }
+        Plan.Nodes={A,B}; Plan.Edges={E};
+        const auto Curve=FBSPlanMath::Curve(Plan,E); const auto Limits=FBSPlanBuild::ShapeLimits(Type);
+        bool Preview=true;
+        for (int32 I=1;I<Curve.Num();++I) for (int32 S=0;S<=128;++S) Preview &= FBSPlanMath::ShapeValid(Curve[I-1],Curve[I],S/128.,Limits.X,Limits.Y);
+        if (PipeFamily && FMath::IsNearlyEqual(Radius,Limits.X/1.05*1.02,.001))
+        {
+            bool OldPreview=true;
+            for (int32 I=1;I<Curve.Num();++I) for (int32 S=0;S<=128;++S) OldPreview &= FBSPlanMath::ShapeValid(Curve[I-1],Curve[I],S/128.,Limits.X/1.05,Limits.Y);
+            auto* Native=Cast<AFGSplineHologram>(AFGHologram::SpawnHologramFromRecipe(FBSPlanBuild::Recipe(Type),Player->GetBuildGun(),A.Position,Player));
+            bool NativeRejectsSharpTurn=false;
+            if (Native)
+            {
+                FBSStick::PlanGeometry(Native,Curve);
+                auto* Start=FBSStick::PlanSupport(Native,0,nullptr); auto* End=FBSStick::PlanSupport(Native,1,nullptr);
+                FBSStick::ValidatePlan(Native,Player->GetInventory(),Start,End);
+                TArray<TSubclassOf<UFGConstructDisqualifier>> Reasons; Native->GetConstructDisqualifiers(Reasons);
+                for (const auto& Reason:Reasons) NativeRejectsSharpTurn |= Reason==UFGCDPipeInvalidShape::StaticClass();
+                Native->Destroy();
+            }
+            Test(TEXT("Native sharp-turn rejection previously passed the pipe preview; the new preview rejects it"),OldPreview && !Preview && NativeRejectsSharpTurn);
+        }
+        FString Error; const bool Built=FBSPlanBuild::Build(Player,Plan,Error);
+        UE_LOG(LogBuildingSkills,Display,TEXT("PLAN CURVE TEST: type=%s radius=%.1f limits=%s preview=%d built=%d error=%s"),FBSPlanBuild::Name(Type),Radius,*Limits.ToString(),Preview,Built,*Error);
+        if (PipeFamily || Radius*UE_DOUBLE_PI*.5>=Limits.Z)
+            Test(*FString::Printf(TEXT("Curved %s preview agrees with native construction at radius %.0f"),FBSPlanBuild::Name(Type),Radius),Built==Preview);
     }
     {
         FBSRailPlan Mixed; Mixed.Id=FGuid::NewGuid(); Mixed.Name=TEXT("Mixed native build");

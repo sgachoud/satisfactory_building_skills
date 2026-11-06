@@ -15,6 +15,7 @@
 #include "Serialization/BufferArchive.h"
 #include "Serialization/MemoryReader.h"
 
+bool RunBuildingSkillsBlueprintInventoryChecks(AFGCharacterPlayer* Player);
 bool RunBuildingSkillsBlueprintScaleChecks(AFGCharacterPlayer* Player)
 {
     auto* World = Player->GetWorld();
@@ -169,6 +170,7 @@ bool RunBuildingSkillsBlueprintScaleChecks(AFGCharacterPlayer* Player)
     Restored.Serialize(Reader, Header.SaveVersion);
     Check(TEXT("World-save actor-header serialization is unaffected by blueprint hooks"), Restored.Transform.Equals(Ordinary.Transform, .0001f));
     System->DeleteBlueprintDescriptor(Descriptor);
+    Passed &= RunBuildingSkillsBlueprintInventoryChecks(Player);
     return Passed;
 }
 

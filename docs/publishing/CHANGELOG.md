@@ -1,3 +1,14 @@
+# 0.11.2 - Rail connections and blueprint inventories
+
+- Saving a selection as a blueprint omits storage and production inventories from both the archive and construction cost. Installed Power Shards and Somersloops remain. Source inventories and deletion-undo contents are preserved.
+- Rail copies remove external source-world connections before native rail loading can repair them onto the original network. This targets the deferred connection-sorting crash reported while placing rails with rotation transformers.
+- Rails placed in separate transformer actions reconnect to the matching transformed neighbour at the actual endpoint, without retaining links to the original network.
+- Moving an unchanged rail curve preserves its spline and instance buffers. Necessary spline rebuilds reapply the saved painted swatch, including during undo. Invalid distant rail links are rejected before they can distort a transform.
+- Plan nodes find existing transport endpoints along the aiming ray, including when the cursor misses the rail mesh or hits its surface just before the connector. Instanced collision owners are resolved too; Ctrl still disables snapping and Stick snapping stays near its tip.
+- Pipe and hypertube previews include the native 5% minimum bend-radius margin, preventing borderline turns from looking valid until construction rejects them.
+
+Requires Satisfactory 1.2.5.0 (CL 517554) or newer. Update both client and server. These changes prevent new bad rail links; they do not repair links already stored in a save. Validation and limits are recorded in docs/TESTING.md.
+
 # 0.11.1 - Game update compatibility
 
 - Fixes deletion undo crashing after game update 1.2.5.0 (CL 517554).

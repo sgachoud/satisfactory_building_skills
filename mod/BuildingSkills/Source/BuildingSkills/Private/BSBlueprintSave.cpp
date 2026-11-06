@@ -18,6 +18,17 @@
 #include "InstanceData.h"
 #include "Net/UnrealNetwork.h"
 #include "Patching/NativeHookManager.h"
+#include "FGInventoryComponent.h"
+#include "Buildables/FGBuildableFactory.h"
+#include "UObject/UnrealType.h"
+#include "Buildables/FGBuildableManufacturer.h"
+#include "Buildables/FGBuildableStorage.h"
+#include "FGInventoryLibrary.h"
+#include "FGRecipe.h"
+#include "FGRecipeManager.h"
+#include "FGBuildableSubsystem.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 
 namespace
 {
@@ -25,8 +36,41 @@ namespace
     thread_local bool BlueprintWriteSucceeded = false;
     using FExpectedBlueprintTransforms = TMap<FString, FTransform>;
     thread_local FExpectedBlueprintTransforms ExpectedBlueprintTransforms;
-
-
+    struct FBlueprintStoredGoodsScope
+    {
+        struct FEntry { UFGInventoryComponent* Inventory; TArray<FInventoryStack> Stacks; };
+        FArrayProperty* Property=nullptr;
+        TArray<FEntry> Saved;
+        bool Valid=true;
+        explicit FBlueprintStoredGoodsScope(const TArray<AFGBuildable*>& Buildings)
+        {
+            Property=FindFProperty<FArrayProperty>(UFGInventoryComponent::StaticClass(),TEXT("mInventoryStacks"));
+            auto* Inner=Property?CastField<FStructProperty>(Property->Inner):nullptr;
+            if(!Inner || Inner->Struct!=FInventoryStack::StaticStruct()){Valid=false;return;}
+            for(auto* Building:Buildings)if(IsValid(Building))
+            {
+                auto* Factory=Cast<AFGBuildableFactory>(Building);
+                for(auto* Inventory:TInlineComponentArray<UFGInventoryComponent*>(Building))
+                {
+                    // Shards and Somersloops configure the machine and remain
+                    // real blueprint costs. Only stored/processed goods are omitted.
+                    if(Factory && Inventory==Factory->GetPotentialInventory())continue;
+                    auto* Slots=Property->ContainerPtrToValuePtr<TArray<FInventoryStack>>(Inventory);
+                    auto& Entry=Saved.AddDefaulted_GetRef();Entry.Inventory=Inventory;Entry.Stacks=MoveTemp(*Slots);
+                    Slots->SetNum(Entry.Stacks.Num());
+                }
+            }
+        }
+        ~FBlueprintStoredGoodsScope()
+        {
+            // Native saving is synchronous. Restore the exact arrays without
+            // inventory events, replication dirtiness, refunds or production ticks.
+            for(auto& Entry:Saved)if(IsValid(Entry.Inventory))
+                *Property->ContainerPtrToValuePtr<TArray<FInventoryStack>>(Entry.Inventory)=MoveTemp(Entry.Stacks);
+        }
+        FBlueprintStoredGoodsScope(const FBlueprintStoredGoodsScope&)=delete;
+        FBlueprintStoredGoodsScope& operator=(const FBlueprintStoredGoodsScope&)=delete;
+    };
 }
 
 ABSBlueprintSaveSession::ABSBlueprintSaveSession()
@@ -163,7 +207,11 @@ bool ABSBlueprintSaveSession::Prepare(FString& Error)
     const FVector Size = (BoundsSize - FVector(1.e-4)).ComponentMax(FVector::ZeroVector) / TILE_SIZE;
     mDimensions = FIntVector(FMath::Max(1, FMath::CeilToInt(Size.X)), FMath::Max(1, FMath::CeilToInt(Size.Y)), FMath::Max(1, FMath::CeilToInt(Size.Z)));
     mCurrentCost.Reset();
-    if (auto* Blueprints = AFGBlueprintSubsystem::Get(GetWorld())) Blueprints->CalculateBlueprintCost(mBuildables, mCurrentCost);
+    {
+        FBlueprintStoredGoodsScope EmptyGoods(mBuildables);
+        if(!EmptyGoods.Valid){Error=TEXT("The inventory layout is unsupported; blueprint saving was cancelled.");return false;}
+        if (auto* Blueprints = AFGBlueprintSubsystem::Get(GetWorld())) Blueprints->CalculateBlueprintCost(mBuildables, mCurrentCost);
+    }
     return true;
 }
 
@@ -247,6 +295,8 @@ void ABSBlueprintSaveSession::InstallHooks()
             }
             TGuardValue<TWeakObjectPtr<ABSBlueprintSaveSession>> Writer(ActiveBlueprintWriter, Session);
             BlueprintWriteSucceeded = false;
+            FBlueprintStoredGoodsScope EmptyGoods(Session->mBuildables);
+            if(!EmptyGoods.Valid){Session->Notify(TEXT("The inventory layout is unsupported; blueprint saving was cancelled."));Scope.Cancel();return;}
             Scope(Designer, Record, Controller, UpdateAuthor);
             for (const auto& Entry : Membership)
                 if (IsValid(Entry.Building))
@@ -315,4 +365,71 @@ void UBSGroupRemoteCallObject::Client_BlueprintMessage_Implementation(const FStr
 {
     if (auto* Player = GetOwnerPlayerCharacter())
         if (auto* Edit = Player->FindComponentByClass<UBSEditModeComponent>()) Edit->BlueprintMessage(Message);
+}
+
+bool RunBuildingSkillsBlueprintInventoryChecks(AFGCharacterPlayer* Player)
+{
+    check(FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsRuntimeTest")));
+    auto* World=Player->GetWorld();auto* System=AFGBlueprintSubsystem::Get(World);
+    auto* PC=Cast<AFGPlayerController>(Player->GetController());
+    bool Passed=true;auto Check=[&](const TCHAR* Label,bool OK){Passed &= OK;UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME ASSERT: Blueprint inventories: %s: %s"),Label,OK?TEXT("PASS"):TEXT("FAIL"));};
+    auto Item=[](const TCHAR* Path){return LoadClass<UFGItemDescriptor>(nullptr,Path);};
+    auto Coal=Item(TEXT("/Game/FactoryGame/Resource/RawResources/Coal/Desc_Coal.Desc_Coal_C"));
+    auto Ingot=Item(TEXT("/Game/FactoryGame/Resource/Parts/IronIngot/Desc_IronIngot.Desc_IronIngot_C"));
+    auto Rod=Item(TEXT("/Game/FactoryGame/Resource/Parts/IronRod/Desc_IronRod.Desc_IronRod_C"));
+    auto Shard=Item(TEXT("/Game/FactoryGame/Resource/Environment/Crystal/Desc_CrystalShard.Desc_CrystalShard_C"));
+    auto RodRecipe=LoadClass<UFGRecipe>(nullptr,TEXT("/Game/FactoryGame/Recipes/Constructor/Recipe_IronRod.Recipe_IronRod_C"));
+    auto Spawn=[&](const TCHAR* Name,FVector Offset)->AFGBuildable*
+    {
+        auto Class=LoadClass<AFGBuildable>(nullptr,*FString::Printf(TEXT("/Game/FactoryGame/Buildable/Factory/%s/Build_%s.Build_%s_C"),Name,Name,Name));
+        auto Recipe=LoadClass<UFGRecipe>(nullptr,*FString::Printf(TEXT("/Game/FactoryGame/Recipes/Buildings/Recipe_%s.Recipe_%s_C"),Name,Name));
+        if(!Class || !Recipe)return nullptr;
+        AFGRecipeManager::Get(World)->AddAvailableRecipe(Recipe);
+        auto* B=AFGBuildableSubsystem::Get(World)->BeginSpawnBuildable(Class,FTransform(Player->GetActorLocation()+Offset));
+        if(B){B->SetBuiltWithRecipe(Recipe);B->FinishSpawning(B->GetActorTransform());}return B;
+    };
+    auto* Storage=Cast<AFGBuildableStorage>(Spawn(TEXT("StorageContainerMk1"),FVector(1200,0,1800)));
+    auto* Machine=Cast<AFGBuildableManufacturer>(Spawn(TEXT("ConstructorMk1"),FVector(3000,0,1800)));
+    const bool Fixture=System && PC && Storage && Machine && Coal && Ingot && Rod && Shard && RodRecipe;
+    Check(TEXT("storage, constructor and item fixtures load"),Fixture);if(!Fixture)return false;
+    AFGRecipeManager::Get(World)->AddAvailableRecipe(RodRecipe);Machine->SetRecipe(RodRecipe);
+    auto* Stored=Storage->GetStorageInventory();auto* Input=Machine->GetInputInventory();auto* Output=Machine->GetOutputInventory();auto* Upgrades=Machine->GetPotentialInventory();
+    if(!Stored || !Input || !Output || !Upgrades){Check(TEXT("source inventories exist"),false);return false;}
+    Check(TEXT("installed shard fixture is populated"),Upgrades->AddStackToIndex_Unsafe(0,FInventoryStack(1,Shard))==1);
+    TArray<AFGBuildable*> Source{Storage,Machine};TArray<FItemAmount> ExpectedCost;
+    System->CalculateBlueprintCost(Source,ExpectedCost);
+    Check(TEXT("stored goods fixture is populated"),Stored->AddStack(FInventoryStack(73,Coal))==73
+        && Input->AddStackToIndex_Unsafe(0,FInventoryStack(42,Ingot))==42 && Output->AddStackToIndex_Unsafe(0,FInventoryStack(17,Rod))==17);
+    const int32 Slots=Stored->GetSizeLinear();
+    FActorSpawnParameters Params;Params.Owner=PC;Params.ObjectFlags|=RF_Transient;
+    auto* Session=World->SpawnActor<ABSBlueprintSaveSession>(ABSBlueprintSaveSession::StaticClass(),Player->GetActorTransform(),Params);
+    if(!Session){Check(TEXT("save session spawns"),false);return false;}
+    Session->SourceSelection.Buildings={FBSBuildingRef::FromActor(Storage),FBSBuildingRef::FromActor(Machine)};
+    FBlueprintRecord Record;Record.BlueprintName=TEXT("BSRuntime_EmptyGoods_")+FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    Record.Category=System->GetCategoryForUndefined();Record.SubCategory=System->GetSubCategoryForUndefined();
+    Session->SaveBlueprint(Record,PC,false);
+    Check(TEXT("saving leaves original goods and installed upgrades untouched"),Stored->GetNumItems(Coal)==73 && Input->GetNumItems(Ingot)==42 && Output->GetNumItems(Rod)==17 && Upgrades->GetNumItems(Shard)==1 && Stored->GetSizeLinear()==Slots);
+    // The test reads the file synchronously in the saving tick, before the
+    // normal menu/catalog refresh. Populate native cached headers first.
+    System->EnumerateBlueprints();
+    auto* Descriptor=System->GetBlueprintDescriptorByNameString(Record.BlueprintName);
+    const bool Written=Descriptor && System->ReadBlueprintFromDisc(Record.BlueprintName);
+    Check(TEXT("selection save writes a readable native blueprint"),Written);
+    if(Written)
+    {
+        TArray<FItemAmount> Cost;Descriptor->GetBlueprintCost(Cost);
+        auto Amount=[](const TArray<FItemAmount>& Items,TSubclassOf<UFGItemDescriptor> Class){int32 Total=0;for(const auto& I:Items)if(I.ItemClass==Class)Total+=I.Amount;return Total;};
+        bool SameCost=true;for(const auto& I:ExpectedCost)SameCost &= Amount(Cost,I.ItemClass)==Amount(ExpectedCost,I.ItemClass);
+        for(const auto& I:Cost)SameCost &= Amount(Cost,I.ItemClass)==Amount(ExpectedCost,I.ItemClass);
+        Check(TEXT("blueprint requires only buildings and installed upgrades, not stored goods"),SameCost && Amount(Cost,Coal)==0 && Amount(Cost,Ingot)==0 && Amount(Cost,Shard)==1);
+        TArray<AFGBuildable*> Loaded;System->LoadStoredBlueprint(Descriptor,FTransform::Identity,Loaded,true);
+        UE_LOG(LogBuildingSkills,Display,TEXT("BLUEPRINT INVENTORY CHECK: descriptor=%s cachedHeaders=%d loaded=%d"),*Descriptor->GetBlueprintNameAsString(),FBSBlueprintAccess::Headers(System).Num(),Loaded.Num());
+        AFGBuildableStorage* NewStorage=nullptr;AFGBuildableManufacturer* NewMachine=nullptr;
+        for(auto* B:Loaded){if(auto* S=Cast<AFGBuildableStorage>(B))NewStorage=S;if(auto* M=Cast<AFGBuildableManufacturer>(B))NewMachine=M;}
+        Check(TEXT("saved storage and production inventories are empty but retain their slots"),NewStorage && NewMachine && NewStorage->GetStorageInventory()->IsEmpty()
+            && NewStorage->GetStorageInventory()->GetSizeLinear()==Slots && NewMachine->GetInputInventory()->IsEmpty() && NewMachine->GetOutputInventory()->IsEmpty());
+        Check(TEXT("saved machine keeps its recipe and installed upgrade"),NewMachine && NewMachine->GetCurrentRecipe()==RodRecipe && NewMachine->GetPotentialInventory()->GetNumItems(Shard)==1);
+        System->DeleteBlueprintDescriptor(Descriptor);
+    }
+    Session->ShowSummaryOnly();Session->Destroy();return Passed;
 }
