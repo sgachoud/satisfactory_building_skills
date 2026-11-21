@@ -1,3 +1,4 @@
+#include "BSConveyorAccess.h"
 #include "BSBlueprintAccess.h"
 #include "BSBlueprintScale.h"
 #include "BSClipboard.h"
@@ -32,9 +33,9 @@ namespace BSBlueprintNetworkSmoke
         for (int32 I=0; I<Source.Num(); ++I)
         {
             auto* Belt=Source[I].Get();
-            if (!Belt || !SourceChains[I].IsValid() || Belt->GetConveyorChainActor()!=SourceChains[I].Get() ||
-                Belt->GetConnection0()->GetConnection()!=SourcePorts[I*2].Get() ||
-                Belt->GetConnection1()->GetConnection()!=SourcePorts[I*2+1].Get()) return false;
+            if (!Belt || !SourceChains[I].IsValid() || BSConveyorAccess::Chain(Belt)!=SourceChains[I].Get() ||
+                BSConveyorAccess::Connection(Belt, 0)->GetConnection()!=SourcePorts[I*2].Get() ||
+                BSConveyorAccess::Connection(Belt, 1)->GetConnection()!=SourcePorts[I*2+1].Get()) return false;
         }
         return true;
     }
@@ -75,7 +76,7 @@ bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 P
         System->LoadStoredBlueprint(Clip->Descriptor,FTransform::Identity,Preview,true);
         bool Clean=true; int32 Count=0;
         for (auto* B:Preview) if (auto* Conveyor=Cast<AFGBuildableConveyorBase>(B))
-        { ++Count; Clean &= Conveyor->GetConveyorChainActor()==nullptr; }
+        { ++Count; Clean &= BSConveyorAccess::Chain(Conveyor)==nullptr; }
         Check(TEXT("Imported conveyor preview has no live-world simulation chain"),Clean && Count==ExpectedConveyors);
         if (Preview.IsEmpty()) return false;
         auto* Holo=World->SpawnActorDeferred<AFGBlueprintHologram>(AFGBlueprintHologram::StaticClass(),FTransform::Identity,Player,Player);
@@ -118,11 +119,11 @@ bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 P
         bool Live=Source.Num()==ExpectedConveyors && ExpectedConveyors>0;
         for (const auto& Weak:Source)
         {
-            auto* Belt=Weak.Get(); auto* Chain=Belt ? Belt->GetConveyorChainActor() : nullptr;
+            auto* Belt=Weak.Get(); auto* Chain=Belt ? BSConveyorAccess::Chain(Belt) : nullptr;
             Live &= IsValid(Chain) && Chain->GetSegmentForConveyorBase(Belt)!=nullptr;
             SourceChains.Add(Chain);
-            SourcePorts.Add(Belt ? Belt->GetConnection0()->GetConnection() : nullptr);
-            SourcePorts.Add(Belt ? Belt->GetConnection1()->GetConnection() : nullptr);
+            SourcePorts.Add(Belt ? BSConveyorAccess::Connection(Belt, 0)->GetConnection() : nullptr);
+            SourcePorts.Add(Belt ? BSConveyorAccess::Connection(Belt, 1)->GetConnection() : nullptr);
         }
         Check(TEXT("All imported belts and lifts acquire valid native chain segments"),Live);
         if (!Live) return false;
@@ -142,10 +143,10 @@ bool RunBuildingSkillsBlueprintNetworkChecks(AFGCharacterPlayer* Player, int32 P
         TSet<AActor*> Members; for (const auto& Weak:Copies) if (Weak.IsValid()) Members.Add(Weak.Get());
         for (const auto& Weak:Copies)
         {
-            auto* Belt=Weak.Get(); auto* Chain=Belt ? Belt->GetConveyorChainActor() : nullptr;
+            auto* Belt=Weak.Get(); auto* Chain=Belt ? BSConveyorAccess::Chain(Belt) : nullptr;
             Independent &= IsValid(Chain) && Chain->GetSegmentForConveyorBase(Belt)!=nullptr && !SourceChains.Contains(Chain);
             if (!Belt) { Reciprocal=false; continue; }
-            for (auto* Port:{Belt->GetConnection0(),Belt->GetConnection1()}) if (auto* Other=Port->GetConnection())
+            for (auto* Port:{BSConveyorAccess::Connection(Belt, 0),BSConveyorAccess::Connection(Belt, 1)}) if (auto* Other=Port->GetConnection())
                 Reciprocal &= Members.Contains(Other->GetOwner()) && Other->GetConnection()==Port;
         }
         Check(TEXT("Live conveyor copies have independent native simulation chains"),Independent);

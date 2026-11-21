@@ -2,7 +2,7 @@
   "name": "Building Skills",
   "mod_reference": "BuildingSkills",
   "short_description": "Group, move, copy and mirror your factory. Plan rail, pipe, belt and hypertube networks, extend spline placement, and undo construction or dismantling.",
-  "version": "0.11.2",
+  "version": "0.11.4",
   "stability": "Early access",
   "author": "sgachoud",
   "source_url": "https://github.com/sgachoud/satisfactory_building_skills",
@@ -15,6 +15,6 @@
   "ai_usage_transparency": "OpenAI Codex was used to help develop source code, build and test scripts, documentation, release notes, and this mod page. It also helped create the mod's UI/content setup and the original geometric icon and promotional artwork. Gameplay previews are real recordings supplied by the mod author, trimmed and converted to GIF with Codex-assisted scripts; they are not generated gameplay. Building Skills does not use generative AI at runtime.",
   "suggested_tags": ["Building", "Tools", "Quality of Life", "Trains"],
   "required_on_remote": true,
-  "sml_requirement": "^3.12.0",
-  "game_build_requirement": ">=517554"
+  "sml_requirement": "^3.12.1",
+  "game_build_requirement": ">=520140"
 }

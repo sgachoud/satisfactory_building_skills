@@ -19,7 +19,9 @@ public:
     virtual bool CanDismantle_Implementation() const override { return false; }
     virtual void GetChildDismantleActors_Implementation(TArray<AActor*>& Out) const override {}
     virtual void RegisterInteractingPlayer_Implementation(AFGCharacterPlayer* Player) override {}
+    virtual void UnregisterInteractingPlayer_Implementation(AFGCharacterPlayer* Player) override {}
     bool Prepare(FString& Error);
+    bool WriteCopy(const FBlueprintRecord& Record, FBlueprintSaveData& Out, FString& Error);
     bool RequireReach = true; // Server-created construction copies may be distant.
     void ShowSummaryOnly() { mBuildables.Reset(); mBuildables.Add(this); }
     UPROPERTY(Transient) FBSSelection SourceSelection;

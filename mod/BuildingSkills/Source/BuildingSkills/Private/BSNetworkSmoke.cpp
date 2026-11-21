@@ -1,3 +1,7 @@
+#include "BSConveyorAccess.h"
+#include "BSFactoryAccess.h"
+#include "BSBlueprintBounds.h"
+#include "FGNetSignificanceInterface.h"
 #include "BSGroups.h"
 #include "AbstractInstanceManager.h"
 #include "BuildingSkills.h"
@@ -12,6 +16,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "FGBuildableSubsystem.h"
 #include "FGFactoryConnectionComponent.h"
+#include "FGFactoryConnectionStateOwner.h"
 #include "FGPipeConnectionComponent.h"
 #include "FGCircuitConnectionComponent.h"
 #include "FGCustomizationRecipe.h"
@@ -97,8 +102,8 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
             // Native network relevance activates spline collision. Fixtures run
             // synchronously before the relevance manager's next update, so take
             // the same native activation path before asserting the baseline.
-            if (auto* Belt = Cast<AFGBuildableConveyorBelt>(A)) Belt->GainedNetSignificance_Implementation();
-            if (auto* Pipe = Cast<AFGBuildablePipeBase>(A)) Pipe->GainedNetSignificance_Implementation();
+            if (auto* Belt = Cast<AFGBuildableConveyorBelt>(A)) IFGNetSignificanceInterface::Execute_GainedNetSignificance(Belt);
+            if (auto* Pipe = Cast<AFGBuildablePipeBase>(A)) IFGNetSignificanceInterface::Execute_GainedNetSignificance(Pipe);
             return A;
         }
         return nullptr;
@@ -108,6 +113,44 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
     auto* Rail = Cast<AFGBuildableRailroadTrack>(SplineSpawn(TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C"), FVector(0,1500,0)));
     Check(TEXT("Native belt, pipe and rail fixtures spawn"), Belt && Pipe && Rail);
     if (!Belt || !Pipe || !Rail) return false;
+    Check(TEXT("CL 520140 conveyor connection getters match runtime-reflected identities"),
+        Belt->GetConnection0()==BSConveyorAccess::Connection(Belt, 0) &&
+        Belt->GetConnection1()==BSConveyorAccess::Connection(Belt, 1));
+    {
+        const TCHAR* RailPath=TEXT("/Game/FactoryGame/Buildable/Factory/Train/Track/Build_RailroadTrack.Build_RailroadTrack_C");
+        auto* Retired=SplineSpawn(RailPath,FVector(-1000,2500,0));
+        Check(TEXT("Rail lifetime fixture spawns"),Retired!=nullptr);
+        if(Retired)
+        {
+            const auto RetiredRef=FBSBuildingRef::FromActor(Retired);
+            const uint64 RetiredKey=Key(RetiredRef);
+            FBSSelection Published;Published.Buildings={RetiredRef};
+            Groups->PublishTransforms({Capture(Retired)},Published);
+            Groups->ReceivedVersions.Add(RetiredKey,Groups->BuildingVersions.FindRef(RetiredKey));
+            Check(TEXT("Retired rail has a real published edit version"),Groups->BuildingVersions.FindRef(RetiredKey)>0);
+            Retired->Destroy();
+            Check(TEXT("Destroyed rail releases server and client versions before object ID reuse"),
+                !Groups->BuildingVersions.Contains(RetiredKey) && !Groups->ReceivedVersions.Contains(RetiredKey)
+                && !Groups->SnapshotIndices.Contains(RetiredKey) && !RetiredRef.IsAlive(World));
+            auto* Fresh=SplineSpawn(RailPath,FVector(-1000,2500,0));
+            FBSSelection Selected,Result;FString Error;FBSTransformOptions Options;
+            if(Fresh)Selected.Buildings={FBSBuildingRef::FromActor(Fresh)};
+            auto Initial=Selected.Buildings;
+            if(!Initial.IsEmpty())Initial[0].TransformVersion=0; // First client observation.
+            const bool FirstMove=Fresh && Groups->TransformSelection(Player,Selected,0,EBSTransformMode::RotateX,0,FVector(0,0,10),Result,Error,&Options,&Initial);
+            Check(TEXT("Fresh rail accepts its first move with client version zero"),FirstMove);
+            if(FirstMove)
+            {
+                Selected.Buildings={FBSBuildingRef::FromActor(Fresh)};auto Current=Selected.Buildings;
+                Check(TEXT("Rail can return to its original pose with a current edit version"),
+                    Groups->TransformSelection(Player,Selected,0,EBSTransformMode::RotateX,0,FVector(0,0,-10),Result,Error,&Options,&Current));
+                Check(TEXT("Matching pose does not bypass a genuinely stale rail edit version"),
+                    Fresh->GetActorTransform().Equals(Initial[0].Transform,.01) &&
+                    !Groups->TransformSelection(Player,Selected,0,EBSTransformMode::RotateX,0,FVector(0,0,10),Result,Error,&Options,&Initial));
+            }
+            if(Fresh)Fresh->Destroy();
+        }
+    }
     Check(TEXT("Fresh belt can be targeted on the Build Gun trace channel"),Targetable(Belt));
     for (auto* A : TArray<AFGBuildable*>{Belt, Pipe, Rail})
     {
@@ -193,9 +236,9 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
             !Groups->TransformSelection(Player, Selection, Groups->Revision, EBSTransformMode::RotateX, 0, FVector(0,0,.01), Result, Error, &Options, &Expected));
         }
         auto* Port = Ports[0];
-        for (auto* P : Ports) if (P->GetDirection() != Belt->GetConnection1()->GetDirection()) { Port=P; break; }
-        Belt->GetConnection1()->SetConnection(Port);
-        const FVector Fixed = Belt->GetConnection0()->GetComponentLocation();
+        for (auto* P : Ports) if (P->GetDirection() != BSConveyorAccess::Connection(Belt, 1)->GetDirection()) { Port=P; break; }
+        BSConveyorAccess::Connection(Belt, 1)->SetConnection(Port);
+        const FVector Fixed = BSConveyorAccess::Connection(Belt, 0)->GetComponentLocation();
         const FVector End = Port->GetComponentLocation();
         const FVector Delta(0,100,100);
         const auto OriginalMachine = Capture(Storage);
@@ -216,9 +259,12 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         for (const auto& Pair:ProxyLocations) ProxiesFollow &= Pair.Key->GetComponentLocation().Equals(Pair.Value+Delta,.01);
         Check(TEXT("Existing outline proxies follow the transform immediately"),ProxiesFollow);
         if (Outline) Outline->HideOutline(Storage);
-        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST belt: applied=%d link=%d start=%s fixed=%s end=%s expected=%s"),Applied,Belt->GetConnection1()->GetConnection()==Port,*Belt->GetConnection0()->GetComponentLocation().ToString(),*Fixed.ToString(),*Belt->GetConnection1()->GetComponentLocation().ToString(),*(End+Delta).ToString());
-        Check(TEXT("Moving a connected machine stretches its unselected belt and preserves the link"), Applied && Belt->GetConnection1()->GetConnection()==Port &&
-            Belt->GetConnection1()->GetComponentLocation().Equals(End+Delta,.1) && Belt->GetConnection0()->GetComponentLocation().Equals(Fixed,.1));
+        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST belt: applied=%d link=%d start=%s fixed=%s end=%s expected=%s"),Applied,BSConveyorAccess::Connection(Belt, 1)->GetConnection()==Port,*BSConveyorAccess::Connection(Belt, 0)->GetComponentLocation().ToString(),*Fixed.ToString(),*BSConveyorAccess::Connection(Belt, 1)->GetComponentLocation().ToString(),*(End+Delta).ToString());
+        Check(TEXT("Moving a connected machine stretches its unselected belt and preserves the link"), Applied && BSConveyorAccess::Connection(Belt, 1)->GetConnection()==Port &&
+            BSConveyorAccess::Connection(Belt, 1)->GetComponentLocation().Equals(End+Delta,.1) && BSConveyorAccess::Connection(Belt, 0)->GetComponentLocation().Equals(Fixed,.1));
+        Check(TEXT("Native owner-replicated factory connection state follows a moved machine"),
+            Cast<IFGFactoryConnectionStateOwner>(Storage) && Cast<IFGFactoryConnectionStateOwner>(Belt) &&
+            Port && Port->IsConnected() && BSConveyorAccess::Connection(Belt, 1)->IsConnected());
         Check(TEXT("Belt remains targetable after its connected machine moves"),Targetable(Belt));
         const auto MovedMachine = Capture(Storage), MovedBelt = Capture(Belt);
         FBSSelection HistoryResult; FString HistoryError;
@@ -239,16 +285,30 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         auto* OtherStorage=Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"),FVector(-1000,0,0));
         TInlineComponentArray<UFGFactoryConnectionComponent*> OtherPorts(OtherStorage);
         for(auto* OtherPort:OtherPorts)
-            if(OtherPort->GetDirection()!=Belt->GetConnection0()->GetDirection())
+            if(OtherPort->GetDirection()!=BSConveyorAccess::Connection(Belt, 0)->GetDirection())
             {
-                Belt->GetConnection0()->SetConnection(OtherPort);
+                BSConveyorAccess::Connection(Belt, 0)->SetConnection(OtherPort);
                 Transform({OtherStorage},EBSTransformMode::RotateX,0,FVector::ZeroVector);
-                const FVector Middle=Belt->GetSplineComponent()->GetLocationAtSplineInputKey(.5,ESplineCoordinateSpace::World);
+                const FVector Middle=Cast<IFGSplineBuildableInterface>(Belt)->GetSplineComponent()->GetLocationAtSplineInputKey(.5,ESplineCoordinateSpace::World);
+                auto ClearanceBounds = [&]()
+                {
+                    TArray<FFGClearanceData> Entries; Belt->GetClearanceData_Implementation(Entries);
+                    TArray<FVector> Points;
+                    // Conveyor clearances are excluded from snapping, but their
+                    // cached physical bounds still need to follow deformation.
+                    for (const auto& Entry : Entries) if (Entry.IsValid())
+                        BSBlueprintBounds::AppendBox(Entry.ClearanceBox,Entry.RelativeTransform*Belt->GetActorTransform(),Points);
+                    FBox Bounds(ForceInit); for (const auto& Point : Points) Bounds += Point;
+                    return Bounds;
+                };
+                const FBox BeforeBounds = ClearanceBounds();
                 const bool Moved=Transform({Belt},EBSTransformMode::RotateX,0,FVector(0,0,100));
-                Check(TEXT("A selected belt between fixed machines moves its middle while retaining both endpoints"),Moved && Belt->GetSplinePointData().Num()==3 &&
-                    Belt->GetConnection0()->GetComponentLocation().Equals(OtherPort->GetComponentLocation(),.1) &&
-                    Belt->GetConnection1()->GetComponentLocation().Equals(Port->GetComponentLocation(),.1) &&
-                    Belt->GetSplineComponent()->GetLocationAtSplinePoint(1,ESplineCoordinateSpace::World).Equals(Middle+FVector(0,0,100),.1));
+                const FBox AfterBounds = ClearanceBounds();
+                Check(TEXT("Belt deformation refreshes cached native clearance"),Moved && BeforeBounds.IsValid && AfterBounds.IsValid && AfterBounds.Max.Z > BeforeBounds.Max.Z + 25);
+                Check(TEXT("A selected belt between fixed machines moves its middle while retaining both endpoints"),Moved && Cast<IFGSplineBuildableInterface>(Belt)->GetSplinePointData().Num()==3 &&
+                    BSConveyorAccess::Connection(Belt, 0)->GetComponentLocation().Equals(OtherPort->GetComponentLocation(),.1) &&
+                    BSConveyorAccess::Connection(Belt, 1)->GetComponentLocation().Equals(Port->GetComponentLocation(),.1) &&
+                    Cast<IFGSplineBuildableInterface>(Belt)->GetSplineComponent()->GetLocationAtSplinePoint(1,ESplineCoordinateSpace::World).Equals(Middle+FVector(0,0,100),.1));
                 break;
             }
     }
@@ -401,26 +461,26 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         if(Node) Miner->SetResourceNode(Node);
         Miner->FinishSpawning(Miner->GetActorTransform());
         const bool Applied=Transform({Miner},EBSTransformMode::RotateZ,15,FVector::ZeroVector) && Transform({Miner},EBSTransformMode::ScaleXY,1.1,FVector::ZeroVector);
-        Check(TEXT("Miner rotates and scales while retaining its resource node"),Node && Applied && Miner->GetExtractableResource().GetObject()==Node);
+        Check(TEXT("Miner rotates and scales while retaining its resource node"),Node && Applied && BSFactoryAccess::Object(Miner, TEXT("mExtractableResource"))==Node);
     }
     auto* Lift=Cast<AFGBuildableConveyorLift>(Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk1/Build_ConveyorLiftMk1.Build_ConveyorLiftMk1_C"),FVector(-1000,0,0),false));
     Check(TEXT("Conveyor lift fixture spawns"), Lift!=nullptr);
     if(Lift)
     {
-        Lift->mTopTransform=FTransform(FVector(0,0,800));
+        BSConveyorAccess::Top(Lift)=FTransform(FVector(0,0,800));
         Lift->FinishSpawning(Lift->GetActorTransform());
-        const FVector Before=Lift->GetConnection1()->GetComponentLocation();
+        const FVector Before=BSConveyorAccess::Connection(Lift, 1)->GetComponentLocation();
         const bool Applied=Transform({Lift},EBSTransformMode::RotateY,15,FVector::ZeroVector);
-        Check(TEXT("Conveyor lift rotates with its native endpoints and visual instances"),Applied && !Lift->GetConnection1()->GetComponentLocation().Equals(Before,.1) && !Lift->mInstanceHandles.IsEmpty());
+        Check(TEXT("Conveyor lift rotates with its native endpoints and visual instances"),Applied && !BSConveyorAccess::Connection(Lift, 1)->GetComponentLocation().Equals(Before,.1) && !Lift->mInstanceHandles.IsEmpty());
         auto* LiftStorage=Spawn(TEXT("/Game/FactoryGame/Buildable/Factory/StorageContainerMk1/Build_StorageContainerMk1.Build_StorageContainerMk1_C"),FVector(-1000,0,1000));
         TInlineComponentArray<UFGFactoryConnectionComponent*> LiftPorts(LiftStorage);
         for(auto* Port:LiftPorts)
-            if(Port->GetDirection()!=Lift->GetConnection1()->GetDirection())
+            if(Port->GetDirection()!=BSConveyorAccess::Connection(Lift, 1)->GetDirection())
             {
-                Lift->GetConnection1()->SetConnection(Port);
-                const FVector Bottom=Lift->GetConnection0()->GetComponentLocation();
+                BSConveyorAccess::Connection(Lift, 1)->SetConnection(Port);
+                const FVector Bottom=BSConveyorAccess::Connection(Lift, 0)->GetComponentLocation();
                 const bool Moved=Transform({LiftStorage},EBSTransformMode::RotateX,0,FVector(0,0,100));
-                Check(TEXT("A connected lift stretches to a moved machine and retains its opposite end"),Moved && Lift->GetConnection1()->GetComponentLocation().Equals(Port->GetComponentLocation(),.1) && Lift->GetConnection0()->GetComponentLocation().Equals(Bottom,.1));
+                Check(TEXT("A connected lift stretches to a moved machine and retains its opposite end"),Moved && BSConveyorAccess::Connection(Lift, 1)->GetComponentLocation().Equals(Port->GetComponentLocation(),.1) && BSConveyorAccess::Connection(Lift, 0)->GetComponentLocation().Equals(Bottom,.1));
                 break;
             }
     }
@@ -432,7 +492,7 @@ bool FBSTransformNative::RunNetworkChecks(AFGCharacterPlayer* Player)
         if(ItemClass) for(int32 I=0;I<3;++I)
         {
             FConveyorBeltItem Item{FInventoryItem(ItemClass)}; Item.Offset=100+I*200;
-            SimulationBelt->mItems.Add(Item);
+            BSConveyorAccess::Items(SimulationBelt.Get()).Add(Item);
         }
     }
     return Passed;
@@ -443,11 +503,11 @@ bool FBSTransformNative::RunSettledNetworkChecks(AFGCharacterPlayer* Player, int
     bool Passed=true;
     auto Check=[&](const TCHAR* Name,bool Result){Passed &= Result; UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME ASSERT: %s: %s"),Name,Result?TEXT("PASS"):TEXT("FAIL"));};
     auto* Belt=SimulationBelt.Get();
-    auto* Chain=Belt?Belt->GetConveyorChainActor():nullptr;
+    auto* Chain=Belt?BSConveyorAccess::Chain(Belt):nullptr;
     Check(TEXT("Conveyor simulation has a live native chain"),IsValid(Chain));
     if(!IsValid(Chain))return false;
     TArray<FConveyorBeltItem*> Items;
-    Belt->GetConveyorBeltItems(Items);
+    BSConveyorAccess::ReadItems(Belt, Items);
     Check(TEXT("Conveyor simulation preserves all three items"),Items.Num()==3);
     if(Phase==0)
     {
@@ -462,10 +522,10 @@ bool FBSTransformNative::RunSettledNetworkChecks(AFGCharacterPlayer* Player, int
     else
     {
         auto* Segment=Chain->GetSegmentForConveyorBase(Belt);
-        const FVector Expected=Belt->GetSplineComponent()->GetLocationAtDistanceAlongSpline(Belt->GetLength()*.5,ESplineCoordinateSpace::World);
-        const FVector Actual=Segment?Chain->GetLocationAtDistanceAlongSpline(Segment->GetItemStartsAtLength()+Belt->GetLength()*.5,ESplineCoordinateSpace::World):FVector::ZeroVector;
-        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST chain midpoint expected=%s actual=%s length=%.2f"),*Expected.ToString(),*Actual.ToString(),Belt->GetLength());
-        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST chain pose=%s belt=%s spline=%s start=%.2f offset=%.2f length=%.2f"),*Chain->GetActorTransform().ToString(),*Belt->GetActorTransform().ToString(),*Belt->GetSplineComponent()->GetComponentTransform().ToString(),Segment?Segment->StartsAtLength:0,Segment?Segment->OffsetAtStart:0,Chain->GetSplineComponent()->GetSplineLength());
+        const FVector Expected=Cast<IFGSplineBuildableInterface>(Belt)->GetSplineComponent()->GetLocationAtDistanceAlongSpline(BSConveyorAccess::Length(Belt)*.5,ESplineCoordinateSpace::World);
+        const FVector Actual=Segment?Chain->GetLocationAtDistanceAlongSpline(Segment->GetItemStartsAtLength()+BSConveyorAccess::Length(Belt)*.5,ESplineCoordinateSpace::World):FVector::ZeroVector;
+        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST chain midpoint expected=%s actual=%s length=%.2f"),*Expected.ToString(),*Actual.ToString(),BSConveyorAccess::Length(Belt));
+        UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST chain pose=%s belt=%s spline=%s start=%.2f offset=%.2f length=%.2f"),*Chain->GetActorTransform().ToString(),*Belt->GetActorTransform().ToString(),*Cast<IFGSplineBuildableInterface>(Belt)->GetSplineComponent()->GetComponentTransform().ToString(),Segment?Segment->StartsAtLength:0,Segment?Segment->OffsetAtStart:0,Chain->GetSplineComponent()->GetSplineLength());
         if(Segment)for(const auto& P:Segment->SplinePointData) UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST segment point=%s arrive=%s leave=%s"),*P.Location.ToString(),*P.ArriveTangent.ToString(),*P.LeaveTangent.ToString());
         for(int32 I=0;I<Chain->GetSplineComponent()->GetNumberOfSplinePoints();++I)
             UE_LOG(LogBuildingSkills,Display,TEXT("NETWORK TEST chain point=%s tangent=%s"),*Chain->GetSplineComponent()->GetLocationAtSplinePoint(I,ESplineCoordinateSpace::World).ToString(),*Chain->GetSplineComponent()->GetTangentAtSplinePoint(I,ESplineCoordinateSpace::World).ToString());

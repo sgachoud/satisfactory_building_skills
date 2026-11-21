@@ -1,3 +1,4 @@
+#include "BSConveyorAccess.h"
 #include "BSGroups.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "Buildables/FGBuildableConveyorBelt.h"
@@ -97,7 +98,7 @@ FBSNativeTransform FBSTransformNative::Capture(AFGBuildable* Actor)
     C.Building = FBSBuildingRef::FromActor(Actor);
     C.Building.Transform = C.Target = Actor->GetActorTransform();
     if (auto* Spline = Cast<IFGSplineBuildableInterface>(Actor)) C.Spline = Spline->GetSplinePointData();
-    if (auto* Lift = Cast<AFGBuildableConveyorLift>(Actor)) { C.HasLift = true; C.LiftTop = Lift->GetTopTransform(); }
+    if (auto* Lift = Cast<AFGBuildableConveyorLift>(Actor)) { C.HasLift = true; C.LiftTop = BSConveyorAccess::Top(Lift); }
     if (auto* Wire = Cast<AFGBuildableWire>(Actor))
     {
         C.HasWire = true;
@@ -297,10 +298,10 @@ bool FBSTransformNative::PlanNetworks(TArray<FBSNativeTransform>& Changes, FStri
         }
         if (auto* Lift = Cast<AFGBuildableConveyorLift>(Actor))
         {
-            C.HasLift = true; C.LiftTop = Lift->GetTopTransform();
+            C.HasLift = true; C.LiftTop = BSConveyorAccess::Top(Lift);
             FVector P0, P1, N0, N1;
-            Endpoint(Lift->GetConnection0(), C, P0, N0); Endpoint(Lift->GetConnection1(), C, P1, N1);
-            auto* Bottom = Lift->GetConnection0(); auto* Top = Lift->GetConnection1();
+            Endpoint(BSConveyorAccess::Connection(Lift, 0), C, P0, N0); Endpoint(BSConveyorAccess::Connection(Lift, 1), C, P1, N1);
+            auto* Bottom = BSConveyorAccess::Connection(Lift, 0); auto* Top = BSConveyorAccess::Connection(Lift, 1);
             if (FMath::Abs(Bottom->GetRelativeLocation().Z) > FMath::Abs(Top->GetRelativeLocation().Z)) { Swap(Bottom, Top); Swap(P0, P1); }
             const FVector OldDelta = C.Target.TransformVector(Top->GetRelativeLocation() - Bottom->GetRelativeLocation());
             const FQuat Align = FQuat::FindBetweenNormals(OldDelta.GetSafeNormal(), (P1 - P0).GetSafeNormal());
@@ -375,7 +376,7 @@ void FBSTransformNative::PrepareNetworks(UWorld* World, const TArray<FBSNativeTr
     TSet<AFGConveyorChainActor*> Chains;
     for (const auto& C : Changes)
         if (auto* Belt = Cast<AFGBuildableConveyorBase>(C.Building.Actor))
-            if (auto* Chain = Belt->GetConveyorChainActor()) Chains.Add(Chain);
+            if (auto* Chain = BSConveyorAccess::Chain(Belt)) Chains.Add(Chain);
     // Native teardown returns each item to its owning belt before geometry
     // changes. The subsystem then rebuilds chains with new lengths and paths.
     for (auto* Chain : Chains) Buildables->ForceDestroyChainActor(Chain);
@@ -400,7 +401,7 @@ void FBSTransformNative::RebuildSpline(AFGBuildable* Actor)
         Belt->mLength = Spline->GetSplineLength();
         Belt->SetupConnections(); Belt->UpdateVisibilityMesh();
         Belt->mCachedClearanceData.Reset();
-        Collision = Belt->mCollisionComponent; Extent = Belt->COLLISION_EXTENT; Spacing = Belt->COLLISION_SPACING;
+        Collision = Cast<UFGSplineCollisionComponent>(BSConveyorAccess::Object(Belt, TEXT("mCollisionComponent"))); Extent = Belt->COLLISION_EXTENT; Spacing = Belt->COLLISION_SPACING;
     }
     if (auto* Pipe = Cast<AFGBuildablePipeBase>(Actor))
     {
@@ -461,7 +462,7 @@ void FBSTransformNative::RebuildSpline(AFGBuildable* Actor)
 void FBSTransformNative::ApplyGeometry(AFGBuildable* Actor, const FBSNativeTransform& C, const FTransform& Before)
 {
     auto* Conveyor = Cast<AFGBuildableConveyorBase>(Actor);
-    const float OldLength = Conveyor ? Conveyor->GetLength() : 0;
+    const float OldLength = Conveyor ? BSConveyorAccess::Length(Conveyor) : 0;
     auto* Track = Cast<AFGBuildableRailroadTrack>(Actor);
     const float OldTrackLength = Track ? Track->GetLength() : 0;
     if (!C.Spline.IsEmpty())
@@ -500,20 +501,22 @@ void FBSTransformNative::ApplyGeometry(AFGBuildable* Actor, const FBSNativeTrans
     }
     if (auto* Lift = Cast<AFGBuildableConveyorLift>(Actor); Lift && C.HasLift)
     {
-        TGuardValue<TEnumAsByte<EComponentMobility::Type>> Mobility0(Lift->GetConnection0()->Mobility,EComponentMobility::Movable);
-        TGuardValue<TEnumAsByte<EComponentMobility::Type>> Mobility1(Lift->GetConnection1()->Mobility,EComponentMobility::Movable);
-        Lift->mTopTransform = C.LiftTop;
+        TGuardValue<TEnumAsByte<EComponentMobility::Type>> Mobility0(BSConveyorAccess::Connection(Lift, 0)->Mobility,EComponentMobility::Movable);
+        TGuardValue<TEnumAsByte<EComponentMobility::Type>> Mobility1(BSConveyorAccess::Connection(Lift, 1)->Mobility,EComponentMobility::Movable);
+        BSConveyorAccess::Top(Lift) = C.LiftTop;
         Lift->OnRep_TopTransform(); Lift->SetupConnections();
-        Lift->mLength = Lift->GetHeight();
+        Lift->mLength = FMath::Abs(BSConveyorAccess::Top(Lift).GetTranslation().Z);
         Lift->Internal_CallRemoveInstances(); Lift->CallSetupInstances();
         Lift->ApplyCustomizationData_Native(Lift->GetCustomizationData_Native());
     }
     if (Conveyor)
     {
-        const float Ratio = Conveyor->GetLength() / FMath::Max(OldLength, 0.01f);
-        for (int32 I = 0; I < Conveyor->mItems.Num(); ++I)
-        { Conveyor->mItems[I].Offset *= Ratio; Conveyor->mItems[I].LocalOffset *= Ratio; }
-        Conveyor->mItems.ConveyorLength = Conveyor->GetLength();
+        const float NewLength = BSConveyorAccess::Length(Conveyor);
+        const float Ratio = NewLength / FMath::Max(OldLength, 0.01f);
+        auto& Items = BSConveyorAccess::Items(Conveyor);
+        for (int32 I = 0; I < Items.Num(); ++I)
+        { Items[I].Offset *= Ratio; Items[I].LocalOffset *= Ratio; }
+        Items.ConveyorLength = NewLength;
         Conveyor->MarkItemTransformsDirty();
     }
     if (auto* Wire = Cast<AFGBuildableWire>(Actor); Wire && C.HasWire)

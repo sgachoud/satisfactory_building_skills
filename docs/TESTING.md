@@ -1,8 +1,282 @@
 # Verification
 
-Verification uses CSS Unreal 5.6.1 and SML 3.12.0. The declared minimum game
-build is CL 517554; the current installed Steam game is CL 517554 (1.2.5.0).
-Results below are tied to their tested versions. Current release candidate: Building Skills 0.11.2.
+The current toolchain migration uses CSS Unreal 5.6.1-css-87 and SML 3.12.1. The declared minimum game
+build is CL 520140; the current installed Steam game is CL 520140 (1.2.5.1).
+Results below are tied to their tested versions. The current release candidate is Building Skills 0.11.4.
+
+## 0.11.4: SML 3.12.1 toolchain migration (2026-11-21)
+
+The starter project is pinned to official tag `v3.12.1`
+(`0170e5feece4bebcb4baa2ec4806587300160285`), with CL 520140 headers.
+CSS engine 5.6.1-css-87 installed after its four installer assets passed the
+published SHA-256 checksums. Wwise 2025.1.6.9117.4248 is integrated with Windows
+VS 2022 and Linux SDK libraries; all five current upstream patches applied.
+The prior engine and Wwise integrations are preserved separately, and the old
+SDK source/config backup is under `Saved/UpdateSML3121/SDKBackup`.
+
+Building Skills now uses generated native interface dispatch for its temporary
+Save context, with explicit no-op register/unregister overrides, plus the matching
+native conveyor length, clearance-cache and dirty-state APIs. The old custom
+callback thunks and field-relative offset reconstruction are removed. Runtime
+reflection for inventory identity and runtime spline-interface casts remain.
+
+The human-readable game label is corrected from 1.2.6 to **1.2.5.1**. Both labels
+referred to the same tested changelist, 520140; historical CL-specific results
+have not been reassigned to a different game build.
+
+### Completed validation
+
+The full editor, Steam, Epic, Windows Server and Linux Server SDK builds
+succeeded. IDE project generation and merged release packaging also succeeded.
+All **28 editor automation tests passed**, with no failures or test warnings.
+The rendered Steam fixtures passed **1,700 assertions**, with zero failures in
+the final runs:
+
+| Suite | Passed | Evidence under `Saved/UpdateSML3121/` |
+| --- | ---: | --- |
+| Blueprint bounds, Copy/Save and UI | 152 | `blueprint.log` |
+| Conveyor/lift Copy/Save and deletion undo | 83 | `polish.log` |
+| Network movement, copies and simulation | 188 | `network.log` |
+| Connected selection, paint and menu transitions | 96 | `connected.log` |
+| Volume selection and controls | 45 | `volume.log` |
+| Stick placement, constraints and settings | 369 | `stick.log` |
+| Plan editing, snapping and controls | 431 | `plan.log` |
+| Mixed transport plan construction | 166 | `planconstruction.log` |
+| Transformers | 121 | `transformers.log` |
+| Pooled visuals | 49 | `pooledvisual.log` |
+
+All ten final runs reported `RUNTIME EDIT CHECK: PASS` and exited normally.
+There are **three explicit integration skips**: two Smart menu checks because
+Smart is absent, and the optional ARS integration. Core Connected behavior,
+clearing our K mappings on gun changes, and native R radials remain asserted.
+Neither Smart nor ARS compatibility is claimed as retested for this migration.
+
+A real Steam client also joined a separate Windows dedicated server, both on
+CL 520140 with SML 3.12.1. The native remote blueprint click reported
+`authority=0`, replicated both foundations, and passed deletion, deletion undo
+and deletion redo. The client exited with status zero; the test server was then
+shut down. The test used a dedicated `BuildingSkills_Issue1_Test_SML3121` session
+and the existing two-foundation fixture, with no build cost and research unlocked.
+The server initially restored the prior isolated issue-test session; the new
+regression session was created through its local API before the test. Its first
+world-creation request exceeded the API timeout but completed; state was checked
+before any further request. No ordinary player session was loaded or edited.
+
+Machine-readable evidence is in `runtime-verified-results.json`,
+`editor-automation-results.json`, and `multiplayer-results.json`. The latter
+records the actual staged client/server hashes. Final Connected and remote tests
+used the refreshed Steam harness. The other passing fixtures preceded changes
+to test timing and optional-integration preconditions only; production behavior
+was unchanged. The Windows Server package received the same final test-only
+refresh after its staged copy passed the remote test.
+
+### Release archive validation
+
+The merged archive and separate Windows, Windows Server and Linux Server ZIPs
+passed CRC checks. All four packaged native binaries match their compiled outputs;
+the final Steam binary also matches the remote-tested client. Descriptors agree on
+`0.11.4`, integer `Version: 0`, SML `^3.12.1` and game `>=520140`.
+Required cooked assets, SML module manifests, license notices and archive paths
+passed validation. Debug symbols are excluded from the upload kit. Evidence is in
+`Saved/Releases/BuildingSkills-0.11.4-verification.json` and the publication kit's
+`verification.json`. IDE generation, cook and archive logs are retained under
+`Saved/UpdateSML3121`. Cooking completed with zero errors and one unique warning:
+the existing `SetReplicates` call on the group subsystem's default actor.
+
+### Diagnostics and limitations
+
+The initial editor attempt stopped in Wwise patching because the old 2023
+integration was incompatible; it was replaced through Wwise Launcher before the
+successful full SDK rebuild. Initial Connected attempts exposed test setup and
+timing assumptions: Smart was required despite being absent; a timed synthetic
+R release could arrive after its assertion during a frame stall; and startup
+could advance menu checks before Slate layout had processed enough frames.
+The opt-in harness now releases taps on the next input frame, warms up Connected,
+requires at least four frames between steps, and uses a bounded ten-minute
+startup/test deadline. Assertions were retained. Initial failure logs are kept as
+`connected-initial-missing-smart.log`, `connected-timed-release.log`, and
+`connected-stalled-startup.log`; they are not passing evidence.
+
+The original counter counted only `RUNTIME ASSERT ... PASS`, missing the separate
+`RUNTIME PASS` log style. `CollectRuntime.py` checks both formats; the final
+`runtime-verified-results.json` is authoritative. No gameplay test was rerun merely
+to correct a report count.
+
+The temporary worlds and profiles are isolated from normal play. Normal game
+installation files were not changed. Epic and Linux gameplay have not been run;
+the multiplayer check above is Windows dedicated, not a live Linux server.
+The dependency notice for SML 3.12.1 matches the packaged SML license text.
+Build logs, staged hashes and diagnostic scripts remain under `Saved/UpdateSML3121`.
+
+## 0.11.3: release packaging (2026-11-19)
+
+Prepared Steam/Epic clients, Windows Server and Linux Server for Satisfactory
+1.2.5.1 (CL 520140), with descriptor requirement `>=520140` and SML `^3.12.0`.
+Epic and Windows Server were compiled from the final source; Steam and Linux
+reuse the exact binaries recorded by the compatibility validation below.
+The publisher tested the installed Steam candidate and approved preparing this
+version. Release preparation did not deploy to the ordinary game installation.
+
+Alpakit cooked all three platform folders and completed with exit code zero.
+The cooker reported four warnings (the existing group-subsystem class-default
+replication warning and three unrelated shared-project asset registrations),
+with zero errors. Native builds also emitted SML's return-value hook cast warning.
+No SDK, engine or other-mod source was changed.
+
+Archive validation passed: target descriptors and `Version: 0` / `SemVersion:
+0.11.3`, native binary hashes, SML module manifests, required cooked assets,
+license notices, safe archive paths and ZIP integrity. Platform packages and
+`BuildingSkills-0.11.3-verification.json` are under `Saved/Releases`; native build,
+cook and validation logs are under `Saved/PublicationBuild0113`. The combined
+upload kit is under `Saved/Publication/0.11.3`.
+
+The 419 assertions below are isolated rendered Steam tests, not dedicated
+multiplayer validation. Epic and both server targets are compiled and packaged
+without gameplay validation for this version. No new gameplay suite was run
+as part of publication preparation.
+
+## 0.11.3: native blueprint bounds and current-game compatibility (2026-11-19)
+
+Issue #4 exposed a global placement hook that expanded the native blueprint snap
+box to render geometry, including vehicle-path helpers. Placement now retains the
+native box. Selection Save and Copy share native authored clearance and snapping
+exclusions for their origin, alignment and bounds. The existing foundation-grid
+correction is retained and uses those same native bounds. Non-snapping members
+remain serialized; an all-non-snapping selection retains a geometry fallback for
+its capture origin.
+
+The new regression creates two foundations and a real vehicle path, then compares
+native archive, selection Save and transported Copy hologram boxes. It also checks
+retained path/nodes, excluded helper geometry, live rotation/scale, and the transient
+Save context's save/dismantle policies. Native path clearance legitimately adds
+height; the test compares it to the native reference instead of forcing a
+foundation-only height. The rendered `Saved/Issue4/final-blueprint.log` passed
+150 assertions on CL 520140 before the subsequent conveyor audit.
+
+That audit found additional SDK/runtime ABI mismatches. The temporary Save context
+now owns its reflected interface callbacks instead of passing through a mismatched
+interface thunk; debugging identified an FText write into the player's vtable.
+Duplicated UFunctions are linked before their parameter frames are used. Factory
+inventory identity, conveyor connections/queues/lift transforms and secondary
+spline interfaces now resolve through runtime metadata. The unreflected item-dirty flag is located relative to native mSpeed; the
+clearance cache is located relative to the live spline-interface boundary at the
+end of the conveyor base. Both relationships were checked against the current
+native implementations. No shared SDK or engine source was changed.
+
+The expanded conveyor regression exercises a connected lift and two belts through
+Copy byte transport and selection Save, native hologram preview costs, construction,
+reciprocal ports, dimensions, and unchanged sources. Existing cases then exercise
+single-lift and lift-plus-belt deletion undo, including external reconnection.
+
+Initial diagnostics are retained under `Saved/Issue4/`: `released-baseline.log`
+reproduces the Save-window crash using the installed release; `write2-stack.txt`
+identifies the corrupting callback. `final-polish.log` exposed obsolete conveyor
+access. `batch-polish.log` hit its startup-inclusive timeout after reaching the lift
+fixture; `batch-polish-diagnostic.log` and `conveyor-exceptions.txt` then confirmed
+an obsolete secondary-interface address in that fixture. Headless early blueprint
+runs are not UI evidence: their viewport geometry was zero. The rendered blueprint
+run above validates the actual window and controls.
+
+Final validation on Satisfactory 1.2.5.1, CL 520140:
+
+| Suite | Passed | Failed | Evidence under `Saved/Issue4/` |
+| --- | ---: | ---: | --- |
+| Rendered blueprint, bounds and UI | 150 | 0 | `rendered-blueprint.log` |
+| Rendered conveyor Copy/Save and undo | 83 | 0 | `final-checked-polish.log` |
+| Rendered network transforms and copies | 186 | 0 | `final-checked-network.log` |
+
+All three runs reported `RUNTIME EDIT CHECK: PASS` and exited normally: 419
+assertions total. The network suite includes refreshed native belt clearance,
+resource-node retention, live conveyor items after rotation/scaling, rail versions,
+and thirty seconds of copied power/pipe simulation. These are isolated standalone
+authority tests, not a live Linux multiplayer session. Source worlds and normal
+installed game files were not modified.
+
+Steam Windows and Linux Server compiled and linked successfully. Final build
+logs are `fixtures-windows.log` and `fixtures-linux.log`; their preceding production
+changes are recorded in `interfaces-windows.log`, `interfaces-linux.log`,
+`clearance-windows.log` and `clearance-linux.log`. The final two translation-unit
+rebuilds corrected test expectations only. The 150-check blueprint run used the
+same production code before those test-only changes. Binary hashes and final log
+counts are recorded in `verification.json`. At that validation stage, no release
+package or version bump had been made and Windows Server/Epic had not yet been
+rebuilt; release packaging is recorded separately below.
+
+Two new regression assumptions required correction: `rendered-polish.log` checked
+live length caches/port poses on native previews that never receive BeginPlay;
+those checks now inspect saved geometry and reciprocal references in previews,
+while construction retains strict live-length and port-position checks.
+`rendered-network.log` used snapping-only bounds for conveyors, whose clearances
+are excluded from snapping, and passed an empty array to FBox. It now tests full
+native clearance and handles empty geometry safely. The miner assertion also
+uses its reflected resource binding instead of an obsolete inline factory getter.
+No production changes were needed for these test corrections.
+
+`verified-polish.log` crashed in native background scalability during a headless
+map transition before any assertion; all final runs above used rendering. Earlier
+failed diagnostics remain evidence, not passing validation.
+
+## Unreleased: actor-lifetime transform versions (2026-11-06)
+
+The supplied Linux server log `FactoryGame (3).log` records a first rail move
+rejected with `version=4 expected=0` despite identical poses, and a block signal
+with `version=15 expected=0` and only native position rounding. This is a version
+mismatch rather than a rail geometry or rotation-tolerance rejection.
+
+Destroyed actors left version tombstones keyed by `GetUniqueID()`, Unreal's
+recyclable object index. New actors can inherit those entries. Destruction now
+removes both server and client version entries, as well as the existing snapshot
+cleanup. Actor references still prevent using destroyed objects, and genuine
+version mismatches still reject edits even when poses match.
+
+The prepared runtime regression destroys a rail with published version state,
+checks lifecycle cleanup, moves a fresh rail with initial client version zero,
+then returns it to its original pose and checks that the stale initial request
+is rejected. Conflict diagnostics now indicate whether a snapshot accompanies
+the version entry. Steam Windows and Linux Server compilation passed; evidence:
+`Saved/Update517554/rail-lifetime-build-windows.log` and
+`rail-lifetime-build-linux.log`. The isolated Steam network fixture passed
+185 assertions in `lifetime-copy-network.log`, including all six new rail
+lifecycle/first-move checks and rejection of a stale request at an identical pose.
+This exercises authority-side behavior in standalone play; it is not a Linux
+dedicated-server/client reproduction. No release package or ordinary installation
+was updated.
+
+## Unreleased: Copy inventory filtering (2026-11-06)
+
+Copy capture now uses the same scoped inventory filtering as selection blueprint
+saving. This also covers transformer construction, which captures a clipboard.
+The low-level writer used by deletion history remains unchanged.
+
+The added regression captures the populated storage/constructor fixture,
+round-trips its clipboard transport bytes, checks cost, and loads both preview
+and world copies. It checks empty goods with preserved slots, recipe and installed
+shard, and unchanged source contents. Steam Windows and Linux Server compilation
+passed. Evidence under `Saved/Update517554/`: `copy-goods-build-windows.log`,
+`copy-goods-remaining-windows.log`, `copy-goods-link-windows.log`,
+`copy-goods-build-linux.log`, and `copy-goods-remaining-linux.log`. Initial partial
+links failed after UBT regrouped translation units; recompiling the affected units
+and completing the final links resolved that build issue.
+The isolated Steam blueprint fixture passed 133 assertions in
+`lifetime-copy-blueprint2.log`. The six Copy checks cover capture, unchanged source
+goods/upgrades, client byte transport, cost, decoded preview and authority world
+placement. The placed storage and constructor retain their slots, recipe and shard
+but contain no goods. Somersloops share the preserved potential inventory and were
+not independently exercised.
+
+The first attempt, `lifetime-copy-blueprint.log`, failed only its placed-copy
+assertion because the fixture omitted the required owning-player instigator.
+The fixture was corrected to preview decoded bytes and place the server clipboard
+with its owner. No production behavior changed between these two runs. Both
+targets rebuilt successfully in `lifetime-copy-retest-build-windows.log` and
+`lifetime-copy-retest-build-linux.log`.
+
+Deletion undo/redo passed 72 assertions in `lifetime-copy-polish.log`, including
+exact restoration of stored items. Together with the rail fixture, these three
+passing runs total 390 assertions and all exited normally. Evidence is summarized
+in `Saved/Update517554/lifetime-copy-results.json`. These are standalone tests,
+not a live Linux multiplayer session. The existing 0.11.2 release archives are
+unchanged; no updated package or ordinary installation exists yet.
 
 ## 0.11.2: release packaging (2026-11-06)
 

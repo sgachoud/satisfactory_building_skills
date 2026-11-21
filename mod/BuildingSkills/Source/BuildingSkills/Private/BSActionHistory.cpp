@@ -1,3 +1,4 @@
+#include "BSConveyorAccess.h"
 #include "BSBlueprintAccess.h"
 #include "BSActionHistory.h"
 #include "BSTransformers.h"
@@ -138,11 +139,11 @@ bool UBSActionRecord::Capture(AFGCharacterPlayer* Player, const TArray<FBSBuildi
             if(Pipe->GetFluidDescriptor()) { Saved.FluidDescriptor=Pipe->GetFluidDescriptor(); break; }
         if (auto* Belt = Cast<AFGBuildableConveyorBase>(B))
         {
-            TArray<FConveyorBeltItem*> Items; Belt->GetConveyorBeltItems(Items);
+            TArray<FConveyorBeltItem*> Items; BSConveyorAccess::ReadItems(Belt, Items);
             for (const auto* Item : Items) if (Item)
             {
                 auto& Copy=Saved.Conveyor.Add_GetRef(*Item);
-                if(Belt->GetConveyorChainActor()) Copy.Offset=Item->LocalOffset;
+                if(BSConveyorAccess::Chain(Belt)) Copy.Offset=Item->LocalOffset;
                 Copy.LocalOffset=Copy.Offset; Copy.TimeDebt=0; Copy.DistanceMoved=0;
             }
         }
@@ -350,7 +351,7 @@ bool UBSActionRecord::Restore(AFGCharacterPlayer* Player, FString& Message)
             if(Saved.FluidContent>=0)
                 if(auto* Fluid=Cast<IFGFluidIntegrantInterface>(B); Fluid && Fluid->GetFluidBox()) Fluid->GetFluidBox()->Content=Saved.FluidContent;
             if(auto* Belt=Cast<AFGBuildableConveyorBase>(B))
-            { Belt->mItems.Empty(); for(const auto& Item:Saved.Conveyor) Belt->mItems.Add(Item); }
+            { BSConveyorAccess::Items(Belt).Empty(); for(const auto& Item:Saved.Conveyor) BSConveyorAccess::Items(Belt).Add(Item); }
         }
     };
     System->LoadStoredBlueprint(Descriptor,FTransform::Identity,NewBuildings,false,nullptr,nullptr,nullptr,Capture,RestoreContents);

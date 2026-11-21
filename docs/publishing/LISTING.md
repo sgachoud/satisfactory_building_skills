@@ -5,7 +5,7 @@ Tools for editing your factory and planning what comes next.
 Group buildings, move whole selections, copy layouts, repeat construction with
 mirrors and rotations, and design rail, pipe, belt and hypertube networks before building them.
 
-**Early-access release: 0.11.2.** Back up an important save before large editing
+**Early-access release: 0.11.4.** Back up an important save before large editing
 operations. Some recent planner changes still need broader player testing.
 
 ## Start here
@@ -121,7 +121,7 @@ actions rather than individual objects and last for the session.
 
 ## Compatibility and limitations
 
-- Requires **SML 3.12**; the package declares game build **502094 or newer**.
+- Requires **SML 3.12.1**; the package declares Satisfactory **1.2.5.1 (CL 520140) or newer**.
   That minimum is not a promise of compatibility with future game updates.
 - Windows client and dedicated-server target availability is shown on the release.
 - A selection is limited to **2,048 buildings**. Larger operations are rejected.

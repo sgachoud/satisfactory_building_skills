@@ -12,7 +12,7 @@ FBox FBSBlueprintPlacement::GeometryBounds(const AFGBlueprintHologram* Hologram)
     {
         if (!IsValid(Entry.Key)) continue;
         TArray<FVector> Points;
-        BSBlueprintBounds::AppendActorGeometry(Entry.Key, Points);
+        BSBlueprintBounds::AppendSnappingGeometry(Entry.Key, Entry.Key->GetActorTransform(), Points);
         for (const auto& Point : Points) Bounds += Point;
     }
     return Bounds;
@@ -26,26 +26,8 @@ FBox FBSBlueprintPlacement::PlacementBounds(const AFGBlueprintHologram* Hologram
 void FBSBlueprintPlacement::Install()
 {
     if (WITH_EDITOR) return;
-    SUBSCRIBE_METHOD(AFGBlueprintHologram::AlignBuildableRootWithBounds,
-        [](auto&, AFGBlueprintHologram* Hologram)
-        {
-            const FBox Geometry = GeometryBounds(Hologram);
-            if (!Geometry.IsValid || !Hologram->mLocalBounds.IsValid) return;
-            // Native placement sizes its proxy from clearance, which can omit
-            // visible foundation lips and scaled meshes. Enclose those meshes
-            // while retaining the native XY snap center and any clearance padding.
-            auto& Bounds = Hologram->mLocalBounds;
-            const FVector Center = Bounds.GetCenter();
-            for (int32 Axis = 0; Axis < 2; ++Axis)
-            {
-                const double Extent = FMath::Max(Bounds.GetExtent()[Axis],
-                    FMath::Max(FMath::Abs(Geometry.Min[Axis] - Center[Axis]), FMath::Abs(Geometry.Max[Axis] - Center[Axis])));
-                Bounds.Min[Axis] = Center[Axis] - Extent;
-                Bounds.Max[Axis] = Center[Axis] + Extent;
-            }
-            Bounds.Min.Z = FMath::Min(Bounds.Min.Z, Geometry.Min.Z);
-            Bounds.Max.Z = FMath::Max(Bounds.Max.Z, Geometry.Max.Z);
-        });
+    // Preserve the existing common-foundation-grid correction, while leaving
+    // native blueprint bounds and blueprint-to-blueprint snapping untouched.
     SUBSCRIBE_UOBJECT_METHOD(AFGBlueprintHologram, TrySnapToActor,
         [](auto& Scope, AFGBlueprintHologram* Hologram, const FHitResult& Hit)
         {

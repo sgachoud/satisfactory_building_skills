@@ -1,5 +1,7 @@
+#include "BSFactoryAccess.h"
 #include "BSBlueprintAccess.h"
 #include "BSBlueprintSave.h"
+#include "BSClipboard.h"
 #include "BSBlueprintScale.h"
 #include "BSBlueprintBounds.h"
 #include "BSEditModeComponent.h"
@@ -50,11 +52,12 @@ namespace
             for(auto* Building:Buildings)if(IsValid(Building))
             {
                 auto* Factory=Cast<AFGBuildableFactory>(Building);
+                if(Factory && !BSFactoryAccess::Property(Factory, TEXT("mInventoryPotential"))){Valid=false;return;}
                 for(auto* Inventory:TInlineComponentArray<UFGInventoryComponent*>(Building))
                 {
                     // Shards and Somersloops configure the machine and remain
                     // real blueprint costs. Only stored/processed goods are omitted.
-                    if(Factory && Inventory==Factory->GetPotentialInventory())continue;
+                    if(Factory && Inventory==BSFactoryAccess::Inventory(Factory, TEXT("mInventoryPotential")))continue;
                     auto* Slots=Property->ContainerPtrToValuePtr<TArray<FInventoryStack>>(Inventory);
                     auto& Entry=Saved.AddDefaulted_GetRef();Entry.Inventory=Inventory;Entry.Stacks=MoveTemp(*Slots);
                     Slots->SetNum(Entry.Stacks.Num());
@@ -71,6 +74,17 @@ namespace
         FBlueprintStoredGoodsScope(const FBlueprintStoredGoodsScope&)=delete;
         FBlueprintStoredGoodsScope& operator=(const FBlueprintStoredGoodsScope&)=delete;
     };
+}
+
+bool ABSBlueprintSaveSession::WriteCopy(const FBlueprintRecord& Record, FBlueprintSaveData& Out, FString& Error)
+{
+    // Construction copies omit goods just like saved selection blueprints.
+    // Undo records call the low-level writer directly and retain their contents.
+    FBlueprintStoredGoodsScope EmptyGoods(mBuildables);
+    if (!EmptyGoods.Valid)
+    { Error=TEXT("Cannot safely exclude stored goods from this copy."); return false; }
+    return WriteBuildingSkillsClipboard(AFGBlueprintSubsystem::Get(GetWorld()), Record,
+        BlueprintOrigin, mBuildables, mDimensions, Out);
 }
 
 ABSBlueprintSaveSession::ABSBlueprintSaveSession()
@@ -147,25 +161,30 @@ bool ABSBlueprintSaveSession::Prepare(FString& Error)
         FTransform MemberTransform = Building->GetActorTransform();
         if (Member.LightweightClass)
         {
-            // Lightweight actors are temporary interaction shells with no mesh
-            // components. Their real geometry lives in the instance subsystem.
             auto* Lightweight = AFGLightweightBuildableSubsystem::Get(GetWorld());
             const int32 Index = Member.ResolveIndex(GetWorld());
             const auto* Data = Lightweight && Index != INDEX_NONE
                 ? Lightweight->GetRuntimeDataForBuildableClassAndIndex(Member.LightweightClass, Index) : nullptr;
-            if (Data && Data->BoundingBox.IsValid)
-            {
-                MemberTransform = Data->Transform;
-                BSBlueprintBounds::AppendBox(Data->BoundingBox, MemberTransform, BoundsPoints);
-            }
+            if (!Data) { Error = TEXT("A selected building is not available yet."); return false; }
+            MemberTransform = Data->Transform;
         }
-        if (BoundsPoints.Num() == PreviousPoints) BSBlueprintBounds::AppendActorGeometry(Building, BoundsPoints);
-        if (BoundsPoints.Num() == PreviousPoints)
-        { Error = TEXT("A selected building's geometry is not available yet. Try again after it finishes loading."); return false; }
-        BuildingYaws.Add(MemberTransform.Rotator().Yaw);
+        BSBlueprintBounds::AppendSnappingGeometry(Building, MemberTransform, BoundsPoints);
+        // Non-snapping helpers are still serialized, but must not change the
+        // footprint or outvote physical buildings in automatic alignment.
+        if (BoundsPoints.Num() != PreviousPoints) BuildingYaws.Add(MemberTransform.Rotator().Yaw);
         InReach |= FVector::DistSquared(Member.Location(), Player->GetActorLocation()) <= FMath::Square(Player->GetBuildGun()->GetBuildGunRange() + 1000.f);
     }
     if (RequireReach && !InReach) { Error = TEXT("Move within Build Gun range of the selection."); return false; }
+    // A selection containing only non-snapping objects has no native snap box.
+    // Keep it copyable without letting its helper geometry enlarge mixed selections.
+    if (BoundsPoints.IsEmpty())
+    {
+        for (AFGBuildable* Building : mBuildables)
+        {
+            BSBlueprintBounds::AppendActorGeometry(Building, BoundsPoints);
+            BuildingYaws.Add(Building->GetActorRotation().Yaw);
+        }
+    }
     FVector BoundsSize;
     const bool HasAnchor = SourceAnchor.Actor || SourceAnchor.LightweightClass;
     FQuat Rotation = FQuat::Identity;
@@ -179,16 +198,8 @@ bool ABSBlueprintSaveSession::Prepare(FString& Error)
         if (bOpened && !Anchor->GetActorTransform().Equals(AnchorTransform, .01))
         { Error = TEXT("The blueprint anchor changed. Close the window and try again."); return false; }
         AnchorTransform = Anchor->GetActorTransform();
-        if (SourceAnchor.LightweightClass)
-        {
-            auto* Lightweight = AFGLightweightBuildableSubsystem::Get(GetWorld());
-            const int32 Index = SourceAnchor.ResolveIndex(GetWorld());
-            const auto* Data = Lightweight && Index != INDEX_NONE
-                ? Lightweight->GetRuntimeDataForBuildableClassAndIndex(SourceAnchor.LightweightClass, Index) : nullptr;
-            if (Data && Data->BoundingBox.IsValid) BSBlueprintBounds::AppendBox(Data->BoundingBox, Data->Transform, AnchorPoints);
-        }
-        if (AnchorPoints.IsEmpty()) BSBlueprintBounds::AppendActorGeometry(Anchor, AnchorPoints);
-        if (AnchorPoints.IsEmpty()) { Error = TEXT("The anchor's geometry is not available yet."); return false; }
+        BSBlueprintBounds::AppendSnappingGeometry(Anchor, AnchorTransform, AnchorPoints);
+        if (AnchorPoints.IsEmpty()) AnchorPoints.Add(AnchorTransform.GetLocation());
     }
     if (!(HasAnchor ? BSBlueprintBounds::FitFrame(BoundsPoints, Rotation, BlueprintOrigin, BoundsSize, AnchorPoints)
         : BSBlueprintBounds::FitUpright(BoundsPoints, BuildingYaws, BlueprintOrigin, BoundsSize)))
@@ -224,6 +235,8 @@ void ABSBlueprintSaveSession::Notify(const FString& Message)
 void ABSBlueprintSaveSession::InstallHooks()
 {
     if (WITH_EDITOR) return;
+    // SML 3.12.1's CL 520140 headers match the native interface layout.
+    // The generated interface dispatch now reaches this proxy's overrides.
     SUBSCRIBE_METHOD(AFGBlueprintSubsystem::WriteBlueprintToDisk,
         [](auto& Scope, AFGBlueprintSubsystem* System, const FBlueprintRecord& Record)
         {
@@ -393,8 +406,11 @@ bool RunBuildingSkillsBlueprintInventoryChecks(AFGCharacterPlayer* Player)
     const bool Fixture=System && PC && Storage && Machine && Coal && Ingot && Rod && Shard && RodRecipe;
     Check(TEXT("storage, constructor and item fixtures load"),Fixture);if(!Fixture)return false;
     AFGRecipeManager::Get(World)->AddAvailableRecipe(RodRecipe);Machine->SetRecipe(RodRecipe);
-    auto* Stored=Storage->GetStorageInventory();auto* Input=Machine->GetInputInventory();auto* Output=Machine->GetOutputInventory();auto* Upgrades=Machine->GetPotentialInventory();
+    auto* Stored=BSFactoryAccess::Inventory(Storage, TEXT("mStorageInventory"));auto* Input=BSFactoryAccess::Inventory(Machine, TEXT("mInputInventory"));auto* Output=BSFactoryAccess::Inventory(Machine, TEXT("mOutputInventory"));auto* Upgrades=BSFactoryAccess::Inventory(Machine, TEXT("mInventoryPotential"));
     if(!Stored || !Input || !Output || !Upgrades){Check(TEXT("source inventories exist"),false);return false;}
+    Check(TEXT("CL 520140 inventory getters match runtime-reflected identities"),
+        Storage->GetStorageInventory()==Stored && Machine->GetInputInventory()==Input &&
+        Machine->GetOutputInventory()==Output && Machine->GetPotentialInventory()==Upgrades);
     Check(TEXT("installed shard fixture is populated"),Upgrades->AddStackToIndex_Unsafe(0,FInventoryStack(1,Shard))==1);
     TArray<AFGBuildable*> Source{Storage,Machine};TArray<FItemAmount> ExpectedCost;
     System->CalculateBlueprintCost(Source,ExpectedCost);
@@ -426,10 +442,51 @@ bool RunBuildingSkillsBlueprintInventoryChecks(AFGCharacterPlayer* Player)
         UE_LOG(LogBuildingSkills,Display,TEXT("BLUEPRINT INVENTORY CHECK: descriptor=%s cachedHeaders=%d loaded=%d"),*Descriptor->GetBlueprintNameAsString(),FBSBlueprintAccess::Headers(System).Num(),Loaded.Num());
         AFGBuildableStorage* NewStorage=nullptr;AFGBuildableManufacturer* NewMachine=nullptr;
         for(auto* B:Loaded){if(auto* S=Cast<AFGBuildableStorage>(B))NewStorage=S;if(auto* M=Cast<AFGBuildableManufacturer>(B))NewMachine=M;}
-        Check(TEXT("saved storage and production inventories are empty but retain their slots"),NewStorage && NewMachine && NewStorage->GetStorageInventory()->IsEmpty()
-            && NewStorage->GetStorageInventory()->GetSizeLinear()==Slots && NewMachine->GetInputInventory()->IsEmpty() && NewMachine->GetOutputInventory()->IsEmpty());
-        Check(TEXT("saved machine keeps its recipe and installed upgrade"),NewMachine && NewMachine->GetCurrentRecipe()==RodRecipe && NewMachine->GetPotentialInventory()->GetNumItems(Shard)==1);
+        Check(TEXT("saved storage and production inventories are empty but retain their slots"),NewStorage && NewMachine && BSFactoryAccess::Inventory(NewStorage, TEXT("mStorageInventory"))->IsEmpty()
+            && BSFactoryAccess::Inventory(NewStorage, TEXT("mStorageInventory"))->GetSizeLinear()==Slots && BSFactoryAccess::Inventory(NewMachine, TEXT("mInputInventory"))->IsEmpty() && BSFactoryAccess::Inventory(NewMachine, TEXT("mOutputInventory"))->IsEmpty());
+        Check(TEXT("saved machine keeps its recipe and installed upgrade"),NewMachine && BSFactoryAccess::Recipe(NewMachine)==RodRecipe && BSFactoryAccess::Inventory(NewMachine, TEXT("mInventoryPotential"))->GetNumItems(Shard)==1);
         System->DeleteBlueprintDescriptor(Descriptor);
+    }
+    auto* RCO=PC->GetRemoteCallObjectOfClass<UBSGroupRemoteCallObject>();
+    auto* Clipboard=RCO?NewObject<UBSClipboard>(RCO):nullptr;
+    FString CopyError;
+    if(Clipboard)Clipboard->RequestId=FGuid::NewGuid();
+    const bool Captured=Clipboard && Clipboard->Capture(Session->SourceSelection,CopyError);
+    Check(TEXT("Copy captures occupied storage and production buildings"),Captured);
+    Check(TEXT("Copy leaves source goods and installed upgrades unchanged"),Stored->GetNumItems(Coal)==73
+        && Input->GetNumItems(Ingot)==42 && Output->GetNumItems(Rod)==17 && Upgrades->GetNumItems(Shard)==1);
+    if(Captured)
+    {
+        auto* Decoded=NewObject<UBSClipboard>(RCO);Decoded->RequestId=Clipboard->RequestId;Decoded->Bytes=Clipboard->Bytes;
+        const bool DecodedOK=Decoded->Decode(CopyError);
+        Check(TEXT("Copy inventory archive survives client transport"),DecodedOK);
+        if(DecodedOK)
+        {
+            RCO->Clipboards.Add(Decoded);
+            auto Amount=[](const TArray<FItemAmount>& Items,TSubclassOf<UFGItemDescriptor> Class){int32 Total=0;for(const auto& I:Items)if(I.ItemClass==Class)Total+=I.Amount;return Total;};
+            TArray<FItemAmount> Cost;Decoded->Descriptor->GetBlueprintCost(Cost);
+            bool SameCost=true;for(const auto& I:ExpectedCost)SameCost &= Amount(Cost,I.ItemClass)==Amount(ExpectedCost,I.ItemClass);
+            for(const auto& I:Cost)SameCost &= Amount(Cost,I.ItemClass)==Amount(ExpectedCost,I.ItemClass);
+            Check(TEXT("Copy cost excludes goods and retains installed upgrades"),SameCost && Amount(Cost,Coal)==0 && Amount(Cost,Ingot)==0 && Amount(Cost,Shard)==1);
+            for(bool Preview:{true,false})
+            {
+                // The client previews decoded bytes; authority places its
+                // original clipboard with the owning player as instigator.
+                if(!Preview){RCO->Clipboards.Remove(Decoded);RCO->Clipboards.Add(Clipboard);}
+                TArray<AFGBuildable*> Loaded;
+                System->LoadStoredBlueprint((Preview?Decoded:Clipboard)->Descriptor,
+                    FTransform(Player->GetActorLocation()+FVector(-6000,4000,1800)),Loaded,Preview,nullptr,Player);
+                AFGBuildableStorage* CopyStorage=nullptr;AFGBuildableManufacturer* CopyMachine=nullptr;
+                for(auto* B:Loaded){if(auto* S=Cast<AFGBuildableStorage>(B))CopyStorage=S;if(auto* M=Cast<AFGBuildableManufacturer>(B))CopyMachine=M;}
+                Check(Preview?TEXT("Copy preview has empty goods, original slots, recipe and installed upgrade"):
+                    TEXT("Placed Copy has empty goods, original slots, recipe and installed upgrade"),
+                    CopyStorage && CopyMachine && BSFactoryAccess::Inventory(CopyStorage, TEXT("mStorageInventory"))->IsEmpty() && BSFactoryAccess::Inventory(CopyStorage, TEXT("mStorageInventory"))->GetSizeLinear()==Slots
+                    && BSFactoryAccess::Inventory(CopyMachine, TEXT("mInputInventory"))->IsEmpty() && BSFactoryAccess::Inventory(CopyMachine, TEXT("mOutputInventory"))->IsEmpty()
+                    && BSFactoryAccess::Recipe(CopyMachine)==RodRecipe && BSFactoryAccess::Inventory(CopyMachine, TEXT("mInventoryPotential"))->GetNumItems(Shard)==1);
+            }
+            RCO->Clipboards.Remove(Decoded);
+            RCO->Clipboards.Remove(Clipboard);
+        }
     }
     Session->ShowSummaryOnly();Session->Destroy();return Passed;
 }

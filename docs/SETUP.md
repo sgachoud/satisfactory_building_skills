@@ -7,11 +7,15 @@ Building Skills uses the same separate-repository/junction workflow as
 | --- | --- |
 | Plugin | `F:/dev/satisfactory_mods/building_skills/mod/BuildingSkills` |
 | SML project | `F:/dev/satisfactory_mods/SatisfactoryModLoader/FactoryGame.uproject` |
-| Engine | `C:/Program Files/Unreal Engine - CSS` (5.6.1-CSS) |
-| SML | 3.12.0 |
-| Declared minimum game build | CL 517554 (Satisfactory 1.2.5.0), matching the validated release |
+| Engine | `C:/Program Files/Unreal Engine - CSS` (5.6.1-css-87) |
+| SML | 3.12.1, tag `v3.12.1` (`0170e5feec`) |
+| Declared minimum game build | CL 520140 (Satisfactory 1.2.5.1), matching the validated release |
 | Compiler | VS 2022 / MSVC v14.38 x64/x86, per the reference setup |
-| Audio SDK | Wwise 2023.1.14.8770, per the reference setup |
+| Audio SDK | Wwise 2025.1.6.9117 with matching Unreal integration; Windows VS 2022 and Linux SDKs |
+
+After a shared toolchain update, rebuild the SDK and editor before using the
+mod-only native helpers below. Refresh Wwise through its Launcher as required by
+the pinned starter project; do not reuse the old patched integration.
 
 Use the installed checkout as the source of truth for this workflow. The
 [official guide](https://docs.ficsit.app/satisfactory-modding/latest/Development/BeginnersGuide/SimpleMod/gameworldmodule.html)

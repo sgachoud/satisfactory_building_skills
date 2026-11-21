@@ -1,3 +1,4 @@
+#include "BSConveyorAccess.h"
 #include "BSTransformers.h"
 #include "BSGroups.h"
 #include "BSClipboard.h"
@@ -207,7 +208,7 @@ bool FBSTransformers::Copy(UBSGroupRemoteCallObject* Owner,const TArray<FBSBuild
         if(auto* Lift=Cast<AFGBuildableConveyorLift>(B))
         {
             FBSTransformer Local; Local.Id=Rule.Id;
-            Lift->mTopTransform=Local.Pose(Lift->mTopTransform);
+            BSConveyorAccess::Top(Lift)=Local.Pose(BSConveyorAccess::Top(Lift));
         }
     };
     bool ConnectionsOK=true;

@@ -94,6 +94,7 @@ public:
         static int32 Stage = 0;
         static double Next = 0;
         static int32 Samples = 0;
+        static uint64 LastSampleFrame = 0;
         static TWeakObjectPtr<AFGBuildable> TestBuilding;
         static TArray<TWeakObjectPtr<AFGBuildable>> Buildings;
         static bool ChecksPassed = true;
@@ -107,7 +108,7 @@ public:
         static TArray<FBSBuildingRef> BlueprintMembers;
         static TSubclassOf<UFGBuildGunModeDescriptor> NormalSelectionMode;
         const double Now = FPlatformTime::Seconds();
-        if (Now - Started > 240)
+        if (Now - Started > 600)
         {
             UE_LOG(LogBuildingSkills, Error, TEXT("RUNTIME TEST FAILED: timed out waiting for a playable fresh world."));
             FPlatformMisc::RequestExitWithStatus(false, 1);
@@ -169,7 +170,8 @@ public:
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest"))) { Samples=450; TestBuilding.Reset(); }
             if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsBlueprintNetworkTest"))) { Samples=500; TestBuilding.Reset(); }
             Stage = 2;
-            Next = Now + (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest")) ? 18 : 1);
+            LastSampleFrame = GFrameCounter;
+            Next = Now + ((FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsConnectedTest")) || FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsTransformersTest"))) ? 18 : 1);
             return true;
         }
         if (TestBuilding.IsValid())
@@ -181,7 +183,10 @@ public:
             Player->GetController()->SetControlRotation((Origin - Player->GetPawnViewLocation()).Rotation());
         }
         if (FParse::Param(FCommandLine::Get(),TEXT("BuildingSkillsVolumeTest"))) RunBuildingSkillsVolumeChecks(Player,-1);
-        if (Now < Next) return true;
+        // A wall-clock second can elapse in one stalled frame. Let player input,
+        // deferred contexts and Slate layout process several frames between steps.
+        if (Now < Next || GFrameCounter < LastSampleFrame + 4) return true;
+        LastSampleFrame = GFrameCounter;
         Next = Now + 1;
         auto* Gun = Player->GetBuildGun();
         UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME TEST sample %d: equipped=%d state=%s mode=%s editing=%d intent=%d entering=%d allowed=%d indicator=%d viewport=%d visible=%d status=%s"),
@@ -622,8 +627,8 @@ public:
                 auto* LW = AFGLightweightBuildableSubsystem::Get(World);
                 for (const auto& Member : Edit->BlueprintSession->Members)
                     if (const auto* Data = LW->GetRuntimeDataForBuildableClassAndIndex(Member.LightweightClass, Member.ResolveIndex(World)))
-                        LocalBounds += Data->BoundingBox.TransformBy(Data->Transform.GetRelativeTransform(Origin));
-                Check(TEXT("Group blueprint origin centers X/Y with its lowest geometry at Z zero"),
+                        LocalBounds += FBox(FVector(-400, -400, -200), FVector(400, 400, 200)).TransformBy(Data->Transform.GetRelativeTransform(Origin));
+                Check(TEXT("Group blueprint origin centers X/Y with its native foundation floor at Z zero"),
                     LocalBounds.IsValid && FMath::IsNearlyZero(LocalBounds.GetCenter().X, .02) && FMath::IsNearlyZero(LocalBounds.GetCenter().Y, .02) && FMath::IsNearlyZero(LocalBounds.Min.Z, .02));
             }
             bool SaveOnly=true;

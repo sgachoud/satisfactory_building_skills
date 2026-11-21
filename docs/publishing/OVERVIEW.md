@@ -71,7 +71,8 @@ segment lengths and parallel lines. Rail lines can include block signals.
 
 ## Before you install
 
-**Early access · 0.11.2 · SML 3.12.** Back up important saves before large edits.
+**Early access · 0.11.4 · SML 3.12.1.** Back up important saves before large edits.
+Requires Satisfactory 1.2.5.1 (CL 520140) or newer.
 In multiplayer, the server and every client need the same mod version.
 Windows Steam/Epic clients and Windows/Linux dedicated-server packages are included.
 

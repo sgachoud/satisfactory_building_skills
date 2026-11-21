@@ -2,7 +2,8 @@
 
 A Satisfactory/SML mod for persistent, nested building groups and building transforms. Its **Edit** mode
 shares Normal, Blueprint, Group, Connected and Volume selection with the vanilla dismantle gun.
-The mod reference is `BuildingSkills`; the development version is `0.11.2`.
+The mod reference is `BuildingSkills`; the development version is `0.11.4`.
+Requires Satisfactory 1.2.5.1 (CL 520140) or newer and SML 3.12.1.
 
 The **Plan** gun designs rail, pipe, belt and hypertube paths before construction, with named personal or
 shared plans, editable nodes and curves, mixed parallel lines, configurable segment
@@ -191,7 +192,7 @@ power wires follow their connection points. Extractors keep their resource bindi
 
 The plugin is junctioned into the shared SML project's `Mods/GameFeatures` folder.
 Generated files and build products are ignored. The project targets CSS Unreal 5.6.1
-and SML 3.12.0, declaring game CL 502094 as its minimum.
+and SML 3.12.1, declaring game CL 520140 as its minimum.
 
 ## Codex participation
 

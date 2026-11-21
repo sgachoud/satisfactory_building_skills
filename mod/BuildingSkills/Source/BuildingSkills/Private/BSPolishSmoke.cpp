@@ -1,3 +1,5 @@
+#include "BSConveyorAccess.h"
+#include "BSFactoryAccess.h"
 #include "BSActionHistory.h"
 #include "BSBlueprintScale.h"
 #include "BSBlueprintSave.h"
@@ -25,6 +27,8 @@
 #include "EnhancedPlayerInput.h"
 #include "InputKeyEventArgs.h"
 #include "Hologram/FGHologram.h"
+#include "Hologram/FGBlueprintHologram.h"
+#include "FGBlueprintSettings.h"
 #include "EngineUtils.h"
 #include "Misc/Paths.h"
 #include "UnrealClient.h"
@@ -41,6 +45,110 @@
 class FBSPolishSmoke
 {
 public:
+    static bool ConveyorBlueprints(AFGCharacterPlayer* Player, const TArray<AFGBuildable*>& Source)
+    {
+        auto* World = Player->GetWorld();
+        auto* PC = Cast<AFGPlayerController>(Player->GetController());
+        auto* RCO = PC->GetRemoteCallObjectOfClass<UBSGroupRemoteCallObject>();
+        auto* System = AFGBlueprintSubsystem::Get(World);
+        bool Passed = true;
+        auto Check = [&](const TCHAR* Name, bool OK)
+        { Passed &= OK; UE_LOG(LogBuildingSkills, Display, TEXT("RUNTIME %s: Polish conveyor: %s"), OK ? TEXT("PASS") : TEXT("FAIL"), Name); };
+        Check(TEXT("Native conveyor item layouts match the queue serializer"), FConveyorBeltItem::StaticStruct()->GetStructureSize() == sizeof(FConveyorBeltItem) && FConveyorBeltItems::StaticStruct()->GetStructureSize() == sizeof(FConveyorBeltItems));
+        FBSSelection Selection;
+        for (auto* Actor : Source) Selection.Buildings.Add(FBSBuildingRef::FromActor(Actor));
+        TArray<FItemAmount> NativeCost; System->CalculateBlueprintCost(Source, NativeCost);
+        auto Verify = [&](const TArray<AFGBuildable*>& Actors, bool IsPreview = false)
+        {
+            int32 Lifts = 0, Belts = 0, Links = 0;
+            bool OK = Actors.Num() == 3;
+            for (auto* Actor : Actors)
+            {
+                auto* Conveyor = Cast<AFGBuildableConveyorBase>(Actor);
+                if (!Conveyor) return false;
+                if (auto* Lift = Cast<AFGBuildableConveyorLift>(Conveyor))
+                {
+                    ++Lifts;
+                    OK &= BSConveyorAccess::Top(Lift).GetLocation().Equals(FVector(0, 0, 800), .01);
+                    if (!IsPreview) OK &= FMath::IsNearlyEqual(BSConveyorAccess::Length(Lift), 800.f, .1f);
+                }
+                else
+                {
+                    ++Belts;
+                    const auto& Points = CastChecked<IFGSplineBuildableInterface>(Conveyor)->GetSplinePointData();
+                    OK &= Points.Num() == 2 && FMath::IsNearlyEqual(FVector::Dist(Points[0].Location, Points[1].Location), 1200.0, .1);
+                    // Native previews never BeginPlay: inspect saved curve data,
+                    // not live length caches or initialized port transforms.
+                    if (!IsPreview) OK &= FMath::IsNearlyEqual(BSConveyorAccess::Length(Conveyor), 1200.f, .1f);
+                }
+                for (int32 End = 0; End < 2; ++End)
+                {
+                    auto* Port = BSConveyorAccess::Connection(Conveyor, End);
+                    if (!Port) return false;
+                    if (auto* Peer = Port->GetConnection())
+                    {
+                        ++Links;
+                        OK &= Actors.Contains(Cast<AFGBuildable>(Peer->GetOwner())) && Peer->GetConnection() == Port;
+                        if (!IsPreview) OK &= Port->GetComponentLocation().Equals(Peer->GetComponentLocation(), .1);
+                    }
+                }
+            }
+            return OK && Lifts == 1 && Belts == 2 && Links == 4;
+        };
+        auto Place = [&](UFGBlueprintDescriptor* Descriptor, int32 Offset)
+        {
+            auto* Holo = World->SpawnActorDeferred<AFGBlueprintHologram>(AFGBlueprintHologram::StaticClass(), FTransform::Identity, Player, Player);
+            if (!Holo) return false;
+            Holo->SetRecipe(UFGBlueprintSettings::Get()->mBlueprintRecipeClass.LoadSynchronous());
+            Holo->SetBuildClass(Source[0]->GetClass()); Holo->SetConstructionInstigator(Player);
+            Holo->SetBlueprintDescriptor(Descriptor); Holo->FinishSpawning(FTransform::Identity);
+            TArray<AFGBuildable*> Preview;
+            for (const auto& Entry : Holo->mBuildableToNewRoot) Preview.Add(Entry.Key);
+            Check(TEXT("Preview retains saved conveyor geometry and reciprocal internal references"), Verify(Preview, true));
+            auto Cost = Holo->GetBaseCost();
+            bool CostOK = Cost.Num() == NativeCost.Num();
+            for (const auto& Item : NativeCost)
+                CostOK &= Cost.ContainsByPredicate([&](const FItemAmount& Entry) { return Entry.ItemClass == Item.ItemClass && Entry.Amount == Item.Amount; });
+            Check(TEXT("Preview cost matches native placed-conveyor cost"), CostOK && !NativeCost.IsEmpty());
+            Holo->SetActorTransform(FTransform(Player->GetActorLocation() + FVector(-12000, Offset * 6000, 2000)));
+            TArray<AActor*> Children;
+            auto* Proxy = Cast<AFGBlueprintProxy>(Holo->Construct(Children, FNetConstructionID()));
+            const bool Built = Proxy && Verify(Proxy->GetBuildables());
+            Holo->Destroy();
+            return Built;
+        };
+        auto* Copy = NewObject<UBSClipboard>(RCO); Copy->RequestId = FGuid::NewGuid(); FString Error;
+        const bool Captured = Copy->Capture(Selection, Error, {}, false);
+        Check(TEXT("Copy captures connected lift and belts"), Captured);
+        if (Captured)
+        {
+            auto* Decoded = NewObject<UBSClipboard>(RCO); Decoded->RequestId = Copy->RequestId; Decoded->Bytes = Copy->Bytes;
+            const bool DecodedOK = Decoded->Decode(Error);
+            Check(TEXT("Conveyor Copy survives client transport"), DecodedOK);
+            if (DecodedOK)
+            {
+                RCO->Clipboards.Add(Decoded);
+                Check(TEXT("Copy constructs reciprocal connected conveyors at their original sizes"), Place(Decoded->Descriptor, 1));
+                RCO->Clipboards.Remove(Decoded);
+            }
+        }
+        FActorSpawnParameters Params; Params.Owner = PC; Params.ObjectFlags |= RF_Transient;
+        auto* Session = World->SpawnActor<ABSBlueprintSaveSession>(ABSBlueprintSaveSession::StaticClass(), FTransform::Identity, Params);
+        if (!Session) return false;
+        Session->RequireReach = false; Session->SourceSelection = Selection;
+        FBlueprintRecord Record; Record.BlueprintName = TEXT("BSRuntime_Conveyors_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+        Record.Category = System->GetCategoryForUndefined(); Record.SubCategory = System->GetSubCategoryForUndefined();
+        if (Session->Prepare(Error)) Session->SaveBlueprint(Record, PC, false);
+        System->EnumerateBlueprints();
+        auto* Descriptor = System->GetBlueprintDescriptorByNameString(Record.BlueprintName);
+        const bool Saved = Descriptor && System->ReadBlueprintFromDisc(Record.BlueprintName);
+        Check(TEXT("Selection Save writes a readable conveyor blueprint"), Saved);
+        if (Saved) Check(TEXT("Saved blueprint constructs reciprocal connected conveyors at their original sizes"), Place(Descriptor, 2));
+        if (Descriptor) System->DeleteBlueprintDescriptor(Descriptor);
+        Session->Destroy();
+        Check(TEXT("Copy and Save leave source conveyor dimensions and connections unchanged"), Verify(Source));
+        return Passed;
+    }
     static bool Run(AFGCharacterPlayer* Player,int32 Phase)
     {
         auto* World=Player->GetWorld(); auto* Edit=Player->FindComponentByClass<UBSEditModeComponent>();
@@ -132,7 +240,7 @@ public:
             auto* B=Class?Cast<AFGBuildableStorage>(AFGBuildableSubsystem::Get(World)->BeginSpawnBuildable(Class,FTransform(StorageLocation))):nullptr;
             Check(TEXT("stocked storage fixture"),B && Recipe && Plate); if(!B || !Recipe || !Plate) return false;
             B->SetBuiltWithRecipe(Recipe); AFGRecipeManager::Get(World)->AddAvailableRecipe(Recipe); B->FinishSpawning(B->GetActorTransform());
-            B->GetStorageInventory()->AddStack(FInventoryStack(24,Plate)); Storage=B;
+            BSFactoryAccess::Inventory(B, TEXT("mStorageInventory"))->AddStack(FInventoryStack(24,Plate)); Storage=B;
         }
         if(Phase==4)
         {
@@ -145,7 +253,7 @@ public:
             RCO->Server_UndoGunAction_Implementation(true);
             AFGBuildableStorage* Restored=nullptr;
             for(TActorIterator<AFGBuildableStorage> It(World); It; ++It) if(!It->GetIsDismantled() && It->GetActorLocation().Equals(StorageLocation,.1)) Restored=*It;
-            Check(TEXT("Inventory contents are restored exactly"),Restored && Restored->GetStorageInventory()->GetNumItems(Plate)==24);
+            Check(TEXT("Inventory contents are restored exactly"),Restored && BSFactoryAccess::Inventory(Restored, TEXT("mStorageInventory"))->GetNumItems(Plate)==24);
             Check(TEXT("restored actor is immediately visible and collidable without build effect"),Restored && !Restored->IsHidden() && Restored->GetActorEnableCollision() && !Restored->IsPlayingBuildEffect() && Restored->GetBlueprintBuildEffectID()==INDEX_NONE);
             Check(TEXT("Restoration repays native refunds without duplication"),Player->GetInventory()->GetNumItems(Plate)==PlateBefore);
             Gun->GotoBuildState(FoundationRecipe);
@@ -353,17 +461,18 @@ public:
             *Top->ContainerPtrToValuePtr<FTransform>(L)=FTransform(FVector(0,0,800)); L->FinishSpawning(L->GetActorTransform()); Lift=L;
             for(int32 I=0;I<2;++I)
             {
-                auto* Port=I==0?L->GetConnection0():L->GetConnection1();
+                auto* Port=I==0?BSConveyorAccess::Connection(L, 0):BSConveyorAccess::Connection(L, 1);
                 const FVector End=Port->GetComponentLocation(), Direction=Port->GetForwardVector()*1200;
                 const FVector Start=I==0?End+Direction:End, Delta=I==0?-Direction:Direction;
                 auto* Belt=Cast<AFGBuildableConveyorBelt>(Spawn(TEXT("ConveyorBeltMk1"),FTransform(Start)));
                 if(!Belt)return false;
-                *Belt->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
-                Belt->FinishSpawning(Belt->GetActorTransform()); Port->SetConnection(I==0?Belt->GetConnection1():Belt->GetConnection0());
+                *Cast<IFGSplineBuildableInterface>(Belt)->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
+                Belt->FinishSpawning(Belt->GetActorTransform()); Port->SetConnection(I==0?BSConveyorAccess::Connection(Belt, 1):BSConveyorAccess::Connection(Belt, 0));
                 if(I==0){LowerBelt=Belt;LowerLocation=Start;}else UpperBelt=Belt;
             }
-            Check(TEXT("Lift connects to two unselected belts"),L->GetConnection0()->GetConnection()==LowerBelt->GetConnection1() && L->GetConnection1()->GetConnection()==UpperBelt->GetConnection0());
-            Check(TEXT("Bulk archive preserves foreign-owned dependency data and rejects null entries safely"),TestBuildingSkillsArchiveObjects(L,LowerBelt->GetConnection1()));
+            Check(TEXT("Lift connects to two unselected belts"),BSConveyorAccess::Connection(L, 0)->GetConnection()==BSConveyorAccess::Connection(LowerBelt, 1) && BSConveyorAccess::Connection(L, 1)->GetConnection()==BSConveyorAccess::Connection(UpperBelt, 0));
+            Check(TEXT("Bulk archive preserves foreign-owned dependency data and rejects null entries safely"),TestBuildingSkillsArchiveObjects(L,BSConveyorAccess::Connection(LowerBelt, 1)));
+            Passed &= ConveyorBlueprints(Player, {L, LowerBelt.Get(), UpperBelt.Get()});
         }
         if(Phase==27 || Phase==29)
         {
@@ -391,8 +500,8 @@ public:
                 for(TActorIterator<AFGBuildableConveyorBelt> It(World);It;++It)
                     if(!It->GetIsDismantled() && It->GetActorLocation().Equals(LowerLocation,.1))LowerBelt=*It;
             const bool Linked=Lift.IsValid() && LowerBelt.IsValid() && UpperBelt.IsValid() &&
-                Lift->GetConnection0()->GetConnection()==LowerBelt->GetConnection1() && LowerBelt->GetConnection1()->GetConnection()==Lift->GetConnection0() &&
-                Lift->GetConnection1()->GetConnection()==UpperBelt->GetConnection0() && UpperBelt->GetConnection0()->GetConnection()==Lift->GetConnection1();
+                BSConveyorAccess::Connection(Lift, 0)->GetConnection()==BSConveyorAccess::Connection(LowerBelt, 1) && BSConveyorAccess::Connection(LowerBelt, 1)->GetConnection()==BSConveyorAccess::Connection(Lift, 0) &&
+                BSConveyorAccess::Connection(Lift, 1)->GetConnection()==BSConveyorAccess::Connection(UpperBelt, 0) && BSConveyorAccess::Connection(UpperBelt, 0)->GetConnection()==BSConveyorAccess::Connection(Lift, 1);
             Check(Phase==28?TEXT("Undo restores the lift and both external belt connections"):TEXT("Batch undo restores internal and external conveyor connections"),Linked && RCO->DeleteHistory.Num()==Count-1);
             auto* Top=Lift.IsValid()?FindFProperty<FStructProperty>(Lift->GetClass(),TEXT("mTopTransform")):nullptr;
             Check(TEXT("Restored lift keeps its height and is immediately visible and collidable"),Top && Top->ContainerPtrToValuePtr<FTransform>(Lift.Get())->GetLocation().Equals(FVector(0,0,800),.01) && !Lift->IsHidden() && Lift->GetActorEnableCollision() && !Lift->IsPlayingBuildEffect());

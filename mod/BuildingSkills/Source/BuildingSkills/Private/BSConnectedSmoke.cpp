@@ -31,6 +31,7 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/SWindow.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
 #include "UnrealClient.h"
 #include "Components/BackgroundBlur.h"
 #include "Components/PanelWidget.h"
@@ -66,8 +67,9 @@ public:
             // Existing cycling checks are taps; deliberate radial holds below use Slate.
             if (K == EKeys::R && Down)
             {
-                FTimerHandle Timer;
-                World->GetTimerManager().SetTimer(Timer,[Input]() { Input->InputKey(FInputKeyEventArgs(nullptr,INPUTDEVICEID_NONE,EKeys::R,IE_Released,0.f,false,0)); },.05f,false);
+                // Release after the next player-input pass. A timed release can
+                // slip beyond the following assertion when a frame stalls.
+                World->GetTimerManager().SetTimerForNextTick([Input]() { Input->InputKey(FInputKeyEventArgs(nullptr,INPUTDEVICEID_NONE,EKeys::R,IE_Released,0.f,false,0)); });
             }
         };
         // Route interoperability keys through Slate, as a physical keyboard does.
@@ -159,6 +161,7 @@ public:
         };
         // Inspect the installed mod's public runtime widget identity only. No dependency
         // on, or copied implementation from, the other mod is required for this check.
+        const bool SmartAvailable = FPackageName::MountPointExists(TEXT("/SmartFoundations/"));
         auto SmartMenu = [&]() -> UUserWidget*
         {
             for (TObjectIterator<UUserWidget> It; It; ++It)
@@ -524,13 +527,17 @@ public:
         if (Phase == 16)
         {
             ExternalKConflict=FindExternalKConflict();
-            if (ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,true);
+            if (SmartAvailable && ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,true);
         }
         if (Phase == 17)
         {
-            if (ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,false);
+            if (SmartAvailable && ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,false);
             auto* Menu = SmartMenu();
-            if (!ExternalKConflict.IsEmpty())
+            if (!SmartAvailable)
+            {
+                UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME SKIP: Connected: Smart menu after painting requires the optional Smart mod, which is not mounted"));
+            }
+            else if (!ExternalKConflict.IsEmpty())
             {
                 UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME SKIP: Connected: Smart menu after painting is blocked by existing external K mapping: %s; no other mod context or binding changed"),*ExternalKConflict);
             }
@@ -631,13 +638,17 @@ public:
             Check(TEXT("Transform Edit to Build clears all Building Skills K mappings"),Gun->IsInState(EBuildGunState::BGS_BUILD) && !Edit->Indicator && !Edit->ControlHints && BuildingSkillsKCount()==0);
             Check(TEXT("normal Build restores physical keyboard focus after Transform settings"),ViewportFocusRestored());
             ExternalKConflict=FindExternalKConflict();
-            if (ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,true);
+            if (SmartAvailable && ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,true);
         }
         if (Phase == 34)
         {
-            if (ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,false);
+            if (SmartAvailable && ExternalKConflict.IsEmpty()) WindowKey(EKeys::K,false);
             auto* Menu = SmartMenu();
-            if (!ExternalKConflict.IsEmpty())
+            if (!SmartAvailable)
+            {
+                UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME SKIP: Connected: Smart menu after Transform requires the optional Smart mod, which is not mounted"));
+            }
+            else if (!ExternalKConflict.IsEmpty())
             {
                 UE_LOG(LogBuildingSkills,Display,TEXT("RUNTIME SKIP: Connected: Smart menu after Transform is blocked by existing external K mapping: %s; no other mod context or binding changed"),*ExternalKConflict);
             }

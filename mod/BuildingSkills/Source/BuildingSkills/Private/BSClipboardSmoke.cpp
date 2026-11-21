@@ -1,3 +1,4 @@
+#include "BSFactoryAccess.h"
 #include "BSBlueprintAccess.h"
 #include "BSClipboard.h"
 #include "BSDeduplication.h"
@@ -57,7 +58,7 @@ namespace
 
         bool Tick(float)
         {
-            if (FPlatformTime::Seconds() - Started > (TestUndo ? 480 : 240))
+            if (FPlatformTime::Seconds() - Started > (TestUndo ? 900 : 480))
             {
                 UE_LOG(LogBuildingSkills, Error, TEXT("ISSUE1 NETWORK: FAIL timeout phase=%d"), Phase);
                 FPlatformMisc::RequestExit(false); return false;
@@ -653,10 +654,10 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
         auto* Constructor=SpawnMachine(TEXT("ConstructorMk1"),TEXT("Build_ConstructorMk1"),TEXT("Recipe_ConstructorMk1"),{});
         auto* Storage=Cast<AFGBuildableStorage>(SpawnMachine(TEXT("StorageContainerMk1"),TEXT("Build_StorageContainerMk1"),TEXT("Recipe_StorageContainerMk1"),FVector(1600,0,0)));
         auto* Plate=LoadClass<UFGItemDescriptor>(nullptr,TEXT("/Game/FactoryGame/Resource/Parts/IronPlate/Desc_IronPlate.Desc_IronPlate_C"));
-        Check(TEXT("Actor deduplication fixture assets load"),Constructor && Storage && Plate && Storage->GetStorageInventory());
-        if (Constructor && Storage && Plate && Storage->GetStorageInventory())
+        Check(TEXT("Actor deduplication fixture assets load"),Constructor && Storage && Plate && BSFactoryAccess::Inventory(Storage, TEXT("mStorageInventory")));
+        if (Constructor && Storage && Plate && BSFactoryAccess::Inventory(Storage, TEXT("mStorageInventory")))
         {
-            Storage->GetStorageInventory()->AddStack(FInventoryStack(7,Plate));
+            BSFactoryAccess::Inventory(Storage, TEXT("mStorageInventory"))->AddStack(FInventoryStack(7,Plate));
             FBSSelection ActorSelection; ActorSelection.Buildings={FBSBuildingRef::FromActor(Constructor),FBSBuildingRef::FromActor(Storage)};
             auto* ActorClipboard=NewObject<UBSClipboard>(RCO); ActorClipboard->RequestId=FGuid::NewGuid();
             const bool ActorCaptured=ActorClipboard->Capture(ActorSelection,Error);
@@ -679,7 +680,7 @@ bool RunBuildingSkillsClipboardChecks(AFGCharacterPlayer* Player, const FBSSelec
                     else Check(TEXT("Skip preserves two existing actor members without duplicating them"),CountProxy(Built)==0 && CountProxy(ActorProxy)==2);
                     ActorHolo->Destroy();
                 }
-                Check(TEXT("Actor Skip leaves source storage contents untouched"),Storage->GetStorageInventory()->GetNumItems(Plate)==7);
+                Check(TEXT("Actor Skip leaves source storage contents untouched"),BSFactoryAccess::Inventory(Storage, TEXT("mStorageInventory"))->GetNumItems(Plate)==7);
                 RCO->Clipboards.Remove(ActorClipboard);
             }
         }

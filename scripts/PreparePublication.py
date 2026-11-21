@@ -182,8 +182,8 @@ def main():
             "No duplicate/unsafe archive paths; CRC check passed",
         ],
         "excluded_debug_symbols": excluded,
-        "prior_version_evidence": evidence,
-        "gameplay_tests_run_during_publication_preparation": False,
+        "build_and_test_evidence": evidence,
+        "gameplay_tests_run_by_publication_script": False,
         "published": False,
     }
     (out / "verification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

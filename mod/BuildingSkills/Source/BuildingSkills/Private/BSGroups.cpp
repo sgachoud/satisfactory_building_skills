@@ -435,8 +435,16 @@ void ABSGroupSubsystem::RemoveLightweight(TSubclassOf<AFGBuildable> Class, int32
 
 void ABSGroupSubsystem::RemoveBuilding(AFGBuildable* Building)
 {
+    if (!Building) return;
+    // Actor keys use Unreal's recyclable object index. A destruction tombstone
+    // would be inherited by an unrelated actor allocated in that slot later.
+    // Actor references already invalidate stale requests after destruction.
+    // Use the raw identity here: Destroyed may run after IsValid becomes false.
+    FBSBuildingRef Removed; Removed.Actor = Building;
+    const uint64 Key = FBSTransformNative::Key(Removed);
     TransformSnapshot.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });
-    BuildingVersions.Add(FBSTransformNative::Key(FBSBuildingRef::FromActor(Building)), ++TransformSerial);
+    BuildingVersions.Remove(Key);
+    ReceivedVersions.Remove(Key);
     SnapshotIndices.Reset();
     for (int32 I = 0; I < TransformSnapshot.Num(); ++I) SnapshotIndices.Add(FBSTransformNative::Key(TransformSnapshot[I].Building, TransformSnapshot[I].InstanceIndex), I);
     PendingTransforms.RemoveAll([&](const FBSNativeTransform& C) { return C.Building.Actor == Building; });

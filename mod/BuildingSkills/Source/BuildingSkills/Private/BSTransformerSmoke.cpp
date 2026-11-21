@@ -1,3 +1,4 @@
+#include "BSConveyorAccess.h"
 #include "BSTransformers.h"
 #include "BSActionHistory.h"
 #include "BSClipboard.h"
@@ -480,19 +481,19 @@ public:
             const auto Start=Out->GetComponentLocation(),Delta=In->GetComponentLocation()-Start;
             auto* Belt=Cast<AFGBuildableConveyorBelt>(Spawn(TEXT("ConveyorBeltMk1"),TEXT("Build_ConveyorBeltMk1"),TEXT("Recipe_ConveyorBeltMk1"),FTransform(Start),true));
             if(!Belt)return false;
-            *Belt->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
-            Belt->FinishSpawning(Belt->GetActorTransform());Out->SetConnection(Belt->GetConnection0());In->SetConnection(Belt->GetConnection1());
+            *Cast<IFGSplineBuildableInterface>(Belt)->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
+            Belt->FinishSpawning(Belt->GetActorTransform());Out->SetConnection(BSConveyorAccess::Connection(Belt, 0));In->SetConnection(BSConveyorAccess::Connection(Belt, 1));
             TArray<FBSBuildingRef> Copy;FString Error;const bool OK=FBSTransformers::Copy(R,{FBSBuildingRef::FromActor(A),FBSBuildingRef::FromActor(B),FBSBuildingRef::FromActor(Belt)},Mirror,Copy,Error);
             AFGBuildableConveyorBelt* Repeated=nullptr;for(const auto& Ref:Copy)if(auto* C=Cast<AFGBuildableConveyorBelt>(Ref.Actor))Repeated=C;
             Check(TEXT("constructor and belt batch mirrors"),OK && Copy.Num()==3 && Repeated);
             if(Repeated)
             {
-                auto* C0=Repeated->GetConnection0();auto* C1=Repeated->GetConnection1();
+                auto* C0=BSConveyorAccess::Connection(Repeated, 0);auto* C1=BSConveyorAccess::Connection(Repeated, 1);
                 Check(TEXT("mirrored belt joins output to input on copied constructors"),C0->GetConnection() && C1->GetConnection() && C0->GetConnection()->GetDirection()==EFactoryConnectionDirection::FCD_OUTPUT && C1->GetConnection()->GetDirection()==EFactoryConnectionDirection::FCD_INPUT && C0->GetConnection()->GetOwner()!=A && C1->GetConnection()->GetOwner()!=B);
                 Check(TEXT("mirrored belt endpoints meet their machine ports"),C0->GetConnection() && C1->GetConnection() && C0->GetComponentLocation().Equals(C0->GetConnection()->GetComponentLocation(),.1) && C1->GetComponentLocation().Equals(C1->GetConnection()->GetComponentLocation(),.1));
                 Check(TEXT("mirrored connected belt remains matchable for later transformer actions"),FBSTransformers::Matching(W,{Mirror},{FBSBuildingRef::FromActor(Belt)},Error).Num()==1);
             }
-            Check(TEXT("mirroring leaves original constructor belt connected"),Out->GetConnection()==Belt->GetConnection0() && In->GetConnection()==Belt->GetConnection1());
+            Check(TEXT("mirroring leaves original constructor belt connected"),Out->GetConnection()==BSConveyorAccess::Connection(Belt, 0) && In->GetConnection()==BSConveyorAccess::Connection(Belt, 1));
         }
         if(Phase==26)
         {
@@ -510,14 +511,14 @@ public:
                 const auto Delta=Out->GetForwardVector()*1200;
                 auto* Belt=Cast<AFGBuildableConveyorBelt>(Spawn(TEXT("ConveyorBeltMk1"),TEXT("Build_ConveyorBeltMk1"),TEXT("Recipe_ConveyorBeltMk1"),FTransform(Out->GetComponentLocation()),true));
                 if(!Belt)return false;
-                *Belt->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
-                Belt->FinishSpawning(Belt->GetActorTransform());Out->SetConnection(Belt->GetConnection0());Source.Add(FBSBuildingRef::FromActor(Belt));
+                *Cast<IFGSplineBuildableInterface>(Belt)->GetMutableSplinePointData()={FSplinePointData(FVector::ZeroVector,Delta),FSplinePointData(Delta,Delta)};
+                Belt->FinishSpawning(Belt->GetActorTransform());Out->SetConnection(BSConveyorAccess::Connection(Belt, 0));Source.Add(FBSBuildingRef::FromActor(Belt));
             }
             TArray<FBSBuildingRef> Copy;FString Error;const bool OK=FBSTransformers::Copy(R,Source,Mirror,Copy,Error);
             AFGBuildable* Target=nullptr;for(const auto& Ref:Copy)if(Ref.Actor && Ref.Actor->GetClass()==Splitter->GetClass())Target=Ref.Actor;
             Check(TEXT("splitter input and all three outputs mirror by role"),OK && Aligned(Splitter,Target));
             int32 Connected=0;for(const auto& Ref:Copy)if(auto* Belt=Cast<AFGBuildableConveyorBelt>(Ref.Actor))
-            {auto* C=Belt->GetConnection0();if(C->GetConnection() && C->GetConnection()->GetOwner()==Target && C->GetConnection()->GetDirection()==EFactoryConnectionDirection::FCD_OUTPUT && C->GetComponentLocation().Equals(C->GetConnection()->GetComponentLocation(),.1))++Connected;}
+            {auto* C=BSConveyorAccess::Connection(Belt, 0);if(C->GetConnection() && C->GetConnection()->GetOwner()==Target && C->GetConnection()->GetDirection()==EFactoryConnectionDirection::FCD_OUTPUT && C->GetComponentLocation().Equals(C->GetConnection()->GetComponentLocation(),.1))++Connected;}
             Check(TEXT("splitter side-output connections are remapped to matching mirrored ports"),OK && Connected==3);
             if(Smart)
             {

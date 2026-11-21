@@ -1,13 +1,11 @@
-Fixes rail-copy connections, rail movement and paint, Plan endpoint snapping, and saved-blueprint inventories.
+Updates Building Skills for Satisfactory 1.2.5.1 (CL 520140) and SML 3.12.1.
 
-- Removes source-world rail links before loading copies, addressing delayed connection-update crashes with rotation transformers. Separately placed copies reconnect to their correct transformed neighbours.
-- Preserves rail curves and painted swatches during movement and undo. Invalid distant connections are rejected before they can deform a transform.
-- Finds rail endpoints along the aiming ray, including when the cursor misses the rail mesh. Ctrl still disables snapping.
-- Includes the native bend-radius margin in pipe and hypertube previews.
-- Saved selection blueprints omit stored goods and their construction cost while retaining installed Power Shards and Somersloops. Original inventories and deletion-undo contents remain intact.
+- Rebuilt with refreshed CL 520140 headers, CSS engine build 87 and matching Wwise integration.
+- Uses native Save-window interface dispatch and conveyor fields, replacing the old-header callback and offset workarounds.
+- Requires SML 3.12.1, which fixes multiplayer joining on CL 520140.
+- Includes the 0.11.3 fixes for Copy/Save snapping bounds, stored-goods exclusion with installed upgrades preserved, conveyor/lift handling and false first-move rejections.
+- Corrects the game-version label to 1.2.5.1; the minimum changelist remains 520140.
 
-Requires Satisfactory 1.2.5.0 (CL 517554) or newer. Update Building Skills on both clients and servers.
+Update Building Skills and SML on both clients and servers.
 
-Existing damaged rail links are not repaired automatically.
-
-Validation: 431 Plan assertions passed during development, followed by 499 assertions covering transformers, network movement, undo and blueprints in the isolated Steam game. The latest changes have not been rerun in dedicated multiplayer; Epic, Windows Server and Linux Server are compiled and packaged without gameplay validation for this version. Full results and limitations: https://github.com/sgachoud/satisfactory_building_skills/blob/main/docs/TESTING.md
+Validation: 28 editor tests and 1,700 rendered Steam assertions passed. A Steam client also passed native blueprint placement, deletion and deletion undo/redo on an isolated Windows dedicated server. Smart and ARS integrations were skipped. Epic and Linux gameplay were not tested. All four native targets compiled and passed package validation; see https://github.com/sgachoud/satisfactory_building_skills/blob/main/docs/TESTING.md for exact scope.

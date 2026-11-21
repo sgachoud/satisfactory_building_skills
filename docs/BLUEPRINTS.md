@@ -9,6 +9,11 @@ overwrite confirmation. **Load and Clear are omitted**. Closing the window retur
 to Edit with the selection intact. Saving includes nested group members once;
 it creates a normal blueprint without removing or moving the original buildings.
 
+Selection saving and Copy omit stored goods, including machine input and output
+items, from both the snapshot and its construction cost. Installed Power Shards
+and Somersloops remain, along with machine recipes. Capturing a selection does
+not remove items from the original buildings. Deletion undo retains contents.
+
 An owner-only, transient save session supplies the native designer interface with
 the selected members and cost. It creates no platform, storage or construction
 volume and is never saved with the world. The normal game writer handles blueprint
@@ -32,10 +37,15 @@ blueprint designers retain their normal functionality.
 
 Without an anchor, the content stays upright and is rotated horizontally to align
 the majority of buildings, then its bounding box fits tightly around the content.
-The origin is centered in X/Y and at the lowest Z point of the bounds. Foundation
-geometry includes its full width, depth and height; lightweight actors without mesh
-components use the native instance geometry. Saved blueprint placement uses those
-bounds for native hologram sizing, snapping and blueprint membership.
+The origin is centered in X/Y and at the lowest Z point of the bounds. Building
+bounds use the native authored snapping clearance, with the live transform and
+scale (including lightweight buildings). Vehicle-path display ribbons, collision
+helpers and clearance marked as excluded from snapping do not enlarge a mixed
+selection or change its automatic alignment. These objects remain in the copy or
+saved blueprint. Copy and Save use the same calculation, and hologram placement
+keeps the native snapping box instead of expanding it to visible meshes.
+A selection made entirely of non-snapping objects falls back to its geometry for
+its capture origin; native placement still determines its snapping behavior.
 
 **Alt+A / Anchor** sets or clears the aimed building as the reference. This action
 is configurable. The anchor supplies all three orientation axes, including tilt.

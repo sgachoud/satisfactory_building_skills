@@ -244,9 +244,9 @@ bool ABSGroupSubsystem::TransformSelection(AFGCharacterPlayer* Player, const FBS
                 (Member && Member->Actor && Version == 0 && FBSTransformMath::MatchesInitialReplication(Current, Expected.Transform));
             if (!Member || Seen.Contains(Key) || !(Expected == *Member) || Version != Expected.TransformVersion || !SameTransform)
             {
-                UE_LOG(LogBuildingSkills, Display, TEXT("Transform conflict: actor=%s version=%llu expected=%llu member=%d duplicate=%d locationDelta=%s scaleDelta=%s rotationDeltaDegrees=%.6f authority=%s observed=%s"),
+                UE_LOG(LogBuildingSkills, Display, TEXT("Transform conflict: actor=%s version=%llu expected=%llu member=%d duplicate=%d snapshot=%d locationDelta=%s scaleDelta=%s rotationDeltaDegrees=%.6f authority=%s observed=%s"),
                     *GetNameSafe(Expected.Actor), Version, Expected.TransformVersion,
-                    Member != nullptr, Seen.Contains(Key),
+                    Member != nullptr, Seen.Contains(Key), SnapshotIndices.Contains(Key),
                     *(Current.GetLocation() - Expected.Transform.GetLocation()).ToString(), *(Current.GetScale3D() - Expected.Transform.GetScale3D()).ToString(),
                     FMath::RadiansToDegrees(Current.GetRotation().AngularDistance(Expected.Transform.GetRotation())),
                     *Current.ToString(), *Expected.Transform.ToString());

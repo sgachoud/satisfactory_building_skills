@@ -4,6 +4,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "InstanceData.h"
+#include "FGClearanceData.h"
 
 
 namespace BSBlueprintBounds
@@ -26,6 +27,18 @@ namespace BSBlueprintBounds
         Size = Bounds.GetSize();
         Origin = FTransform(Rotation, Reference + Rotation.RotateVector(FVector(Bounds.GetCenter().X, Bounds.GetCenter().Y, Bounds.Min.Z)));
         return true;
+    }
+
+    void AppendSnappingGeometry(AFGBuildable* Building, const FTransform& Transform, TArray<FVector>& Points)
+    {
+        if (!IsValid(Building)) return;
+        TArray<FFGClearanceData> Clearance;
+        Building->GetClearanceData_Implementation(Clearance);
+        for (const auto& Data : Clearance)
+            if (Data.IsValid() && !Data.ExcludeForSnapping)
+                AppendBox(Data.ClearanceBox, Data.RelativeTransform * Transform, Points);
+        // An intentionally excluded clearance must not fall back to its mesh.
+        // Vehicle-path visualization and other helpers can overhang the real snap box.
     }
 
     void AppendActorGeometry(AFGBuildable* Building, TArray<FVector>& Points)

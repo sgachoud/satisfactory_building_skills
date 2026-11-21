@@ -39,8 +39,11 @@ namespace
     const TCHAR* ClipboardPrefix = TEXT("BSClipboard_");
     thread_local UWorld* CostPreviewWorld = nullptr;
 
-    int32 PreviewSplineMultiplier(const AFGBuildable* Building, const IFGSplineBuildableInterface* Spline, float SegmentLength)
+    int32 PreviewSplineMultiplier(const AFGBuildable* Building, float UnitMultiplier = 1.f)
     {
+        // A native base-size change also moves secondary interface vtables.
+        // Let the live UClass resolve that address for Copy and saved previews.
+        const auto* Spline=CastChecked<IFGSplineBuildableInterface>(Building);
         FSplineCurves Curves;
         const auto& Points=Spline->GetSplinePointData();
         for (int32 I=0; I<Points.Num(); ++I)
@@ -51,7 +54,7 @@ namespace
         }
         const auto* Component=Spline->GetSplineComponent();
         Curves.UpdateSpline(false,false,Component ? Component->ReparamStepsPerSegment : 10,false,0,Building->GetActorScale3D());
-        return AFGBuildable::GetCostMultiplierForLength(Curves.GetSplineLength(),SegmentLength);
+        return AFGBuildable::GetCostMultiplierForLength(Curves.GetSplineLength(),Spline->GetMeshLength()*UnitMultiplier);
     }
 
     UBSEditModeComponent* EditFor(UBSGroupRemoteCallObject* RCO)
@@ -116,10 +119,9 @@ bool UBSClipboard::Capture(const FBSSelection& Selection, FString& Error, const 
     SourceOrigin = Session->BlueprintOrigin;
     FBlueprintRecord Record;
     Record.BlueprintName = Name();
-    const auto Buildings = Session->GetSelectionBuildables();
-    const bool Written = WriteBuildingSkillsClipboard(System, Record, SourceOrigin, Buildings, Session->GetSelectionDimensions(), Data);
+    const bool Written = Session->WriteCopy(Record, Data, Error);
     Session->Destroy();
-    if (!Written) { Error = TEXT("The selection could not be copied."); return false; }
+    if (!Written) { if (Error.IsEmpty()) Error = TEXT("The selection could not be copied."); return false; }
 
     // Require every selected object at its expected pose; never show an empty or partial copy.
     TArray<FActorSaveHeader> Headers;
@@ -314,13 +316,13 @@ void UBSClipboard::InstallHooks()
     // Evaluate native cubic arc lengths on a stack curve without touching actors.
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildablePipeBase, GetDismantleRefundReturnsMultiplier,
         [](auto& Scope, const AFGBuildablePipeBase* Pipe)
-        { if (CostPreviewWorld && Pipe->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Pipe,Pipe,Pipe->GetMeshLength()*AFGBuildablePipeBase::PIPE_COST_LENGTH_MULTIPLIER)); });
+        { if (CostPreviewWorld && Pipe->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Pipe,AFGBuildablePipeBase::PIPE_COST_LENGTH_MULTIPLIER)); });
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildableConveyorBelt, GetDismantleRefundReturnsMultiplier,
         [](auto& Scope, const AFGBuildableConveyorBelt* Belt)
-        { if (CostPreviewWorld && Belt->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Belt,Belt,Belt->GetMeshLength())); });
+        { if (CostPreviewWorld && Belt->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Belt)); });
     SUBSCRIBE_UOBJECT_METHOD(AFGBuildableRailroadTrack, GetDismantleRefundReturnsMultiplier,
         [](auto& Scope, const AFGBuildableRailroadTrack* Track)
-        { if (CostPreviewWorld && Track->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Track,Track,Track->GetMeshLength())); });
+        { if (CostPreviewWorld && Track->GetWorld()==CostPreviewWorld) Scope.Override(PreviewSplineMultiplier(Track)); });
     SUBSCRIBE_METHOD(AFGBlueprintSubsystem::GetBlueprintDescriptorByNameString,
         [](auto& Scope, AFGBlueprintSubsystem* System, const FString& Name)
         { if (auto* Clipboard = Find(System->GetWorld(), Name)) Scope.Override(Clipboard->Descriptor.Get()); });

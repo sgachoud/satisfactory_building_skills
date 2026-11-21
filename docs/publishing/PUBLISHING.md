@@ -5,7 +5,7 @@ ficsit.app); Satisfactory Mod Manager (SMM) distributes versions from there.
 
 ## Files
 
-The generated `Saved/Publication/0.11.2` folder contains the upload archive,
+The generated `Saved/Publication/0.11.4` folder contains the upload archive,
 listing, metadata, changelog, artwork, source snapshot and verification report.
 Only **BuildingSkills.zip** is the mod version upload. Do not upload a
 development platform ZIP, source snapshot, or the complete publication folder
@@ -26,7 +26,7 @@ as the mod version.
   not a gameplay screenshot.
 - `verification.json`: exact archive validation and target/build evidence.
 - `SHA256SUMS.txt`: hashes for the prepared deliverables.
-- `BuildingSkills-0.11.2-source.zip`: source, assets, scripts, documentation and
+- `BuildingSkills-0.11.4-source.zip`: source, assets, scripts, documentation and
   notices, excluding local saves, references, logs, caches, SDK and binaries.
 
 ## Create the page and version
@@ -41,13 +41,13 @@ as the mod version.
 5. Use the source URL in `METADATA.json`. The support URL is already included
    as the overview's “Report a bug” link; SMR has no separate support field.
    The public GitHub repository has issues enabled. The user commits and pushes the reviewed
-   0.11.2 source and documentation before publishing this version. The source
+   0.11.4 source and documentation before publishing this version. The source
    snapshot in the kit includes the current working tree, even before committing.
    Keep `docs/publishing/media/` on branch `main`: the overview embeds the six
    existing GIFs through raw GitHub URLs. Alternatively upload the GIFs to SMR's
    media service and replace the image URLs before submission.
    Suggested tags must be selected from the site's actual list.
-6. Create New Version, select **BuildingSkills.zip**, verify version **0.11.2**,
+6. Create New Version, select **BuildingSkills.zip**, verify version **0.11.4**,
    target platforms and the SML/game requirements, and paste the changelog.
 7. Choose early-access/beta wording rather than claiming a stable release.
    Do not mark an untested game branch as working just because it compiled.
@@ -60,7 +60,7 @@ The supplied SSH remote is configured as `origin`, with `main` as the branch.
 ## Recreating the package
 
 The descriptor's integer `Version` must equal the major component of
-`SemVersion`: for `0.11.2`, use `Version: 0`. It is not a build counter.
+`SemVersion`: for `0.11.4`, use `Version: 0`. It is not a build counter.
 `VersionName` must match `SemVersion`. The publication validator checks this
 in the source descriptor and every packaged target.
 
@@ -83,11 +83,12 @@ targets, cooked content, licenses, and unsafe archive entries. It removes debug
 symbols from the upload while retaining the original local Alpakit archive.
 
 Keep the final report honest: archive checks are not multiplayer gameplay tests.
-For 0.11.2, the Plan fixture passed 431 assertions during development, followed
-by 499 assertions across transformer, network, undo and blueprint fixtures on
-CL 517554. These are isolated Steam standalone tests. Dedicated multiplayer was
-not rerun for these changes; Epic, Windows Server and Linux Server are compiled
-and packaged without gameplay validation for this version.
+For 0.11.4, 28 editor tests and 1,700 rendered Steam assertions passed on
+Satisfactory 1.2.5.1 (CL 520140) with SML 3.12.1. A real Steam client also passed
+native blueprint placement, deletion and deletion undo/redo on an isolated
+Windows dedicated server. Smart and ARS integrations were skipped. Epic and
+Linux gameplay were not tested. All four native targets compiled and passed package validation. The upload kit
+contains Windows clients, Windows Server and Linux Server.
 See `docs/TESTING.md` for the exact checks, retained
 evidence and limitations. Do not mark an untested branch or integration as tested.
 

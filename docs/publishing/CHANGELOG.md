@@ -1,3 +1,23 @@
+# 0.11.4 - SML 3.12.1 and refreshed game headers
+
+- Updates the build environment to CSS engine 5.6.1-css-87 and SML 3.12.1, with game headers matching CL 520140.
+- Uses native Save-window interface dispatch and conveyor fields again, replacing the old-header callback and relative-offset workarounds.
+- Requires SML 3.12.1, which fixes joining multiplayer on CL 520140.
+- Corrects the human-readable game version to Satisfactory 1.2.5.1; the required changelist remains 520140.
+
+Requires Satisfactory 1.2.5.1 (CL 520140) or newer. Update SML and Building Skills on both clients and servers. Validation is recorded in docs/TESTING.md.
+
+# 0.11.3 - Copy, blueprint bounds and game compatibility
+
+- Fixes Save-window interface dispatch on Satisfactory 1.2.5.1 (CL 520140), which could corrupt the player during native interaction callbacks. The correction is limited to Building Skills' temporary Save context.
+- Resolves factory inventory and conveyor fields through the running game instead of obsolete SDK offsets. This covers preserved machine upgrades, conveyor/lift movement and deletion-undo item restoration.
+- Resolves spline interfaces through the running game for Copy and saved-blueprint preview costs, including conveyor segment length.
+- Fixes blueprint snapping gaps caused by vehicle-path visualization and collision bounds (issue #4). Copy and selection Save now use native snapping clearance, including exclusions, rotation and scale; ordinary blueprint placement no longer expands its native snap box to render meshes.
+- Removes destroyed actors' edit-version entries so newly allocated rails, signals or other buildings cannot inherit a deleted object's version and fail their first multiplayer move. Real stale-edit checks remain enabled.
+- Copy now omits stored and production goods from the clipboard and construction cost, matching selection blueprint saving. Installed Power Shards and Somersloops remain. Transformer construction uses the same copy path; deletion undo still retains contents.
+
+Requires Satisfactory 1.2.5.1 (CL 520140) or newer. Update both client and server. Validation: 419 passing isolated Steam assertions; dedicated multiplayer was not rerun for this version.
+
 # 0.11.2 - Rail connections and blueprint inventories
 
 - Saving a selection as a blueprint omits storage and production inventories from both the archive and construction cost. Installed Power Shards and Somersloops remain. Source inventories and deletion-undo contents are preserved.
